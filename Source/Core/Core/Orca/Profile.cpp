@@ -24,6 +24,7 @@
 #ifdef USE_RETRO_ACHIEVEMENTS
 #include "Core/Config/AchievementSettings.h"
 #endif
+#include "Core/Config/FreeLookSettings.h"
 #include "Core/Config/GraphicsSettings.h"
 #include "Core/Config/MainSettings.h"
 #include "Core/Config/SYSCONFSettings.h"
@@ -31,6 +32,7 @@
 #include "Core/Config/WiimoteSettings.h"
 #include "Core/HW/EXI/EXI.h"
 #include "Core/HW/EXI/EXI_Device.h"
+#include "Core/HW/HSP/HSP_Device.h"
 #include "Core/HW/SI/SI_Device.h"
 #include "Core/HW/Sram.h"
 #include "Core/HW/Wiimote.h"
@@ -186,30 +188,115 @@ void ForEachUniversalSetting(F&& f)
   // nothing drawn reaches RAM. Prefetching stays the player's choice, since forcing it would load a
   // player's whole pack into memory; Orca's few labels are always preloaded.
   f(Config::GFX_HIRES_TEXTURES, true);
-  // Shaders: a pipeline the game hasn't drawn before compiles in the background and draws with an
-  // ubershader meanwhile; every pipeline seen before (Cache/<game>.uidcache), the ubershaders and
-  // the EFB copy pipelines compile before the first frame. Dolphin's default compiles on the
-  // emulation thread at first draw, which stalls a match's countdown, and each Orca release
-  // invalidates the shader cache. Rendering only, so it can't make the two machines' games differ.
-  // See ORCA.md, "Match start".
-  f(Config::GFX_SHADER_COMPILATION_MODE, ShaderCompilationMode::AsynchronousUberShaders);
+  // Shaders: every pipeline seen before (Cache/<game>.uidcache), the ubershaders and the EFB copy
+  // pipelines compile before the first frame. The compilation mode and thread count are the
+  // player's (the app's Graphics settings), within what a session allows: ForcedConfigLoader
+  // refuses the modes that compile on the emulation thread. See ORCA.md, "Match start" and
+  // "Graphics".
   f(Config::GFX_WAIT_FOR_SHADERS_BEFORE_STARTING, true);
-  // New pipelines compile on Dolphin's "Auto" thread count (cores - 3, 1 to 4) instead of one, so
-  // the ubershader fallback lasts less time.
-  f(Config::GFX_SHADER_COMPILER_THREADS, -1);
+
+  // Every other graphics setting is the player's: it only changes what this machine draws and how
+  // fast (ORCA.md, "Graphics"). The settings below are Dolphin's defaults, pinned so a player's
+  // Dolphin.ini or GFX.ini can't change them.
+  //
+  // Security: no GDB stub. It would serve the game's memory and registers to anyone who connects.
+  f(Config::MAIN_GDB_PORT, -1);
+  f(Config::MAIN_GDB_SOCKET, std::string());
+  // Debugging and the JIT: each of these routes code through the interpreter or changes how the JIT
+  // analyses it, a different machine from the one the other player runs.
+  f(Config::MAIN_ENABLE_DEBUGGING, false);
+  for (const Config::Info<bool>* jit_off :
+       {&Config::MAIN_DEBUG_JIT_OFF, &Config::MAIN_DEBUG_JIT_LOAD_STORE_OFF,
+        &Config::MAIN_DEBUG_JIT_LOAD_STORE_LXZ_OFF, &Config::MAIN_DEBUG_JIT_LOAD_STORE_LWZ_OFF,
+        &Config::MAIN_DEBUG_JIT_LOAD_STORE_LBZX_OFF,
+        &Config::MAIN_DEBUG_JIT_LOAD_STORE_FLOATING_OFF,
+        &Config::MAIN_DEBUG_JIT_LOAD_STORE_PAIRED_OFF, &Config::MAIN_DEBUG_JIT_FLOATING_POINT_OFF,
+        &Config::MAIN_DEBUG_JIT_INTEGER_OFF, &Config::MAIN_DEBUG_JIT_PAIRED_OFF,
+        &Config::MAIN_DEBUG_JIT_SYSTEM_REGISTERS_OFF, &Config::MAIN_DEBUG_JIT_BRANCH_OFF,
+        &Config::MAIN_DEBUG_JIT_REGISTER_CACHE_OFF, &Config::MAIN_DEBUG_JIT_ENABLE_PROFILING})
+  {
+    f(*jit_off, false);
+  }
+  // PauseOnPanic turns on the JIT's memory checks (jo.memcheck): an unresolved access then breaks
+  // into a DSI instead of reading 0 and going on, so this player's game would leave the other's.
+  f(Config::MAIN_PAUSE_ON_PANIC, false);
+  f(Config::MAIN_LOW_DCBZ_HACK, false);
+  f(Config::MAIN_PAGE_TABLE_FASTMEM, Config::MAIN_PAGE_TABLE_FASTMEM.GetDefaultValue());
+  f(Config::MAIN_FASTMEM_ARENA, Config::MAIN_FASTMEM_ARENA.GetDefaultValue());
+  f(Config::MAIN_LARGE_ENTRY_POINTS_MAP, Config::MAIN_LARGE_ENTRY_POINTS_MAP.GetDefaultValue());
+  f(Config::MAIN_OVERRIDE_BOOT_IOS, -1);
+  f(Config::MAIN_HSP_DEVICE, HSP::HSPDeviceType::None);
+  // Pacing: full speed, Dolphin's throttle. A slower speed would stall the other player every
+  // frame, and the rest interact with Orca's presentation pacing and rollback re-runs.
+  f(Config::MAIN_EMULATION_SPEED, 1.0f);
+  f(Config::MAIN_RUSH_FRAME_PRESENTATION, Config::MAIN_RUSH_FRAME_PRESENTATION.GetDefaultValue());
+  f(Config::MAIN_MAX_FALLBACK, Config::MAIN_MAX_FALLBACK.GetDefaultValue());
+  f(Config::MAIN_TIMING_VARIANCE, Config::MAIN_TIMING_VARIANCE.GetDefaultValue());
+  f(Config::MAIN_CORRECT_TIME_DRIFT, Config::MAIN_CORRECT_TIME_DRIFT.GetDefaultValue());
+  f(Config::GFX_HACK_CAP_IMMEDIATE_XFB, false);
+  // The audio buffer bounds how far the throttle may fall behind before it skips ahead
+  // (CoreTiming's max fallback); kept at Dolphin's 80 ms like the other pacing settings.
+  f(Config::MAIN_AUDIO_BUFFER_SIZE, Config::MAIN_AUDIO_BUFFER_SIZE.GetDefaultValue());
+  // Drawing-only, but it is a shader host-config bit that flips whenever the internal resolution
+  // goes to or from native (VideoConfig::UseVertexRounding). With it on, a live `gfx res` or the
+  // switch to Performance would reload every shader on the CPU thread mid-match, with no time
+  // limit, and freeze both players.
+  f(Config::GFX_HACK_VERTEX_ROUNDING, false);
+  // Fairness: drawing-only, but each shows a player more than the game does (the stage past its
+  // framing, through fog, through cover) or a free camera.
+  f(Config::GFX_WIDESCREEN_HACK, false);
+  f(Config::GFX_DISABLE_FOG, false);
+  f(Config::GFX_ENABLE_WIREFRAME, false);
+  f(Config::GFX_TEXFMT_OVERLAY_ENABLE, false);
+  f(Config::FREE_LOOK_ENABLED, false);
+}
+
+// The value a setting has from the layers under the forced one, as if Orca forced nothing: the
+// first of them that sets it, as Config::Get reads it; nullopt when none sets it.
+template <typename T>
+std::optional<T> BelowForced(const Config::Info<T>& info)
+{
+  for (const Config::LayerType type :
+       {Config::LayerType::Movie, Config::LayerType::LocalGame, Config::LayerType::GlobalGame,
+        Config::LayerType::CommandLine, Config::LayerType::Base})
+  {
+    const std::shared_ptr<Config::Layer> layer = Config::GetLayer(type);
+    if (!layer)
+      continue;
+    if (const std::optional<std::string> text = layer->Get<std::string>(info.GetLocation()))
+      return Config::detail::TryParse<T>(*text).value_or(info.GetDefaultValue());
+  }
+  return std::nullopt;
 }
 
 class ForcedConfigLoader final : public Config::ConfigLayerLoader
 {
 public:
+  // Reads the layers under this one now, before it is added (Load runs under the config lock).
   explicit ForcedConfigLoader(Profile profile)
       : ConfigLayerLoader(Config::LayerType::Netplay), m_profile(std::move(profile))
   {
+    // The player's shader mode and compile threads, within what a session allows, pinned for the
+    // run (a launcher's disc brings its own game INI layers in later). Synchronous modes compile
+    // on the emulation thread (Synchronous at a pipeline's first draw, which freezes the other
+    // player too; SyncUber never compiles specialized shaders, and is heavy on the graphics card),
+    // and so do zero compile threads. Set by nobody, they are what sessions forced before the
+    // player could choose: AsyncUber (Dolphin's default is Synchronous) and Dolphin's Auto thread
+    // count (cores - 3, 1 to 4; Dolphin's default is one thread).
+    const std::optional<ShaderCompilationMode> mode =
+        BelowForced(Config::GFX_SHADER_COMPILATION_MODE);
+    m_shader_mode = mode && SessionShaderModeAllowed(*mode) ?
+                        *mode :
+                        ShaderCompilationMode::AsynchronousUberShaders;
+    const std::optional<int> threads = BelowForced(Config::GFX_SHADER_COMPILER_THREADS);
+    m_shader_threads = threads && SessionShaderThreadsAllowed(*threads) ? *threads : -1;
   }
 
   void Load(Config::Layer* layer) override
   {
     ForEachUniversalSetting([layer](const auto& info, auto value) { layer->Set(info, value); });
+    layer->Set(Config::GFX_SHADER_COMPILATION_MODE, m_shader_mode);
+    layer->Set(Config::GFX_SHADER_COMPILER_THREADS, m_shader_threads);
     for (const auto& [location, value] : m_profile.forced)
       layer->Set(location, value);
     // A launcher profile's verified SD image overrides any card path the player set.
@@ -221,6 +308,8 @@ public:
 
 private:
   Profile m_profile;
+  ShaderCompilationMode m_shader_mode = ShaderCompilationMode::AsynchronousUberShaders;
+  int m_shader_threads = -1;
 };
 }  // namespace
 
@@ -812,11 +901,43 @@ std::unique_ptr<Config::ConfigLayerLoader> GenerateConfigLoader(const Profile& p
   return std::make_unique<ForcedConfigLoader>(profile);
 }
 
-std::optional<std::string> VerifyForcedSettings(const Profile& profile)
+bool SessionShaderModeAllowed(ShaderCompilationMode mode)
+{
+  return mode == ShaderCompilationMode::AsynchronousUberShaders ||
+         mode == ShaderCompilationMode::AsynchronousSkipRendering;
+}
+
+bool SessionShaderThreadsAllowed(int threads)
+{
+  // Auto, or 1 to 4 compile threads (the app's choices): never 0 (the emulation thread), and never
+  // hundreds of threads from a hand-edited GFX.ini.
+  return threads == -1 || (threads >= 1 && threads <= 4);
+}
+
+std::vector<Config::Location> UniversalForcedLocations()
 {
   std::vector<Config::Location> locations;
   ForEachUniversalSetting(
       [&locations](const auto& info, auto) { locations.push_back(info.GetLocation()); });
+  return locations;
+}
+
+std::optional<std::string> VerifyForcedSettings(const Profile& profile)
+{
+  // The shader settings are the player's, but only within what a session allows.
+  if (const ShaderCompilationMode mode = Config::Get(Config::GFX_SHADER_COMPILATION_MODE);
+      !SessionShaderModeAllowed(mode))
+  {
+    return fmt::format("Orca: shader compilation mode {} is not allowed in a session",
+                       static_cast<int>(mode));
+  }
+  if (const int threads = Config::Get(Config::GFX_SHADER_COMPILER_THREADS);
+      !SessionShaderThreadsAllowed(threads))
+  {
+    return fmt::format("Orca: {} shader compiler threads is not allowed in a session", threads);
+  }
+
+  std::vector<Config::Location> locations = UniversalForcedLocations();
   for (const auto& [location, value] : profile.forced)
     locations.push_back(location);
   if (!profile.sd_image_path.empty())
@@ -863,5 +984,28 @@ std::string DescribeForcedSettings(const Profile& profile)
                      Config::Get(Config::GFX_WAIT_FOR_SHADERS_BEFORE_STARTING),
                      Config::Get(Config::GFX_SHADER_COMPILER_THREADS),
                      Config::Get(Config::MAIN_GFX_BACKEND));
+}
+
+std::string DescribeGraphics()
+{
+  const int resolution = Config::Get(Config::GFX_EFB_SCALE);
+  return fmt::format(
+      "Orca: graphics: GFXBackend={} Adapter={} InternalResolution={} MaxInternalResolution={} "
+      "MSAA={} SSAA={} MaxAnisotropy={} ForceTextureFiltering={} OutputResampling={} "
+      "EFBScaledCopy={} ShaderCompilationMode={} ShaderCompilerThreads={} GPUTextureDecoding={} "
+      "CPUCull={} BackendMultithreading={} PostProcessingShader=\"{}\"",
+      Config::Get(Config::MAIN_GFX_BACKEND), Config::Get(Config::GFX_ADAPTER),
+      resolution == 0 ? std::string("auto") : fmt::format("{}x", resolution),
+      Config::Get(Config::GFX_MAX_EFB_SCALE), Config::Get(Config::GFX_MSAA),
+      Config::Get(Config::GFX_SSAA),
+      static_cast<int>(Config::Get(Config::GFX_ENHANCE_MAX_ANISOTROPY)),
+      static_cast<int>(Config::Get(Config::GFX_ENHANCE_FORCE_TEXTURE_FILTERING)),
+      static_cast<int>(Config::Get(Config::GFX_ENHANCE_OUTPUT_RESAMPLING)),
+      Config::Get(Config::GFX_HACK_COPY_EFB_SCALED),
+      static_cast<int>(Config::Get(Config::GFX_SHADER_COMPILATION_MODE)),
+      Config::Get(Config::GFX_SHADER_COMPILER_THREADS),
+      Config::Get(Config::GFX_ENABLE_GPU_TEXTURE_DECODING), Config::Get(Config::GFX_CPU_CULL),
+      Config::Get(Config::GFX_BACKEND_MULTITHREADING),
+      Config::Get(Config::GFX_ENHANCE_POST_SHADER));
 }
 }  // namespace Orca

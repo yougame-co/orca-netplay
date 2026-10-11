@@ -98,6 +98,9 @@ TextLook TitleLook(float unit, float size = 5.0f);
 void SetGameDisc(std::string path);
 // Call each overlay frame before drawing (video thread): uploads the fonts once loaded.
 void BeginFrame();
+// The backend is shutting down (video thread, through OSD::ReleaseHostOverlay): frees the fonts'
+// textures while their device is alive. The next backend's first frame uploads them again.
+void ReleaseGpu();
 // Waits for the font loader thread at exit.
 void Shutdown();
 // Whether `face` has switched to the game's font yet.
@@ -236,6 +239,9 @@ void Disc(ImDrawList* dl, ImVec2 centre, float radius, float unit, Tone tone, fl
 // Tests only: draw `face` with `atlas` as `texture` (null restores the normal one). The atlas must
 // outlive its use.
 void UseAtlasForTests(Face face, const GameFont::Atlas* atlas, ImTextureID texture);
+// Tests only: BeginFrame uploads these as if read from the disc, without the reader thread (both
+// null: nothing read).
+void UseFontsForTests(const GameFont::Atlas* body, const GameFont::Atlas* heavy);
 
 // ORCA_UX_KIT_DEMO=1 draws every primitive (DrawDemo) instead of the overlay, for design checks.
 int DemoMode();

@@ -281,6 +281,44 @@ TEST(OrcaUXControllers, StandardPadOnAGameCubeLayout)
   EXPECT_EQ(s.stickY, 160);  // 128 + 31.75
 }
 
+TEST(OrcaUXControllers, StandardPadCStickRestingOffCentreReadsAsNeutral)
+{
+  // Brawl takes a new C-stick attack only once the C-stick is back at neutral, and 5 units off
+  // centre is not neutral to it: a C-stick resting a few percent off (here 6%, X and Y) must reach
+  // the game exactly centred.
+  StandardPad p;
+  p.axes = {0, 0, -0.06f, 0.06f};
+  GCPadStatus s = MapStandardPad(p);
+  EXPECT_EQ(s.substickX, 128);
+  EXPECT_EQ(s.substickY, 128);
+  // Measured together: 0.14 on both axes (0.198) is still at rest.
+  p.axes = {0, 0, 0.14f, -0.14f};
+  s = MapStandardPad(p);
+  EXPECT_EQ(s.substickX, 128);
+  EXPECT_EQ(s.substickY, 128);
+  p.axes = {0, 0, NAN, 0};
+  EXPECT_EQ(MapStandardPad(p).substickX, 128);
+  // Past the dead zone nothing is rescaled: a flick, a partial push and a box controller's exact
+  // values keep their bytes.
+  p.axes = {0, 0, 1, 0};
+  EXPECT_EQ(MapStandardPad(p).substickX, 255);
+  p.axes = {0, 0, 0, -1};
+  EXPECT_EQ(MapStandardPad(p).substickY, 255);
+  p.axes = {0, 0, -0.25f, 0};
+  s = MapStandardPad(p);
+  EXPECT_EQ(s.substickX, 96);  // 128 - 31.75
+  EXPECT_EQ(s.substickY, 128);
+  p.axes = {0, 0, 0.15f, 0.15f};  // 0.212 together
+  s = MapStandardPad(p);
+  EXPECT_EQ(s.substickX, 147);  // 128 + 19.05
+  EXPECT_EQ(s.substickY, 109);
+  // The main stick is unchanged: walking and tilts use its small values.
+  p.axes = {0.06f, -0.06f, 0, 0};
+  s = MapStandardPad(p);
+  EXPECT_EQ(s.stickX, 136);  // 128 + 7.62
+  EXPECT_EQ(s.stickY, 136);
+}
+
 TEST(OrcaUXControllers, ParsesTheHelpersSnapshot)
 {
   const std::string json =
@@ -424,6 +462,119 @@ TEST(OrcaUXControllers, StaleOrSuspendedInputIsNeutral)
   EXPECT_FALSE(ChooseLocalPad(*s, 250)->neutral);
   EXPECT_TRUE(ChooseLocalPad(*s, 250.5)->neutral);
   EXPECT_EQ(ChooseLocalPad(*s, 250.5)->pad.stickX, 128);
+}
+
+namespace
+{
+// What reaches Orca for an SDL int16 axis value: the helper's v / 32767 (or / 32768 below zero),
+// printed with 8 significant digits (desktop/native/src/main.cpp readPads), optionally negated by
+// the app (a pad set up with an inverted axis: orca-controls.ts normalizePad), then a float.
+float HelperAxis(int s, bool negated_by_app = false)
+{
+  const std::string printed = fmt::format("{:.8g}", s / (s < 0 ? 32768.0 : 32767.0));
+  const double v = std::stod(printed);
+  return static_cast<float>(negated_by_app ? -v : v);
+}
+// The OS's scaling of an 8-bit HID axis (0..255) to SDL's int16: IOKit's
+// GetHIDScaledCalibratedState and DirectInput's DIPROP_RANGE -32768..32767 both map it linearly.
+int Hid8(int byte)
+{
+  return 257 * byte - 32768;
+}
+// The map before this fix, for analog values that must not change.
+u8 LegacyAxisByte(float v, bool invert)
+{
+  const float s = std::clamp(invert ? -v : v, -1.0f, 1.0f);
+  return static_cast<u8>(std::clamp(128 + static_cast<int>(std::lround(s * 127)), 0, 255));
+}
+}  // namespace
+
+// Box controllers (B0XX, HayBox) send exact GameCube stick bytes. Over USB they arrive as an 8-bit
+// HID axis (DInput / "Dolphin" mode: X = byte, Y = 255 - byte) or as XInput (HayBox: 257 * (byte -
+// 128) + 128, which SDL negates for Y). Every byte must reach the game unchanged, both ways: a
+// leftward or downward partial tilt one unit short misses the thresholds box players tune to
+// (turnaround specials, shield drops).
+TEST(OrcaUXControllers, BoxControllerBytesReachTheGameExactlyInBothDirections)
+{
+  for (int g = 1; g <= 255; ++g)
+  {
+    SCOPED_TRACE(g);
+    StandardPad p;
+    // DInput / "Dolphin" mode (HayBox DInputBackend: leftXAxis(x), leftYAxis(255 - y)).
+    p.axes = {HelperAxis(Hid8(g)), HelperAxis(Hid8(255 - g)), HelperAxis(Hid8(g)),
+              HelperAxis(Hid8(255 - g))};
+    GCPadStatus s = MapStandardPad(p);
+    EXPECT_EQ(s.stickX, g);
+    EXPECT_EQ(s.stickY, g);
+    // The C-stick the same, past any rest dead zone (a box's C-stick is only ever pushed far).
+    if (std::abs(g - 128) > 26)
+    {
+      EXPECT_EQ(s.substickX, g);
+      EXPECT_EQ(s.substickY, g);
+    }
+    // The same pad set up in the Controls panel with its Y read inverted (HID up = +): the app
+    // negates, so the device's byte is g itself on Y.
+    p.axes = {HelperAxis(Hid8(g)), HelperAxis(Hid8(g), true), 0, 0};
+    s = MapStandardPad(p);
+    EXPECT_EQ(s.stickX, g);
+    EXPECT_EQ(s.stickY, g);
+    // XInput mode (HayBox XInputBackend: (byte - 128) * 65535 / 255 + 128; SDL's XInput driver
+    // reports Y as -max(-32767, ly)).
+    const int xi = (g - 128) * 65535 / 255 + 128;
+    p.axes = {HelperAxis(xi), HelperAxis(-std::max(-32767, xi)), 0, 0};
+    s = MapStandardPad(p);
+    EXPECT_EQ(s.stickX, g);
+    EXPECT_EQ(s.stickY, g);
+  }
+  // HID 0, beyond any stick, stays at the GameCube's 1, as a full digital push always has.
+  StandardPad p;
+  p.axes = {HelperAxis(Hid8(0)), HelperAxis(Hid8(255)), 0, 0};
+  EXPECT_EQ(MapStandardPad(p).stickX, 1);
+  EXPECT_EQ(MapStandardPad(p).stickY, 1);
+  // The resting box: 128 both ways.
+  p.axes = {HelperAxis(Hid8(128)), HelperAxis(Hid8(127)), 0, 0};
+  EXPECT_EQ(MapStandardPad(p).stickX, 128);
+  EXPECT_EQ(MapStandardPad(p).stickY, 128);
+}
+
+// Analog sticks (XInput, DualSense, Switch Pro: 16-bit, centred on 0) keep the old map; only a value
+// on the 8-bit lattice changes, by one unit, and only below zero (where the old map was short).
+TEST(OrcaUXControllers, AnalogSticksKeepTheirMapOffTheEightBitLattice)
+{
+  int changed = 0;
+  for (int raw = -32768; raw <= 32767; ++raw)
+  {
+    for (const bool negated : {false, true})
+    {
+      const float v = HelperAxis(raw, negated);
+      for (const bool invert : {false, true})
+      {
+        StandardPad p;
+        p.axes = {invert ? 0.0f : v, invert ? v : 0.0f, 0, 0};
+        const GCPadStatus s = MapStandardPad(p);
+        const int now = invert ? s.stickY : s.stickX;
+        const int before = LegacyAxisByte(v, invert);
+        if (now == before)
+          continue;
+        ++changed;
+        const int s16 = negated ? -raw : raw;
+        const int m = ((s16 % 257) + 257) % 257;
+        ASSERT_TRUE(m == 128 || m == 129) << raw << " " << negated << " " << invert;
+        ASSERT_EQ(std::abs(now - before), 1) << raw << " " << negated << " " << invert;
+        // Toward the push: a negative push one further left/down, a mirrored one further up/right.
+        ASSERT_EQ(now - before, (v < 0) != invert ? -1 : 1) << raw << " " << negated << " " << invert;
+      }
+    }
+  }
+  EXPECT_GT(changed, 0);
+  // Centre, rest noise and full pushes are unchanged.
+  StandardPad p;
+  for (const int raw : {0, 1, -1, 100, -100, 1000, -1000, 32767, -32768})
+  {
+    p.axes = {HelperAxis(raw), HelperAxis(raw), 0, 0};
+    EXPECT_EQ(MapStandardPad(p).stickX, LegacyAxisByte(HelperAxis(raw), false)) << raw;
+    EXPECT_EQ(MapStandardPad(p).stickY, LegacyAxisByte(HelperAxis(raw), true)) << raw;
+  }
 }
 
 
@@ -1200,7 +1351,13 @@ public:
   static constexpr u32 SCENE = 0x90ff6340, NAME = 0x806ff278, TASK = 0x815e75e0,
                        GLOBAL = 0x90181300, RECORDS = 0x90172d40;
   static u32 Area(int i) { return 0x81500000 + static_cast<u32>(i) * 0x1000; }
-  static u32 Tag(int i) { return RECORDS + 0xE0 + static_cast<u32>(i) * 0x124; }
+  // Tag i's entry is the 0x124 bytes from Entry(i); its name, Tag(i), is 0xE0 into it. The table
+  // (the game's new(0x88E0)) ends at END, where the next heap block's header and gmGlobalRecord
+  // begin: GUARD bytes there that no writer may touch.
+  static u32 Entry(int i) { return RECORDS + static_cast<u32>(i) * 0x124; }
+  static u32 Tag(int i) { return Entry(i) + 0xE0; }
+  static constexpr u32 END = RECORDS + 120 * 0x124, GUARD = 0x100;
+  static u8 GuardByte(u32 a) { return static_cast<u8>(0xC5 ^ (a & 0xFF)); }
 
   explicit FakeBrawl(const char* scene = "scSelctCharacter")
   {
@@ -1214,8 +1371,10 @@ public:
     for (u32 i = 0; i < CONTROLS.size(); ++i)
       bytes[0x80406938 + i] = CONTROLS[i];
     W32(GLOBAL + 0x28, RECORDS);
-    for (u32 a = RECORDS; a < Tag(120); a += 2)
+    for (u32 a = RECORDS; a < END; a += 2)
       Write16(a, 0);
+    for (u32 a = END; a < END + GUARD; ++a)
+      bytes[a] = GuardByte(a);
     for (int i = 0; i < 4; ++i)
     {
       W32(TASK + 0x44 + 4 * static_cast<u32>(i), Area(i));
@@ -1461,6 +1620,45 @@ TEST(OrcaUXGamePatches, BrawlInputLagFixIsTheMagusCodeInPlace)
     EXPECT_FALSE(p.address >= 0x8002AD8C && p.address <= 0x8002AE3C) << std::hex << p.address;
 }
 
+TEST(OrcaUXGamePatches, BrawlHasNoRandomTripping)
+{
+  // "No Tripping" [Phantom Wings] (Gecko 0489E910 FFE0F090): in the trip check (0x8089E820) the
+  // trip rate param's float (0xDB3, fetched at 0x8089E90C) is replaced by the call's own argument,
+  // so the chance is 0 and the check returns before it draws a random number. One changed word in a
+  // group of six whose other words are the param fetch around it, read in RAM on scMelee.
+  const auto patches = ShippedPatches("RSBE01.patches");
+  const auto first = std::find_if(patches.begin(), patches.end(),
+                                  [](const GamePatch& p) { return p.address == 0x8089E900; });
+  ASSERT_NE(first, patches.end());
+  constexpr size_t WORDS = 6;
+  ASSERT_GE(static_cast<size_t>(patches.end() - first), WORDS);
+  const std::span<const GamePatch> group(&*first, WORDS);
+  const std::vector<u32> want_originals{0x7FA3EB78, 0x38800DB3, 0x38A00000,
+                                        0x4BEF8361, 0xFFE00890, 0x2C1E0001};
+  std::vector<u32> originals, landed;
+  for (size_t i = 0; i < group.size(); ++i)
+  {
+    const GamePatch& p = group[i];
+    ASSERT_TRUE(p.original.has_value()) << std::hex << p.address;
+    EXPECT_EQ(p.address, 0x8089E900u + 4 * i);
+    EXPECT_EQ(p.joins_previous, i != 0) << std::hex << p.address;
+    EXPECT_TRUE(p.when.empty()) << std::hex << p.address;
+    originals.push_back(*p.original);
+    landed.push_back(p.value);
+    if (p.address != 0x8089E910)
+      EXPECT_EQ(p.value, *p.original) << std::hex << p.address;  // guard only
+  }
+  EXPECT_EQ(originals, want_originals);
+  EXPECT_EQ(group[4].value, 0xFFE0F090u);  // fmr f31, f1 -> fmr f31, f30: the Gecko line's word
+  if (first + WORDS != patches.end())
+    EXPECT_FALSE(first[WORDS].joins_previous);
+  EXPECT_TRUE(GroupApplies(group, originals));
+  EXPECT_FALSE(GroupApplies(group, landed));
+  // Project+ has no tripping of its own: its file leaves the check alone.
+  for (const GamePatch& p : ShippedPatches("PPLUS32.patches"))
+    EXPECT_FALSE(p.address >= 0x8089E820 && p.address <= 0x8089EC1C) << std::hex << p.address;
+}
+
 TEST(OrcaUXGamePatches, BrawlRunsProjectPlusVSyncMove)
 {
   // Project+'s "Move v-sync call for Brawl/PM" (`op nop @ $80023b88`, `op b 0x1C4904 @ $80024028`):
@@ -1624,11 +1822,11 @@ TEST(OrcaUXNameTags, JoinedPortsGetTheirTagOnTheCharacterSelect)
   m.Join(0);
   m.Join(1);
   EXPECT_EQ(ApplyNameTags(m, ports), 2);
-  // The highest unused tags, in port order.
-  EXPECT_EQ(m.NameId(0), 119);
-  EXPECT_EQ(m.TagName(119), u"CY");
-  EXPECT_EQ(m.NameId(1), 118);
-  EXPECT_EQ(m.TagName(118), u"ADA");
+  // The lowest unused tags, in port order, as the game's name list makes them.
+  EXPECT_EQ(m.NameId(0), 0);
+  EXPECT_EQ(m.TagName(0), u"CY");
+  EXPECT_EQ(m.NameId(1), 1);
+  EXPECT_EQ(m.TagName(1), u"ADA");
   EXPECT_EQ(m.NameId(2), -1);
   // Idempotent: the next frame (or a re-run of this one) writes nothing.
   const int writes = m.writes;
@@ -1649,31 +1847,109 @@ TEST(OrcaUXNameTags, ReusesTheSameNameAndLeavesAChosenTagAlone)
   EXPECT_EQ(m.NameId(0), 0);
   EXPECT_EQ(m.TagName(0), u"MINE");
   EXPECT_EQ(m.NameId(1), 3);
-  EXPECT_EQ(m.TagName(119), u"");  // nothing new was made
+  for (int slot : {1, 2, 4, 119})
+    EXPECT_EQ(m.TagName(slot), u"") << slot;  // nothing new was made
 }
 
 TEST(OrcaUXNameTags, ANewTagIsMadeAsTheGameMakesOneAndNothingElseIsWritten)
 {
   FakeBrawl m;
-  // A leftover record (a deleted tag's bytes) in the slot that will be used.
-  for (u32 a = FakeBrawl::Tag(119) + 0x60; a < FakeBrawl::Tag(119) + 0x80; a += 2)
+  // A leftover entry (a deleted tag's bytes) in the slot that will be used: its per-name block,
+  // +0xEE and the creation time.
+  const u32 entry = FakeBrawl::Entry(0);
+  for (u32 a = entry + 0x60; a < entry + 0x80; a += 2)
     m.Write16(a, 0xAAAA);
+  m.Write16(entry + 0xEE, 0xAAAA);
+  m.W32(entry + 0xF0, 0x261E6EC2);
   m.Join(0);
   m.recording = true;
   ASSERT_EQ(ApplyNameTags(m, {{0, "cy", false}}), 1);
-  const u32 tag = FakeBrawl::Tag(119);
-  EXPECT_EQ(m.TagName(119), u"CY");
+  const u32 tag = FakeBrawl::Tag(0);
+  EXPECT_EQ(m.TagName(0), u"CY");
   EXPECT_EQ(m.Read8(tag + 0x0C), 1);  // rumble on
   for (u32 i = 0; i < FakeBrawl::CONTROLS.size(); ++i)
     EXPECT_EQ(m.Read8(tag + 0x14 + i), FakeBrawl::CONTROLS[i]) << i;
-  for (u32 a = tag + 0x60; a < tag + 0x80; ++a)
+  for (u32 a = entry + 0x60; a < entry + 0x80; ++a)
     EXPECT_EQ(m.Read8(a), 0);  // cleared
-  // Only that record and port 0's tag field.
+  EXPECT_EQ(m.Read16(entry + 0xEE), 0);
+  EXPECT_EQ(m.Read32(entry + 0xF0), 0u);
+  // Only that entry and port 0's tag field.
   for (const u32 a : m.written)
   {
-    const bool in_tag = a >= tag && a < tag + 0x124;
+    const bool in_tag = a >= entry && a < entry + 0x124;
     const bool in_name_id = a >= FakeBrawl::Area(0) + 0x1C8 && a < FakeBrawl::Area(0) + 0x1CC;
     EXPECT_TRUE(in_tag || in_name_id) << std::hex << a;
+  }
+}
+
+// Through 0.3.38 Orca made its tags in the highest unused slot (119 first) and cleared 0x124 bytes
+// from the name rather than from the entry. Options > Controls stops the game for good when slot 0
+// is empty and another slot is used, and the clear ran 0xE0 bytes past the table (the next heap
+// block's header and the start of gmGlobalRecord) in slot 119, or over the next entry's per-name
+// block in any other. Now: the lowest unused slot, as the game's name list does, and only that
+// entry.
+TEST(OrcaUXNameTags, ATagGoesInTheLowestFreeSlotAndWritesOnlyItsOwnEntry)
+{
+  {
+    FakeBrawl m;
+    m.Join(0);
+    // Slot 0's leftovers, which its tag clears; slot 1's per-name block, which it must not touch.
+    for (u32 a = FakeBrawl::Entry(0); a < FakeBrawl::Entry(0) + 0xE0; a += 2)
+      m.Write16(a, 0xBBBB);
+    for (u32 a = FakeBrawl::Entry(1); a < FakeBrawl::Entry(1) + 0xE0; a += 2)
+      m.Write16(a, 0x5A5A);
+    m.recording = true;
+    ASSERT_EQ(ApplyNameTags(m, {{0, "ada", false}}), 1);
+    ASSERT_EQ(m.NameId(0), 0);
+    for (u32 a = FakeBrawl::Entry(0); a < FakeBrawl::Entry(0) + 0xE0; ++a)
+      EXPECT_EQ(m.Read8(a), 0) << std::hex << a;
+    for (u32 a = FakeBrawl::Entry(1); a < FakeBrawl::Entry(1) + 0xE0; ++a)
+      EXPECT_EQ(m.Read8(a), 0x5A) << std::hex << a;
+    for (const u32 a : m.written)
+    {
+      const bool in_entry = a >= FakeBrawl::Entry(0) && a < FakeBrawl::Entry(1);
+      const bool in_name_id = a >= FakeBrawl::Area(0) + 0x1C8 && a < FakeBrawl::Area(0) + 0x1CC;
+      EXPECT_TRUE(in_entry || in_name_id) << std::hex << a;
+    }
+  }
+  {
+    // The player's own tags in slots 0 and 2: the gap, never past them.
+    FakeBrawl m;
+    m.SetTag(0, u"MINE");
+    m.SetTag(2, u"ALT");
+    m.Join(0);
+    ASSERT_EQ(ApplyNameTags(m, {{0, "ada", false}}), 1);
+    EXPECT_EQ(m.NameId(0), 1);
+    EXPECT_EQ(m.TagName(1), u"ADA");
+  }
+  {
+    // Only slot 119 left: its entry ends where the table does, and nothing past it is written.
+    FakeBrawl m;
+    for (int slot = 0; slot < 119; ++slot)
+      m.SetTag(slot, u"T");
+    m.Join(0);
+    m.recording = true;
+    ASSERT_EQ(ApplyNameTags(m, {{0, "ada", false}}), 1);
+    ASSERT_EQ(m.NameId(0), 119);
+    EXPECT_EQ(m.TagName(119), u"ADA");
+    for (u32 a = FakeBrawl::END; a < FakeBrawl::END + FakeBrawl::GUARD; ++a)
+      EXPECT_EQ(m.Read8(a), FakeBrawl::GuardByte(a)) << std::hex << a;
+    for (const u32 a : m.written)
+    {
+      const bool in_entry = a >= FakeBrawl::Entry(119) && a < FakeBrawl::END;
+      const bool in_name_id = a >= FakeBrawl::Area(0) + 0x1C8 && a < FakeBrawl::Area(0) + 0x1CC;
+      EXPECT_TRUE(in_entry || in_name_id) << std::hex << a;
+    }
+  }
+  {
+    // Every slot taken: no tag, nothing written.
+    FakeBrawl m;
+    for (int slot = 0; slot < 120; ++slot)
+      m.SetTag(slot, u"T");
+    m.Join(0);
+    m.recording = true;
+    EXPECT_EQ(ApplyNameTags(m, {{0, "ada", false}}), 0);
+    EXPECT_TRUE(m.written.empty());
   }
 }
 
@@ -1767,7 +2043,7 @@ TEST(OrcaUXNameTags, APortsOwnControlsGoIntoTheTagItGets)
   // Nothing outside the two records and the two tag fields.
   for (const u32 a : m.written)
   {
-    const bool in_tag = (a >= FakeBrawl::Tag(118) && a < FakeBrawl::Tag(120));
+    const bool in_tag = (a >= FakeBrawl::Entry(0) && a < FakeBrawl::Entry(2));
     const bool in_name_id = (a >= FakeBrawl::Area(0) + 0x1C8 && a < FakeBrawl::Area(0) + 0x1CC) ||
                             (a >= FakeBrawl::Area(1) + 0x1C8 && a < FakeBrawl::Area(1) + 0x1CC);
     EXPECT_TRUE(in_tag || in_name_id) << std::hex << a;
@@ -1823,7 +2099,7 @@ TEST(OrcaUXNameTags, ATagThePlayerMakesAgainWearsTheirOwnControls)
   EXPECT_EQ(TagLayout(m, 118), CustomLayout());
   EXPECT_EQ(m.Read8(FakeBrawl::Tag(118) + 0x0C), 0);
   EXPECT_EQ(m.TagName(118), u"MYTAG");
-  EXPECT_EQ(m.TagName(119), u"");  // no YouGame tag made
+  EXPECT_EQ(m.TagName(0), u"");  // no YouGame tag made (it would be the lowest free slot)
   // Only that tag's rumble and layout.
   for (const u32 a : m.written)
   {
@@ -2203,8 +2479,8 @@ TEST(OrcaUXNameTags, TheOwnControlsReadComesAfterTheWrites)
     m.Join(0);
     OwnControlsReader reader;
     EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, custom, 0));
-    EXPECT_EQ(m.TagName(119), u"ZEKE");
-    EXPECT_EQ(TagLayout(m, 119), CustomLayout());
+    EXPECT_EQ(m.TagName(0), u"ZEKE");
+    EXPECT_EQ(TagLayout(m, 0), CustomLayout());
     // They make MYTAG again (the game makes it at its defaults) and wear it: the same frame gives
     // it their controls, and the read sees those, not the defaults.
     GameMadeTag(m, 118, u"MYTAG");
@@ -2226,15 +2502,15 @@ TEST(OrcaUXNameTags, TheOwnControlsReadComesAfterTheWrites)
     m.Join(0);
     OwnControlsReader reader;
     EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, custom, 0));
-    GameMadeTag(m, 119, u"ZEKE");
+    GameMadeTag(m, 0, u"ZEKE");
     EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, custom, 0));
-    EXPECT_EQ(TagLayout(m, 119), CustomLayout());
+    EXPECT_EQ(TagLayout(m, 0), CustomLayout());
     // Read before the writes (the old order), that frame published the defaults.
     FakeBrawl old;
     old.Join(0);
     OwnControlsReader before;
     EXPECT_FALSE(NameTagsFrame(old, ports, ports, &before, custom, 0));
-    GameMadeTag(old, 119, u"ZEKE");
+    GameMadeTag(old, 0, u"ZEKE");
     EXPECT_EQ(before.Read(old, ports, custom, 0), Profile(1, FakeBrawl::CONTROLS));
   }
   {
@@ -2242,7 +2518,7 @@ TEST(OrcaUXNameTags, TheOwnControlsReadComesAfterTheWrites)
     FakeBrawl m;
     m.Join(0);
     EXPECT_FALSE(NameTagsFrame(m, ports, ports, nullptr, custom, 0));
-    EXPECT_EQ(TagLayout(m, 119), CustomLayout());
+    EXPECT_EQ(TagLayout(m, 0), CustomLayout());
   }
   {
     // The app sets new controls while the old ones are worn: the next read on this player's own
@@ -2320,8 +2596,8 @@ TEST(OrcaUXNameTags, ATagThePlayerTypedInTheGameIsTheirs)
     GameMadeTag(m, 1, Typed(u"SANDC"));
     m.Join(0);
     EXPECT_EQ(ApplyNameTags(m, {{0, "sandbox-ada", false}}), 1);
-    EXPECT_EQ(m.NameId(0), 119);
-    EXPECT_EQ(m.TagName(119), u"SANDB");
+    EXPECT_EQ(m.NameId(0), 2);
+    EXPECT_EQ(m.TagName(2), u"SANDB");
   }
   {
     // With controls carried (kept from an earlier run), the typed tag gets them, as Orca's own
@@ -2419,7 +2695,7 @@ TEST(OrcaUXNameTags, UnmappedPointersWriteNothing)
     // The records' end not mapped.
     FakeBrawl m;
     m.Join(0);
-    m.bytes.erase(FakeBrawl::Tag(120) - 1);
+    m.bytes.erase(FakeBrawl::END - 1);
     EXPECT_EQ(ApplyNameTags(m, {{0, "cy", false}}), 0);
   }
 }

@@ -1273,3 +1273,180 @@ TEST(OrcaQueue, TheStateRoundTripsThroughTheBlock)
   EXPECT_LE(REGION_END, MB::SAVED_FLAGS);
   EXPECT_GE(MB::QUEUE, MB::SAVED_RSS + MB::SAVED_RSS_SIZE);
 }
+
+// A player report (Orca 0.3.32): after a ranked set, the next match's auto pick left the hand
+// hovering another character, and the player's controller did nothing for seconds. A prod log
+// (0.3.38) shows the cause: back on its own select after a ranked set, the player readied with the
+// token already down, so Orca never saw the hand over it and published the pick at (0, 0)
+// ("orca queue ready ranked 11 6 (the hand at 0.0, 0.0)"). The steering takes the hand there, which
+// is another character's square, never presses A, and holds the pad until STEER_LIMIT_FRAMES.
+TEST(OrcaQueue, APickAimedAtAnotherSquareHoldsThePadUntilItsLimit)
+{
+  Identity pick;
+  pick.character = 0x1C;
+  pick.costume = 3;
+  View v = Room(true);
+  v.pick2 = pick;  // x, y = 0, 0
+  v.ports[1] = CssPort{};
+  v.ports[1].readable = true;
+  v.ports[1].human = true;
+  v.ports[1].hand_target = Rules::CSS_HAND_GRID_HOLDING;
+  v.ports[1].character = 0x13;  // the square at (0, 0) is someone else's
+  v.hand2_prev_x = v.ports[1].hand_x = 0.0f;
+  v.hand2_prev_y = v.ports[1].hand_y = 0.0f;
+  State s = Step(v, State{}, 300);
+  for (int f = 300 + STEER_SETTLE_FRAMES; f < 300 + STEER_LIMIT_FRAMES; ++f)
+  {
+    s = Step(v, s, f);
+    const Masks m = Gate(v, s);
+    ASSERT_TRUE(m[1].steer) << f;
+    EXPECT_EQ(m[1].buttons, Rollback::InputGate::ALL_BUTTONS) << f;
+    EXPECT_EQ(m[1].steer_x, CX) << f;
+    EXPECT_EQ(m[1].press, 0) << f;
+  }
+}
+
+namespace
+{
+CssPort Holding(int character, float x, float y)
+{
+  CssPort p;
+  p.readable = true;
+  p.human = true;
+  p.character = character;
+  p.hand_target = Rules::CSS_HAND_GRID_HOLDING;
+  p.hand_x = x;
+  p.hand_y = y;
+  return p;
+}
+CssPort DownOn(int character, int costume, float x, float y)
+{
+  CssPort p = Placed(character, costume);
+  p.hand_x = x;
+  p.hand_y = y;
+  return p;
+}
+}  // namespace
+
+TEST(OrcaQueue, AHandOverTheCharacterTeachesItsPlace)
+{
+  PickPlaces places;
+  EXPECT_FALSE(places.Frame(0, Holding(0x13, -1.0f, 0.0f)));
+  EXPECT_FALSE(places.Frame(0, Holding(0x1C, 4.0f, 2.0f)));
+  EXPECT_FALSE(places.Frame(0, Holding(0x1C, 6.0f, 3.0f)));
+  const auto placed = places.Frame(0, DownOn(0x1C, 3, 6.0f, 3.0f));
+  ASSERT_TRUE(placed);
+  EXPECT_TRUE(placed->learned);
+  EXPECT_EQ(placed->character, 0x1C);
+  EXPECT_EQ(places.Find(0x1C), std::make_pair(5.0f, 2.5f));
+  EXPECT_FALSE(places.Find(0x13));
+  // Staying down is not another placement.
+  EXPECT_FALSE(places.Frame(0, DownOn(0x1C, 3, 6.0f, 3.0f)));
+  // Either panel teaches: every select has the same grid.
+  places.Frame(1, Holding(0x13, -1.0f, 0.0f));
+  places.Frame(1, Holding(0x13, -2.0f, 1.0f));
+  EXPECT_TRUE(places.Frame(1, DownOn(0x13, 0, -2.0f, 1.0f))->learned);
+  EXPECT_EQ(places.Find(0x13), std::make_pair(-1.5f, 0.5f));
+  EXPECT_EQ(places.Find(0x1C), std::make_pair(5.0f, 2.5f));
+}
+
+TEST(OrcaQueue, ATokenAlreadyDownTeachesNothing)
+{
+  // The select comes up with the token down (the queue image after a ranked set): no place.
+  PickPlaces places;
+  const auto placed = places.Frame(0, DownOn(0x1C, 3, 0.0f, 0.0f));
+  ASSERT_TRUE(placed);
+  EXPECT_FALSE(placed->learned);
+  EXPECT_FALSE(places.Find(0x1C));
+  // The hand was last over another character: that square is not this one's place (the old code
+  // used it).
+  PickPlaces other;
+  other.Frame(0, Holding(0x13, -1.0f, 0.0f));
+  other.Frame(0, CssPort{});
+  const auto down = other.Frame(0, DownOn(0x1C, 3, 0.0f, 0.0f));
+  ASSERT_TRUE(down);
+  EXPECT_FALSE(down->learned);
+  EXPECT_FALSE(other.Find(0x1C));
+  // A place learned earlier stays when the token later comes back already down.
+  PickPlaces kept;
+  kept.Frame(0, Holding(0x1C, 4.0f, 2.0f));
+  kept.Frame(0, DownOn(0x1C, 3, 4.0f, 2.0f));
+  kept.Frame(0, CssPort{});  // a fight, the results, the queue image
+  kept.Frame(1, DownOn(0x13, 0, 0.0f, 0.0f));
+  EXPECT_TRUE(kept.Frame(0, DownOn(0x1C, 3, 0.0f, 0.0f)));
+  EXPECT_EQ(kept.Find(0x1C), std::make_pair(4.0f, 2.0f));
+  EXPECT_FALSE(kept.Find(0x13));
+}
+
+TEST(OrcaQueue, AnUnknownPlaceIsPublishedWithNoPick)
+{
+  Identity pick;
+  pick.rating = 1234;
+  pick.character = 0x1C;
+  pick.costume = 3;
+  const Identity known = Publishable(pick, std::make_pair(5.0f, 2.5f));
+  EXPECT_EQ(known.character, 0x1C);
+  EXPECT_EQ(known.costume, 3);
+  EXPECT_EQ(known.x, 5.0f);
+  EXPECT_EQ(known.y, 2.5f);
+  const Identity unknown = Publishable(pick, std::nullopt);
+  EXPECT_FALSE(unknown.HasPick());
+  EXPECT_EQ(unknown.rating, 1234);
+  // No pick is no pick.
+  EXPECT_EQ(Publishable(Identity{}, std::make_pair(1.0f, 1.0f)), Identity{});
+  // On the wire it still carries the rating, and nobody steers it: the joiner's pad is its own.
+  const auto decoded = DecodeIdentity(EncodeIdentity(unknown));
+  ASSERT_TRUE(decoded);
+  EXPECT_EQ(decoded->rating, 1234);
+  EXPECT_FALSE(decoded->HasPick());
+  View v = Room(true);
+  v.ports[1] = CssPort{};
+  v.ports[1].readable = true;
+  // ReadView only keeps an identity with a pick as port 2's.
+  v.pick2 = decoded->HasPick() ? decoded : std::nullopt;
+  State s = Step(v, State{}, 400);
+  s = Step(v, s, 400 + STEER_SETTLE_FRAMES + 4);
+  EXPECT_FALSE(s.pick_set);
+  const Masks m = Gate(v, s);
+  EXPECT_FALSE(m[1].steer);
+  EXPECT_EQ(m[1].buttons & A, 0);
+  // And the host's own steering is never armed for it.
+  ArmOwnPick(unknown);
+  EXPECT_FALSE(OwnPickArmed());
+}
+
+// The prod log behind the fix (Orca 0.3.38): in the room, port 1's own pick went down on character
+// 0xb costume 6 with the hand over it from (-24.86, 4.83) to (-21.25, 4.95); after the ranked set
+// the player was back on their own select with that token already down and readied without moving
+// the hand, and 0.3.38 published "orca queue ready ranked 11 6 (the hand at 0.0, 0.0)". The room's
+// placement now teaches 0xb's place, so the next room steers to it instead of to (0, 0).
+TEST(OrcaQueue, AfterARankedSetTheRoomsPlacementIsTheNextPicksPlace)
+{
+  PickPlaces places;
+  // The room's select: port 1's hand holds the token over 0xb, then puts it down.
+  places.Frame(0, Holding(0xb, -24.86f, 4.83f));
+  places.Frame(0, Holding(0xb, -21.25f, 4.95f));
+  ASSERT_TRUE(places.Frame(0, DownOn(0xb, 6, -21.25f, 4.95f))->learned);
+  // The fights and results: no select.
+  places.Frame(0, CssPort{});
+  // Back on the player's own select after the set: the token is already down, the hand never moved.
+  const auto back = places.Frame(0, DownOn(0xb, 6, 0.0f, 0.0f));
+  ASSERT_TRUE(back);
+  Identity pick;
+  pick.rating = 1500;
+  pick.character = 0xb;
+  pick.costume = 6;
+  const Identity published = Publishable(pick, places.Find(0xb));
+  ASSERT_TRUE(published.HasPick());
+  EXPECT_FLOAT_EQ(published.x, (-24.86f + -21.25f) / 2);
+  EXPECT_FLOAT_EQ(published.y, (4.83f + 4.95f) / 2);
+  const auto decoded = DecodeIdentity(EncodeIdentity(published));
+  ASSERT_TRUE(decoded);
+  EXPECT_EQ(decoded->character, 0xb);
+  EXPECT_NEAR(decoded->x, published.x, 0.01f);
+  EXPECT_NEAR(decoded->y, published.y, 0.01f);
+  // A different pick on the same select (the player swapped characters by hand in the room's
+  // select, so its place was never seen) goes out with no pick rather than 0xb's square.
+  pick.character = 0x13;
+  EXPECT_FALSE(Publishable(pick, places.Find(0x13)).HasPick());
+}

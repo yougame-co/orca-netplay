@@ -38,6 +38,7 @@
 #include "Core/IOS/IOS.h"
 #include "Core/IOS/STM/STM.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/Sandbox.h"
 #include "Core/System.h"
 #include "Core/WiiRoot.h"
 
@@ -184,7 +185,9 @@ void InitControllers(const WindowSystemInfo& wsi)
                                       "mappings intended for the default device may not work.");
   }
 
-  GCAdapter::Init();
+  // Orca: in a session the app's helper owns the GameCube adapter (Orca/Sandbox.h).
+  if (Orca::Sandbox::AdapterAllowed(Orca::SessionActive()))
+    GCAdapter::Init();
   Pad::Initialize();
   Pad::InitializeGBA();
   Keyboard::Initialize();

@@ -4,6 +4,7 @@
 #include "DolphinNoGUI/Platform.h"
 
 #include <OptionParser.h>
+#include <algorithm>
 #include <atomic>
 #include <csignal>
 #include <cstdio>
@@ -21,6 +22,7 @@
 
 #include <fmt/format.h>
 
+#include "AudioCommon/CubebUtils.h"
 #include "Common/CommonPaths.h"
 #include "Common/FileUtil.h"
 #include "Common/IniFile.h"
@@ -39,16 +41,20 @@
 #include "Core/Orca/Activity.h"
 #include "Core/Orca/BootLogs.h"
 #include "Core/Orca/Branding.h"
+#include "Core/Orca/Bridge.h"
 #include "Core/Orca/CrashNote.h"
 #include "Core/Orca/Disc.h"
 #include "Core/Orca/DiscVerify.h"
 #include "Core/Orca/Launch.h"
+#include "Core/Orca/Perf.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/Sandbox.h"
 #include "Core/Orca/Status.h"
 #include "Core/Orca/UX/UX.h"
 #include "Core/System.h"
 #include "DolphinNoGUI/Embed.h"
 #include "VideoCommon/Present.h"
+#include "VideoCommon/VideoBackendBase.h"
 #include "VideoCommon/VideoEvents.h"
 
 #include "UICommon/CommandLineParse.h"
@@ -57,11 +63,17 @@
 #endif
 #include "UICommon/UICommon.h"
 
+#ifdef __APPLE__
+#include "InputCommon/ControllerInterface/Quartz/Quartz.h"
+#endif
+
 static std::unique_ptr<Platform> s_platform;
 // True in embed mode (Embed.h): drawn inside the YouGame app's window, controlled over stdin.
 static bool s_embedded = false;
 // The disc of a --verify run (DiscVerify.h), which checks it and exits without booting.
 static std::string s_verify_disc;
+// --sandbox-probe (ORCA.md "The sandbox"): SandboxProbe instead of a boot.
+static bool s_sandbox_probe = false;
 
 static void signal_handler(int)
 {
@@ -111,8 +123,8 @@ static void EndBootLogs()
 static bool MsgAlertHandler(const char* caption, const char* text, bool yes_no,
                             Common::MsgType style)
 {
-  // When embedded or verifying, log the alert instead of popping a message box.
-  if (s_embedded || !s_verify_disc.empty())
+  // When embedded, verifying or probing, log the alert instead of popping a message box.
+  if (s_embedded || !s_verify_disc.empty() || s_sandbox_probe)
   {
     PrintAlert(text);
     return false;
@@ -338,6 +350,40 @@ static int RefuseBootFile(const Orca::DiscCheck& check)
 }
 
 // The rest of main, after the embed arguments are removed. Returns the exit code.
+// --sandbox-probe (ORCA.md "The sandbox"): what a boot asks of the system before its first frame,
+// with nothing of the player's: no disc, and only the empty folder the app gives it (-u). The desktop
+// app runs it inside its macOS sandbox once per macOS version and Orca version, under the strict
+// profile and, only if that ends the probe, the relaxed one, and plays under the profile that
+// passed. So the profile is chosen by this run alone, never by a player's run, which a crafted disc
+// or setting could end on purpose to be retried under the relaxed one. Says PROBE_OK on stdout.
+static constexpr const char* PROBE_OK = "orca probe ok";
+static int SandboxProbe(const std::string& user_directory)
+{
+  if (user_directory.empty())
+  {
+    fmt::print(stderr, "--sandbox-probe needs -u <folder>\n");
+    return 1;
+  }
+  UICommon::SetUserDirectory(user_directory);
+  UICommon::CreateDirectories();
+  UICommon::Init();
+  Common::ScopeGuard shutdown([] { UICommon::Shutdown(); });
+  // The GPU, as a boot opens it (Metal on a Mac), with no window.
+  const WindowSystemInfo wsi(WindowSystemType::Headless, nullptr, nullptr, nullptr);
+  VideoBackendBase::PopulateBackendInfo(wsi);
+  // The controllers, without the keyboard's global state (on the stdio bridge the app sends it).
+#ifdef __APPLE__
+  ciface::Quartz::SetKeyboardEnabled(false);
+#endif
+  UICommon::InitControllers(wsi);
+  UICommon::ShutdownControllers();
+  // The sound out, as a boot opens it.
+  const bool sound = CubebUtils::GetContext() != nullptr;
+  fmt::print(stdout, "{}{}\n", PROBE_OK, sound ? "" : " (no sound)");
+  std::fflush(stdout);
+  return 0;
+}
+
 static int Run(const int argc, char* argv[], const Embed::Options& embed)
 {
 #ifdef ORCA_MACOS_BUNDLE
@@ -392,6 +438,9 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
   else if (const char* home = std::getenv("HOME"); home && *home)
     user_directory = std::string(home) + "/Library/Application Support/Orca";
 #endif
+
+  if (s_sandbox_probe)
+    return SandboxProbe(user_directory);
 
   if (!s_verify_disc.empty())
   {
@@ -492,13 +541,28 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
     return 1;
   }
 
+  // Inside the app's sandbox (Orca/Sandbox.h): say so in the log, and refuse a user folder Orca may
+  // not write, which would otherwise fail somewhere later with a reason nobody could act on.
+  if (Orca::SessionActive() && Orca::Sandbox::Jailed())
+  {
+    fmt::print(stderr, "Orca: in the app's sandbox (network {}{})\n",
+               Orca::Sandbox::NetModeName(Orca::Sandbox::NetModeFromEnv()),
+               Orca::Bridge::Enabled() ? ", stdio bridge" : "");
+    if (!user_directory.empty() && Orca::Sandbox::WriteDenied(user_directory))
+    {
+      Orca::Status::Error(Orca::Sandbox::DENIED_ERROR, Orca::Sandbox::DENIED_SENTENCE);
+      return Orca::Status::Finish();
+    }
+  }
+
   s_platform = GetPlatform(options);
   if (s_platform && embed.enabled)
     s_platform->SetEmbed(embed);
   if (!s_platform || !s_platform->Init())
   {
     fprintf(stderr, "No platform found, or failed to initialize.\n");
-    if (embed.enabled)
+    // Unless the platform already said why (sandbox_embed: nothing adopted the window).
+    if (embed.enabled && Orca::Status::ExitCode() == 0)
       Embed::Out("error Orca couldn't open its view in the app's window");
     return 1;
   }
@@ -542,6 +606,15 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
   // state, so typing in the app's chat would otherwise reach the game.
   if (embed.enabled)
     Config::SetCurrent(Config::MAIN_INPUT_BACKGROUND_INPUT, false);
+#ifdef __APPLE__
+  // On the stdio bridge the page sends the keyboard as a pad, so read no global key state at all.
+  if (!Orca::Sandbox::OsKeyboardAllowed(Orca::Sandbox::ThisOs(), Orca::SessionActive(),
+                                        Orca::Bridge::Enabled()))
+  {
+    ciface::Quartz::SetKeyboardEnabled(false);
+    fmt::print(stderr, "Orca: no keyboard of its own: the page sends it as a pad\n");
+  }
+#endif
   UICommon::InitControllers(wsi);
   // The in-game UI: overlay, name tags and the app's controllers as the local pad.
   if (Orca::SessionActive())
@@ -590,6 +663,16 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
 
   DolphinAnalytics::Instance().ReportDolphinStart("nogui");
 
+  // The stdio bridge (Orca/Bridge.h): requests go out as protocol lines, and the app's replies come
+  // in with the commands on stdin, so it needs stdin read (embedded, or a test harness's commands).
+  if (Orca::Bridge::Enabled())
+  {
+    if (embed.enabled || Orca::GetEnv("ORCA_TEST_COMMANDS") == "1")
+      Orca::Bridge::SetWriter(Embed::Out);
+    else
+      fmt::print(stderr, "Orca: YOUGAME_STDIO=1 without --embed: the app's bridge is off\n");
+  }
+
   // Tell the app "ready" once the first frame is on screen.
   Common::EventHook first_frame_hook;
   if (embed.enabled)
@@ -611,6 +694,10 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
   {
     s_platform->EnableTestCommands();
     Embed::StartReading();
+    // A harness run steered like the app prints no "ready"; with ORCA_TEST_PERF it reports its
+    // speed from the first frame, so the speed lines can be tested (Orca/Perf.h).
+    if (!Orca::GetEnv("ORCA_TEST_PERF").empty())
+      Orca::Perf::Ready();
   }
 
   if (!BootManager::BootCore(Core::System::GetInstance(), std::move(boot), wsi))
@@ -670,6 +757,19 @@ int main(const int raw_argc, char* raw_argv[])
     return 1;
   }
   s_verify_disc = *verify;
+  // --sandbox-probe: alone, never with --embed or --verify (SandboxProbe).
+  if (const auto it = std::find_if(arg_list.begin() + 1, arg_list.end(),
+                                   [](const char* a) { return std::string_view(a) == "--sandbox-probe"; });
+      it != arg_list.end())
+  {
+    arg_list.erase(it);
+    if (embed->enabled || !s_verify_disc.empty())
+    {
+      fmt::print(stderr, "--sandbox-probe can't be used with --embed or --verify\n");
+      return 1;
+    }
+    s_sandbox_probe = true;
+  }
   s_embedded = embed->enabled;
   if (s_embedded)
   {

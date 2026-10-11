@@ -502,6 +502,35 @@ TEST_F(OrcaBrawlStages, APageTurnGoesThroughThePageButton)
   EXPECT_EQ(ReadState(m)->progress.prefs[1], PokemonStadium);
 }
 
+// The page is both players' view: only the player whose step it is turns it. The repro: the other
+// player presses A on the page button whenever the striker's page shows, so the striker never sees
+// the stage it means to strike.
+TEST_F(OrcaBrawlStages, OnlyThePlayerWhoseStepItIsTurnsThePage)
+{
+  FakeMemory m = Game("scSelStage");
+  Boundary(m);
+  // Port 2 strikes first (the coin). Port 1 on the page button: its A turns nothing.
+  Aim(m, 0, -1);
+  Push(m, 0, A);
+  auto c = StageCursors::Read(m);
+  ASSERT_TRUE(c);
+  EXPECT_EQ(c->page_turn, 0);
+  m.Write32(TASK + 0x244, 0x35);  // the game's hover on the page button
+  for (int i = 0; i < 4; ++i)
+  {
+    Boundary(m);
+    Rollback::InputGate::Masks masks{};
+    Masks(m, &masks);
+    EXPECT_EQ(masks[0].press & PAD_BUTTON_A, 0);
+    EXPECT_EQ(masks[1].press & PAD_BUTTON_A, 0);
+  }
+  EXPECT_EQ(StageCursors::Read(m)->page_turn, 0);
+  // Port 2's own A on it does.
+  Aim(m, 1, -1);
+  Push(m, 1, A);
+  EXPECT_EQ(StageCursors::Read(m)->page_turn & 0x81, 0x81);
+}
+
 TEST_F(OrcaBrawlStages, ResultsMakeTheSetAndLaterGamesBanThenPick)
 {
   FakeMemory m = Game("scSelStage");
@@ -991,6 +1020,22 @@ TEST_F(OrcaBrawlCasual, BothPickAtOnceTheSameStagePlays)
   EXPECT_EQ(s->seed, RS::CasualSeed(ROOM, 1, 2));
   EXPECT_EQ(s->progress.prefs[0], -1);
   EXPECT_EQ(s->progress.prefs[1], -1);
+}
+
+// A casual stage pick is a step both take at once: either player turns the page.
+TEST_F(OrcaBrawlCasual, EitherPlayerTurnsThePage)
+{
+  for (const int port : {0, 1})
+  {
+    FakeMemory m = Game("scSelStage");
+    m.Write32(kBlock + 8, ROOM);
+    Boundary(m);
+    Aim(m, port, -1);
+    Push(m, port, A);
+    const auto c = StageCursors::Read(m);
+    ASSERT_TRUE(c);
+    EXPECT_EQ(c->page_turn & 0x81, 0x80 | port);
+  }
 }
 
 TEST_F(OrcaBrawlCasual, TwoStagesTheCoinTakesOneAndTimeRunsOut)

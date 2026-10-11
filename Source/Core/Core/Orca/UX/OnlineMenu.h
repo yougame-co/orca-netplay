@@ -203,6 +203,22 @@ constexpr u32 MENU_SETTLE_FRAMES = 30;
 // pages are built in one frame and this becomes 1. Leaving the menu before then calls through an
 // unfilled proc table and Brawl hangs, so never exit until it is set. Meaningless at step 0.
 constexpr u32 MENU_BUILT = 0xAC8;
+// Options > Controls (its name list and the name keypad) is a gfTask of its own, "MuName"
+// (muNameTask, sora_menu_name), linked in the same process list as the menu's task (muMenuMain
+// +0x7B4, "MainMenuTask"; gfTask +0x0 its name, +0x4 the previous task, +0x8 the next). The game
+// never leaves the menu while it runs (B backs out of it first); leaving then runs it once more on
+// what the exit tore down: on the list both games freeze, on the keypad both crash (0x80677f54,
+// Brawl and Project+, Orca 0.3.38). Never move while it runs: the friend waits on the host's menu
+// until the host leaves Controls.
+constexpr u32 MENU_TASK = 0x7B4;
+constexpr u32 TASK_PREV = 0x4;
+constexpr u32 TASK_NEXT = 0x8;
+constexpr std::string_view KEYPAD_TASK = "MuName";
+// How many tasks the walk reads each way (a menu has about six).
+constexpr int TASK_WALK_MAX = 64;
+// Whether a task named KEYPAD_TASK is in the process list of the main menu `menu` (the scene).
+// Reads only; a pure function of memory.
+bool KeypadOpen(const GuestMemory& m, u32 menu);
 
 // What one frame reads.
 struct Inputs
@@ -219,6 +235,8 @@ struct Inputs
   u32 exit_code = 0;
   // On muMenuMain with MENU_BUILT set (only then can it be left).
   bool menu_built = false;
+  // On muMenuMain with Options > Controls open (KeypadOpen): the menu can't be left.
+  bool keypad = false;
   int frame = 0;
   // The block's friends bytes (MatchBlock FRIENDS_*).
   u8 tag = 0;

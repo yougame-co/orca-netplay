@@ -36,6 +36,7 @@
 //   +0x1B4..+0x1BF stage select cursors (StageCursors.h)
 //   +0x1C0..+0x1EF queue character select (Queue.h)
 //   +0x1F0         saved-rules flags
+//   +0x1F4..+0x1FF character order: where each hand last held its token (CharOrder.h)
 //   +0x200..+0x20F character order (CharOrder.h)
 //   +0x210..+0x28F ranked set, authoritative (SetBlock.h)
 //   +0x290..+0x297 friend drop-in from the menus (OnlineMenu.h FriendsMove)
@@ -100,7 +101,8 @@ constexpr u32 STEP_SIZE = 0x40;
 constexpr u32 CSS_TIMER = BASE + 0xC0;
 // u8: the port (1-4) that didn't ready in time, or 0. Cleared on leaving the character select.
 constexpr u32 CSS_NO_SHOW = BASE + 0xC2;
-// u8: bit 0 set once a fight has begun (no-shows only count before that).
+// u8: bit 0 set once a fight has begun (this timer's no-shows only count before that; a later
+// game's come from the character order, CharOrder.h NoShow).
 constexpr u32 FOUGHT = BASE + 0xC3;
 // u8: ports in play (bit n = port n+1), from the session's synced plan.
 constexpr u32 PLUGGED = BASE + 0xC4;

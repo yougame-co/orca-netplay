@@ -17,6 +17,7 @@
 #include "Core/CoreTiming.h"
 #include "Core/HW/VideoInterface.h"
 #include "Core/Host.h"
+#include "Core/Orca/Perf.h"
 #include "Core/System.h"
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
@@ -1088,8 +1089,15 @@ void Presenter::Present(PresentInfo* present_info)
   g_gfx->BeginUtilityDrawing();
   if (m_test_framebuffer)
     g_gfx->SetAndClearFramebuffer(m_test_framebuffer.get(), {{0.0f, 0.0f, 0.0f, 1.0f}});
+  // Orca: time spent blocked on the graphics card (waiting for a back buffer, presenting) counts
+  // toward this machine's speed as its GPU share (Orca/Perf.h). In a session this is the CPU
+  // thread.
+  const bool time_gpu = Core::IsCPUThread();
+  auto gpu_start = Clock::now();
   const bool backbuffer_bound =
       m_test_framebuffer || g_gfx->BindBackbuffer({{0.0f, 0.0f, 0.0f, 1.0f}});
+  if (time_gpu)
+    Orca::Perf::AddPresent(Clock::now() - gpu_start);
 
   // Render the XFB to the screen (Orca: only if some of the picture is on it).
   if (backbuffer_bound && m_xfb_entry &&
@@ -1126,7 +1134,19 @@ void Presenter::Present(PresentInfo* present_info)
     }
 
     if (!m_test_framebuffer)
+    {
+      gpu_start = Clock::now();
       g_gfx->PresentBackbuffer();
+      if (time_gpu)
+        Orca::Perf::AddPresent(Clock::now() - gpu_start);
+    }
+    else
+    {
+      // Orca tests (ORCA_TEST_PRESENT): nothing is presented, so the frame's GPU work is submitted
+      // here instead. Metal otherwise keeps every frame's command buffers open and runs out of GPU
+      // memory after a few thousand frames ("Failed to allocate IOGPUDeviceShmem").
+      g_gfx->Flush();
+    }
   }
 
   if (m_xfb_entry)

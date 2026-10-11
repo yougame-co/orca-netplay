@@ -5,12 +5,12 @@
 # Sections: the boot straight to the main menu; the main menu's Play Online, the game's own ONLINE
 # page with no connection (ORCA.md "Online menu": with Orca's texture pack and its rewrite of the
 # menu's text, UX/MenuText.h, nothing on it says Nintendo); everything unlocked; items off by
-# default; Options > Sound's balance held in the middle.
+# default; Options > Sound's balance held in the middle; no random tripping in fights.
 #
 # Found with Orca's harness (ORCA_UX_PROBE watches, RAM dumps and Dolphin's disassembler); the
-# unlock words and the input-lag fix are from the community "Global Brawl Netplay Settings" Gecko
-# code shipped in Dolphin's GameSettings/RSBE01.ini (vBrawl's "Global Brawl Netplay Settings V1"),
-# those parts only.
+# unlock words, the input-lag fix and the no-tripping word are from the community "Global Brawl
+# Netplay Settings" Gecko code shipped in Dolphin's GameSettings/RSBE01.ini (vBrawl's "Global Brawl
+# Netplay Settings V1"), those parts only.
 
 # --- Boot straight to the main menu -------------------------------------------------------------
 
@@ -487,3 +487,24 @@ end
 8117B500 A003066C A003066C    # lhz    r0, 0x66C(r3) (guard)
 8117B504 2C000000 2C000032    # cmpwi  r0, 0 -> 50: right stops at 50
 8117B508 418200B0 408100B0    # beq -> ble 0x8117B5B8 (the handler's end)
+
+# --- Fights: no random tripping -------------------------------------------------------------------
+
+# "No Tripping" [Phantom Wings], the line `0489E910 FFE0F090` of the community "Global Brawl Netplay
+# Settings" code in Dolphin's GameSettings/RSBE01.ini ("disables tripping"), the competitive and
+# netplay standard. A session runs no Gecko codes (Profile.cpp: MAIN_ENABLE_CHEATS off), so through
+# 0.3.39 Brawl in Orca tripped at random. Project+ has no tripping of its own, so PPLUS32.patches
+# doesn't carry it. The trip check (0x8089E820, in sora_melee, which stays loaded from boot) fetches
+# the trip rate param (0xDB3) into f31 and returns true when rate * (chance + f30) beats a random
+# number (0x8003FB64), and false without drawing one when that product is 0. The Gecko word makes
+# the rate f30, the call's own float argument, which is 0: with it the fight never draws there (a
+# harness run of the default inputs: g_mtRandDefault parts at the first check, scMelee frame 402)
+# and nobody trips. The same word, guarded by the param fetch around it; it lands once, at boot.
+# Emulated code: both players run it (the file is in the lobby key), and a rollback or a drop-in
+# keyframe carries it in RAM. Read in RAM on scMelee, 2026-10-11.
+8089E900 7FA3EB78 7FA3EB78    # mr     r3, r29 (the fighter; guard)
+8089E904 38800DB3 38800DB3    # li     r4, 0xDB3 (the trip rate param; guard)
+8089E908 38A00000 38A00000    # li     r5, 0 (guard)
+8089E90C 4BEF8361 4BEF8361    # bl     0x80796C6C (the param's float; guard)
+8089E910 FFE00890 FFE0F090    # fmr    f31, f1 -> fmr f31, f30: the rate is the argument, 0
+8089E914 2C1E0001 2C1E0001    # cmpwi  r30, 1 (the trip's kind; guard)

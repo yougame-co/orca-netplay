@@ -12,6 +12,7 @@
 
 #include "Common/Flag.h"
 #include "Common/WindowSystemInfo.h"
+#include "Core/Orca/Bridge.h"
 #include "DolphinNoGUI/Embed.h"
 
 class Platform
@@ -114,6 +115,8 @@ private:
   std::chrono::steady_clock::time_point m_next_title_check{};
   std::chrono::steady_clock::time_point m_next_room_watch{};
   bool m_room_watch_lost = false;
+  // `orca alive` to the app on the stdio bridge (Orca/Bridge.h Heartbeat): UpdateRunningFlag.
+  Orca::Bridge::Heartbeat m_heartbeat;
 
   std::mutex m_ready_lock;
   std::optional<std::string> m_ready_line;

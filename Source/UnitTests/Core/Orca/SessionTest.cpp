@@ -8,12 +8,13 @@
 #include <deque>
 #include <functional>
 #include <limits>
-#include <memory>
-#include <utility>
 #include <map>
+#include <memory>
 #include <optional>
 #include <random>
 #include <set>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include <cmath>
@@ -29,6 +30,7 @@
 #include "Common/HttpRequest.h"
 #include "Common/WebSocket.h"
 
+#include "Core/Orca/Session/Online.h"
 #include "Core/Orca/Session/PadCodec.h"
 #include "Core/Orca/Session/Session.h"
 #include "Core/Orca/Session/YouGameRoom.h"
@@ -41,7 +43,8 @@ Orca::Net::Step StepSession(Orca::Net::Session& session, Orca::Net::Game& game, 
                             const std::function<Orca::Net::Pad()>& sample_local,
                             const std::function<bool()>& stopping,
                             std::chrono::microseconds stall_wait,
-                            std::chrono::milliseconds give_up_after = {}, bool* gave_up = nullptr);
+                            std::chrono::milliseconds give_up_after = {}, bool* gave_up = nullptr,
+                            std::chrono::nanoseconds* waited = nullptr);
 }  // namespace Rollback
 
 using namespace Orca::Net;
@@ -191,13 +194,18 @@ struct FakeNet
   int direct_loss_percent = 0;
   std::array<std::vector<InFlight>, 2> direct;
   int direct_delivered = 0;
+  // A sender that rewrites its own packets (a modified client), by sending end.
+  std::function<void(int from, Packet* packet)> tamper;
 
   class End final : public Transport
   {
   public:
     End(FakeNet& net, int index) : m_net(net), m_index(index) {}
-    void Send(const Packet& packet) override
+    void Send(const Packet& sent) override
     {
+      Packet packet = sent;
+      if (m_net.tamper)
+        m_net.tamper(m_index, &packet);
       int delay = m_net.latency + m_net.extra[1 - m_index];
       if (m_net.jitter > 0)
         delay += Uniform(m_net.rng, 0, m_net.jitter);
@@ -1150,6 +1158,75 @@ TEST(OrcaSession, LatencyBeyondTheWindowStalls)
     EXPECT_LE(p->session.GetStats().deepest_rollback, config.max_rollback);
   }
   EXPECT_GT(match.CompareConfirmed(), 300);
+}
+
+// A lag switch: one player holds each of its inputs back until just before the other would stall
+// on it, while its packets give its true frame. The other machine ran max_rollback frames on
+// guesses every frame (its opponent reacting to its inputs ~7 frames sooner than it could). It now
+// finds that player late within a few seconds and runs only LATE_STALL_LIMIT frames on guesses for
+// it; an honest link, however slow or jittery, is never found late.
+TEST(OrcaSession, InputsHeldBackAreFoundLate)
+{
+  constexpr int HELD = 5;
+  Match match(Config{}, 1, 0);
+  match.net.tamper = [](int from, Packet* packet) {
+    if (from != 1 || packet->pads.empty())
+      return;
+    const int last = packet->current_frame - HELD;
+    const int keep = last - packet->first_frame + 1;
+    if (keep <= 0)
+    {
+      packet->pads.clear();
+      packet->first_frame = 0;
+    }
+    else if (keep < static_cast<int>(packet->pads.size()))
+    {
+      packet->pads.resize(static_cast<size_t>(keep));
+    }
+  };
+  // How many frames the victim runs on guesses past the late player's inputs, at most, over
+  // `ticks`.
+  const auto guessing = [&match](int ticks) {
+    int most = 0;
+    for (int i = 0; i < ticks; ++i)
+    {
+      match.Play(1);
+      most = std::max(most, match.a->session.CurrentFrame() - 1 -
+                                match.a->session.GetStats().confirmed_frame);
+    }
+    return most;
+  };
+  const int early = guessing(150);
+  EXPECT_GE(early, HELD) << "the late player's inputs come HELD frames late";
+  EXPECT_FALSE(match.a->session.LateSeat(1));
+  match.Play(600);
+  ExpectClean(match);
+  EXPECT_TRUE(match.a->session.LateSeat(1));
+  EXPECT_FALSE(match.b->session.LateSeat(0));
+  EXPECT_EQ(match.a->session.GetStats().late_seats, 1);
+  // Found late, it gets LATE_STALL_LIMIT (3) frames of guesses, where it had max_rollback.
+  const int late = guessing(600);
+  EXPECT_LE(late, 3) << "before it was found late: " << early;
+  ExpectClean(match);
+  EXPECT_GT(match.CompareConfirmed(), 1000);
+
+  // Honest links: slow, jittery, lossy direct beside the relay. Nobody is late.
+  for (const auto& [latency, jitter, direct_loss] :
+       {std::tuple{4, 3, -1}, std::tuple{12, 6, -1}, std::tuple{6, 4, 25}})
+  {
+    SCOPED_TRACE(fmt::format("latency {} jitter {} direct loss {}", latency, jitter, direct_loss));
+    Match honest(Config{}, latency, jitter);
+    if (direct_loss >= 0)
+    {
+      honest.net.direct_latency = 1;
+      honest.net.direct_jitter = 2;
+      honest.net.direct_loss_percent = direct_loss;
+    }
+    honest.Play(1800);
+    ExpectClean(honest);
+    EXPECT_EQ(honest.a->session.GetStats().late_seats, 0);
+    EXPECT_EQ(honest.b->session.GetStats().late_seats, 0);
+  }
 }
 
 // A late port name asks for a re-run. RerunFrom refuses when no snapshot is in reach (frames that
@@ -3066,7 +3143,9 @@ TEST(OrcaSessionSparse, RollbackBetweenSnapshotsReRunsFromTheOlderOne)
       packet.first_frame = next;
       for (; next <= session->CurrentFrame() - lag; ++next)
         packet.pads.push_back(pad(next));
-      packet.current_frame = session->CurrentFrame();
+      // An honest peer's packet carries its inputs up to its own frame (and its delay): it was at
+      // that frame when it sent them, `lag` frames ago.
+      packet.current_frame = std::max(0, session->CurrentFrame() - lag);
       return {packet};
     }
     bool Connected() const override { return true; }
@@ -3950,6 +4029,52 @@ TEST(OrcaDropIn, RosterThatTakesBackTheJoinersSeatEndsTheSession)
     h.Send(h.Scripted(dropped));
     EXPECT_TRUE(h.joiner->session.Error().empty()) << h.joiner->session.Error();
   }
+}
+
+// A host roster or history that takes back the joiner's seat is the host's doing: the joiner's game
+// goes on (ReportSessionEnd says it can), it is never this machine's own failure.
+TEST(OrcaDropIn, HostRosterThatEndsTheSessionIsThePeersFault)
+{
+  const auto ended_by = [](const char* what, const std::function<void(ScriptedHost&)>& send) {
+    SCOPED_TRACE(what);
+    ScriptedHost h;
+    h.PlayUntilLive(60);
+    if (::testing::Test::HasFatalFailure())
+      return;
+    send(h);
+    const std::string error = h.joiner->session.Error();
+    ASSERT_FALSE(error.empty());
+    EXPECT_TRUE(h.joiner->session.ErrorFromPeer()) << error;
+    EXPECT_FALSE(Orca::Online::IsDesync(error)) << error;
+    EXPECT_TRUE(Orca::Online::ReportSessionEnd(error, h.joiner->session.ErrorFromPeer())) << error;
+  };
+  ended_by("plug-in reset", [](ScriptedHost& h) {
+    auto reset = h.roster;
+    reset[1] = {NEVER, NEVER, NEVER};
+    h.Send(h.Scripted(reset));
+  });
+  ended_by("live frame moved", [](ScriptedHost& h) {
+    auto moved = h.roster;
+    moved[1].live_from = h.joiner->session.CurrentFrame() + 4096;
+    h.Send(h.Scripted(moved));
+  });
+  ended_by("unplug moved later", [](ScriptedHost& h) {
+    auto later = h.roster;
+    later[1].unplug_from = NEVER;
+    auto earlier = h.roster;
+    earlier[1].unplug_from = h.joiner->session.CurrentFrame() + 600;
+    h.Send(h.Scripted(earlier));
+    h.Send(h.Scripted(later));
+  });
+  ended_by("history past the live frame", [](ScriptedHost& h) {
+    for (int i = 0; i < 3 && h.joiner->session.Error().empty(); ++i)
+      h.Send(h.ScriptedHistory(h.roster));
+  });
+  ended_by("an invalid packet", [](ScriptedHost& h) {
+    Packet p = h.Scripted(h.roster);
+    p.current_frame = -5;
+    h.Send(std::move(p));
+  });
 }
 
 // The joiner is plugged in only once it holds the history up to its live frame: a plug-in roster

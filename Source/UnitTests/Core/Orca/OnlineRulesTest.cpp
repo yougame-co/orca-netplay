@@ -181,6 +181,45 @@ FakeMemory Locked(Mode mode, Ruleset ruleset, std::string_view scene = "scSelctC
 }
 }  // namespace
 
+// A joiner's keyframe carries the host's set as its game holds it: a first join (no games of the
+// room's match known) takes only a set not begun, and a rejoin no more games than it played or saw
+// decided. A history that already holds games the joiner never played (a set decided after one real
+// game) is refused, as a header that isn't the room's is.
+TEST(OrcaOnlineRules, AJoinTakesNoSetGamesItDidntSee)
+{
+  const SetBlock::SetState fresh;
+  EXPECT_TRUE(SetFitsJoin(fresh, 0));
+  EXPECT_TRUE(SetFitsJoin(fresh, -1));
+  // One game won by the host's port, planted in its history before the join.
+  SetBlock::SetState planted = fresh;
+  planted.games = 1;
+  planted.wins = {1, 0};
+  planted.last_winner = 0;
+  planted.records[0].start = 4210;
+  planted.records[0].winner = 0;
+  planted.records[0].how = SetBlock::How::Results;
+  EXPECT_FALSE(SetFitsJoin(planted, 0));
+  // A set already decided, or only a record or a tiebreak streak written.
+  SetBlock::SetState decided = planted;
+  decided.games = 2;
+  decided.wins = {2, 0};
+  decided.done = 1;
+  decided.winner = 0;
+  EXPECT_FALSE(SetFitsJoin(decided, 0));
+  EXPECT_FALSE(SetFitsJoin(decided, 1));
+  SetBlock::SetState record = fresh;
+  record.records[3].winner = 1;
+  EXPECT_FALSE(SetFitsJoin(record, 0));
+  SetBlock::SetState streak = fresh;
+  streak.tb_streak = 2;
+  EXPECT_FALSE(SetFitsJoin(streak, 0));
+  // A player back after a dropped link, who played game 1: that game is its own.
+  EXPECT_TRUE(SetFitsJoin(planted, 1));
+  EXPECT_TRUE(SetFitsJoin(decided, 2));
+  // Not checked (a friends or casual room).
+  EXPECT_TRUE(SetFitsJoin(decided, -1));
+}
+
 TEST(OrcaOnlineRules, NoHeaderInTheGamesDeadCode)
 {
   FakeMemory m = Game("scSelctCharacter");

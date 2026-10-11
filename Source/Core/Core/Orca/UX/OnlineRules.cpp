@@ -485,6 +485,7 @@ struct Expectation
   Mode mode = Mode::None;
   std::string code;
   u8 flags = 0;
+  int known_games = -1;
 };
 std::mutex s_mutex;
 // Room code for the wanted header. Guarded by s_mutex.
@@ -956,10 +957,26 @@ void SetHeaderFree(bool free)
   s_header_free = free;
 }
 
-void ExpectHeader(Mode mode, std::string_view code, u8 flags)
+void ExpectHeader(Mode mode, std::string_view code, u8 flags, int known_games)
 {
   std::lock_guard lock(s_mutex);
-  s_expect = Expectation{mode, std::string(code), flags};
+  s_expect = Expectation{mode, std::string(code), flags, known_games};
+}
+
+bool SetFitsJoin(const SetBlock::SetState& set, int known_games)
+{
+  if (known_games < 0)
+    return true;
+  if (set.games > known_games || set.wins[0] + set.wins[1] > known_games)
+    return false;
+  if (known_games > 0)
+    return true;
+  // None known: the set hasn't begun.
+  return set.games == 0 && set.wins == std::array<u8, 2>{0, 0} && set.done == 0 &&
+         set.winner == SetBlock::NO_PORT && set.last_winner == SetBlock::NO_PORT && !set.tiebreak &&
+         set.tb_streak == 0 && std::ranges::all_of(set.records, [](const SetBlock::GameRecord& r) {
+           return r == SetBlock::GameRecord{};
+         });
 }
 
 bool HeaderFitsRoom(const Header& h, Mode mode, Ruleset ruleset, std::string_view code, u8 flags)
@@ -1060,9 +1077,13 @@ void OnFrame(const Core::CPUThreadGuard& guard, int frame, bool resimulating, bo
   GuardMemory m(guard);
   if (Orca::Net::ReplayScope::Playing())
   {
-    if (const auto& header = Orca::Net::ReplayScope::Current()->header)
+    // Never another game's ruleset (Net::HeadersFitRuleset refuses such a replay first).
+    if (const auto& header = Orca::Net::ReplayScope::Current()->header;
+        header && (header->ruleset == 0 || static_cast<Ruleset>(header->ruleset) == ruleset))
+    {
       WriteHeader(m, static_cast<Mode>(header->mode), static_cast<Ruleset>(header->ruleset),
                   header->coin, header->room, header->flags);
+    }
   }
   // The room code (made by the server) decides game 1's first striker, so neither player chooses.
   Header wanted;
@@ -1128,7 +1149,19 @@ void OnFrame(const Core::CPUThreadGuard& guard, int frame, bool resimulating, bo
       const bool ok =
           test ? h.Locked() && h.mode == test->mode && h.ruleset == ruleset :
                  HeaderFitsRoom(h, expect.mode, ruleset, expect.code, expect.flags);
-      if (!ok)
+      // A ranked room's set as the host's game holds it: never games this player didn't see.
+      const SetBlock::SetState set = SetBlock::ReadSet(m);
+      const bool set_ok =
+          test || expect.mode != Mode::Ranked || SetFitsJoin(set, expect.known_games);
+      if (ok && !set_ok)
+      {
+        WARN_LOG_FMT(ROLLBACK,
+                     "Online rules: the host's game holds a set at {} games ({}-{}, done {}), this "
+                     "player knows of {} in the room: mismatch",
+                     set.games, set.wins[0], set.wins[1], set.done, expect.known_games);
+        s_mismatch = "mismatch";
+      }
+      else if (!ok)
       {
         const std::string room =
             test ? std::string("the test knob's mode") :

@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <optional>
+#include <utility>
 #include <cstdlib>
 #include <string_view>
 
@@ -77,6 +79,53 @@ std::string Clock(int frames)
   return fmt::format("{}:{:02}", seconds / 60, seconds % 60);
 }
 
+// A hand position in State's anchor units (1/64), from the float's bits (no float arithmetic, so
+// every machine agrees). Nullopt off any sane position.
+std::optional<s16> ToAnchor(float value)
+{
+  const std::optional<s64> fixed = Queue::ToFixed(value);
+  if (!fixed)
+    return std::nullopt;
+  const s64 v = *fixed / (Queue::FIXED_ONE / 64);
+  if (v < -0x7FFF || v > 0x7FFF)
+    return std::nullopt;
+  return static_cast<s16>(v);
+}
+
+// Where `port`'s token goes back to: its anchor, else the other port's, else the grid's middle.
+std::pair<float, float> AnchorFor(const State& state, int port)
+{
+  for (const int p : {port, 1 - port})
+  {
+    if (state.anchored & (1 << p))
+      return {state.anchor_x[p] / 64.0f, state.anchor_y[p] / 64.0f};
+  }
+  return {kGridMiddleX, kGridMiddleY};
+}
+
+// Where Orca steers `port`'s hand, its token in hand over no character: the anchor, or the grid's
+// middle once the hand is within a unit of it (an anchor at a character's edge, the hand stopped
+// just outside). Integer comparisons only.
+std::pair<float, float> SteerTarget(const State& state, int port, const CssPort& p)
+{
+  const std::pair<float, float> anchor = AnchorFor(state, port);
+  const std::optional<s64> x = Queue::ToFixed(p.hand_x), y = Queue::ToFixed(p.hand_y);
+  const std::optional<s64> ax = Queue::ToFixed(anchor.first), ay = Queue::ToFixed(anchor.second);
+  if (x && y && ax && ay)
+  {
+    const s64 dx = *x - *ax, dy = *y - *ay;
+    if ((dx < 0 ? -dx : dx) < Queue::FIXED_ONE && (dy < 0 ? -dy : dy) < Queue::FIXED_ONE)
+      return {kGridMiddleX, kGridMiddleY};
+  }
+  return anchor;
+}
+
+// The current turn's time is up.
+bool TimedOut(const State& state)
+{
+  return state.elapsed >= PICK_FRAMES;
+}
+
 // Port `port`'s L and R from its raw buttons, as State::held keeps them.
 u8 HeldBits(int port, u16 raw)
 {
@@ -141,7 +190,21 @@ State Advance(const SetView& set, const CssView& css, const State& state, int fr
   State s = state;
   const u32 now = static_cast<u32>(frame);
   const u32 elapsed = now >= s.since ? now - s.since : 0;
-  s.elapsed = static_cast<u16>(std::min<u32>(elapsed, 0xFFFF));
+  // Past 0xFFFF frames it keeps alternating, so presses made every other frame never stop.
+  s.elapsed = static_cast<u16>(elapsed <= 0xFFFF ? elapsed : 0xFFFE | (elapsed & 1));
+  // Each hand's last place over a character with its token in hand (State::anchored).
+  for (int port = 0; port < 2; ++port)
+  {
+    const CssPort& p = css.ports[port];
+    if (!p.human || p.placed || p.character == kNoCharacter || !p.hand)
+      continue;
+    const std::optional<s16> x = ToAnchor(p.hand_x), y = ToAnchor(p.hand_y);
+    if (!x || !y)
+      continue;
+    s.anchored = static_cast<u8>(s.anchored | (1 << port));
+    s.anchor_x[port] = *x;
+    s.anchor_y[port] = *y;
+  }
   if (elapsed == 0 || s.step == Step::Done)
     return s;
   // Lock-in is a new raw Start press with the token placed on a character.
@@ -166,7 +229,9 @@ State Advance(const SetView& set, const CssView& css, const State& state, int fr
       s.locked = static_cast<u8>(s.locked | (1 << second));
       keep(second);
     }
-    next = next || locks_in(first);
+    // A first pick that timed out with the token in hand ends once Orca has put it down (Gate),
+    // so the second picker never picks before the first pick is down.
+    next = (next && css.ports[first].Down()) || locks_in(first);
   }
   else
   {
@@ -208,22 +273,35 @@ Masks Gate(const SetView& set, const CssView& css, const State& state)
       mask.buttons |= PAD_BUTTON_B;
     return mask;
   };
-  // After your turn: no input, unless time ran out with the token in hand. Then you can only move
-  // and place it, and Orca places it on the character under the hand.
-  const auto done = [&css, even](int port) {
+  // After your turn: no input. A token still in hand goes down for you: Orca brings the hand back
+  // to its anchor (CharOrder.h) and presses A over a character, the stick its own meanwhile.
+  const auto done = [&css, &state, even](int port) {
     const CssPort& p = css.ports[port];
     if (p.placed)
       return ALL;
     Mask mask;
     mask.buttons = Rollback::InputGate::ALL_BUTTONS & ~PAD_BUTTON_A;
-    if (even && p.character != kNoCharacter)
-      mask.press = PAD_BUTTON_A;
+    mask.main_stick = true;
+    if (p.character != kNoCharacter)
+    {
+      if (even)
+        mask.press = PAD_BUTTON_A;
+    }
+    else if (p.hand)
+    {
+      const auto [x, y] = SteerTarget(state, port, p);
+      const auto [stick_x, stick_y] = Queue::SteerToward(p.hand_x, p.hand_y, x, y);
+      mask.steer = true;
+      mask.steer_x = stick_x;
+      mask.steer_y = stick_y;
+    }
     return mask;
   };
   switch (state.step)
   {
   case Step::First:
-    masks[first] = picking(first);
+    // Time ran out with the token in hand: it goes down before the second picker's turn.
+    masks[first] = TimedOut(state) && !css.ports[first].Down() ? done(first) : picking(first);
     // WinnerFirst: the other player waits. Free: the winner may pick and lock in, then waits.
     if (set.order == Order::WinnerFirst || (state.locked & (1 << second)))
       masks[second] = set.order == Order::WinnerFirst ? ALL : done(second);
@@ -284,6 +362,13 @@ std::string Line(const SetView& set, const CssView& css, const State& state,
   const std::string left = Clock(PICK_FRAMES - state.elapsed);
   const int first = state.first & 1;
   const int second = 1 - first;
+  // The first pick's time is up with its token in hand: it is going down.
+  if (state.step == Step::First && TimedOut(state) && !css.ports[first].Down())
+  {
+    if (first == local)
+      return "Time's up: your token goes on a character";
+    return fmt::format("Waiting for {} to put the token down", names[first]);
+  }
   // The current picker's next action: pick with A, then press Start.
   const auto todo = [&css](int port) {
     return css.ports[port].Down() ? "Start locks it in · B to change" : "A on a character, then Start";
@@ -319,14 +404,28 @@ u8 LockedPorts(const SetView& set, const CssView& css, const State& state)
   {
   case Step::First:
     return set.order == Order::Free ? static_cast<u8>(state.locked & (1 << (1 - first))) : 0;
+  // Never a token still in hand.
   case Step::Second:
-    return static_cast<u8>(1 << first);
+    return css.ports[first].placed ? static_cast<u8>(1 << first) : 0;
   case Step::Done:
-    return 3;
+    return static_cast<u8>((css.ports[0].placed ? 1 : 0) | (css.ports[1].placed ? 2 : 0));
   case Step::Idle:
     break;
   }
   return 0;
+}
+
+int NoShow(const SetView& set, const CssView& css, const State& state)
+{
+  if (!Active(set, css, state) || state.step != Step::Done || !TimedOut(state))
+    return -1;
+  const int first = state.first & 1;
+  for (const int port : {1 - first, first})
+  {
+    if (!css.ports[port].placed)
+      return port;
+  }
+  return -1;
 }
 
 int MkFreePicker(const std::array<int, 2>& characters, int meta_knight)
@@ -396,6 +495,12 @@ CssView ReadCss(const GuestMemory& m)
       p.placed = m.Read8(area + AREA_IN_HAND) == 0;
       p.flying = m.Read8(area + AREA_FLYING) != 0;
     }
+    if (const Rules::CssHand hand = Rules::ReadCssHand(m, static_cast<int>(i)); hand.valid)
+    {
+      p.hand = true;
+      p.hand_x = hand.x;
+      p.hand_y = hand.y;
+    }
     // Raw buttons from the latch (zero when the latch isn't running).
     const u32 raw = Queue::RAW + 2 * i, prev = Queue::RAW_PREV + 2 * i;
     if (m.Valid(raw + 1) && m.Valid(prev + 1))
@@ -422,6 +527,15 @@ State ReadState(const GuestMemory& m)
   s.since = m.Read32(kArea + AT_SINCE);
   s.elapsed = m.Read16(kArea + AT_ELAPSED);
   s.held = m.Read8(kArea + AT_HELD) & 0x0F;
+  if (m.Valid(kAnchorArea) && m.Valid(kAnchorArea + kAnchorAreaSize - 1))
+  {
+    s.anchored = m.Read8(kAnchorArea) & 3;
+    for (u32 port = 0; port < 2; ++port)
+    {
+      s.anchor_x[port] = static_cast<s16>(m.Read16(kAnchorArea + 4 + 4 * port));
+      s.anchor_y[port] = static_cast<s16>(m.Read16(kAnchorArea + 6 + 4 * port));
+    }
+  }
   return s;
 }
 
@@ -451,6 +565,27 @@ int WriteState(GuestMemory& m, const State& s)
   put8(AT_ELAPSED + 1, static_cast<u8>(s.elapsed));
   put8(AT_HELD, s.held);
   put8(AT_HELD + 1, 0);
+  if (m.Valid(kAnchorArea) && m.Valid(kAnchorArea + kAnchorAreaSize - 1))
+  {
+    const auto at = [&](u32 offset, u8 v) {
+      if (m.Read8(kAnchorArea + offset) != v)
+      {
+        m.Write8(kAnchorArea + offset, v);
+        ++changed;
+      }
+    };
+    at(0, s.anchored);
+    for (u32 i = 1; i < 4; ++i)
+      at(i, 0);
+    for (u32 port = 0; port < 2; ++port)
+    {
+      const u16 x = static_cast<u16>(s.anchor_x[port]), y = static_cast<u16>(s.anchor_y[port]);
+      at(4 + 4 * port, static_cast<u8>(x >> 8));
+      at(5 + 4 * port, static_cast<u8>(x));
+      at(6 + 4 * port, static_cast<u8>(y >> 8));
+      at(7 + 4 * port, static_cast<u8>(y));
+    }
+  }
   return changed;
 }
 
@@ -515,8 +650,19 @@ void Frame(const Core::CPUThreadGuard& guard, int frame, bool resimulating,
   const State after = Advance(set, css, before, frame);
   if (after != before)
     WriteState(m, after);
+  // A token still in hand long after both turns: that player is the ranked no-show.
+  const int no_show = TestActive() ? -1 : NoShow(set, css, after);
+  const bool new_no_show = no_show >= 0 && m.Valid(MatchBlock::CSS_NO_SHOW) &&
+                           m.Read8(MatchBlock::CSS_NO_SHOW) == 0;
+  if (new_no_show)
+    m.Write8(MatchBlock::CSS_NO_SHOW, static_cast<u8>(no_show + 1));
   if (resimulating)
     return;
+  if (new_no_show)
+  {
+    NOTICE_LOG_FMT(ROLLBACK, "Character order: frame {} game {}: port {}'s token is still in hand",
+                   frame, after.game, no_show + 1);
+  }
   SetRuleLine(Line(set, css, after, ports));
   const int picker = Picker(css, after);
   s_picker.store(picker, std::memory_order_relaxed);

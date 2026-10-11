@@ -13,9 +13,12 @@
 #include <chrono>
 #include <functional>
 #include <optional>
+#include <utility>
+#include <vector>
 
 #include "Core/Orca/Session/Events.h"
 #include "Core/Orca/Session/Session.h"
+#include "Core/Orca/Session/YouGameRoom.h"
 
 namespace Core
 {
@@ -186,6 +189,66 @@ struct HomeInputs
   bool lingering = false;
 };
 bool MayComeHome(const HomeInputs& in);
+
+// Time this game spent held on the other players' inputs, across steps. One stall ends at the
+// silence limit, but a player who lets one input through just before each limit would hold the
+// game forever; past STALL_BUDGET in the last STALL_WINDOW they count as silent all the same.
+class StallBudget
+{
+public:
+  using Clock = std::chrono::steady_clock;
+  static constexpr std::chrono::seconds STALL_WINDOW{60};
+  static constexpr std::chrono::seconds STALL_BUDGET{15};
+  // A stall from `start` to `end`.
+  void Add(Clock::time_point start, Clock::time_point end);
+  // Stalled time in the window ending `now`, with a stall still going on since `ongoing_since`.
+  Clock::duration Stalled(Clock::time_point now,
+                          std::optional<Clock::time_point> ongoing_since = std::nullopt) const;
+  bool Spent(Clock::time_point now,
+             std::optional<Clock::time_point> ongoing_since = std::nullopt) const
+  {
+    return Stalled(now, ongoing_since) >= STALL_BUDGET;
+  }
+  void Clear() { m_stalls.clear(); }
+
+private:
+  std::vector<std::pair<Clock::time_point, Clock::time_point>> m_stalls;
+};
+
+// A joiner's own port values: its name in the room (empty: unknown), and its controls and queue
+// identity as its hello sent them (Online::HelloControls, HelloQueue).
+struct OwnValues
+{
+  std::string name;
+  std::vector<u8> controls;
+  std::vector<u8> queue;
+};
+// Whether the host's port values (KeyframeInfo::names) keep this joiner's own `seat` as it sent it.
+// The host decides every port's values so every machine writes the same bytes, but a player's own
+// controls and pick are never the host's to choose: the entry in force at its plug-in frame (the
+// newest one while that isn't known, `plug_from` NEVER) and every later one must hold them. No
+// entry at all is fine only for a player who sent none.
+bool OwnValuesKept(const std::vector<Orca::Net::KeyframeInfo::Name>& names, int seat, int plug_from,
+                   const OwnValues& own);
+
+// A queue room's match with no verdict yet, when this game's session with the opponent ends or its
+// wait for the verdict (Linger) runs out.
+struct VerdictWaitInputs
+{
+  // A casual or ranked room (not a friends room), its match still being decided (MatchLive), the
+  // ranked set not over, and the room still up.
+  bool queue_room = false;
+  bool match_live = false;
+  bool set_over = false;
+  bool room_ended = false;
+  // The session ended for the opponent's doing (Session::ErrorFromPeer), or the wait for the
+  // verdict ran out with the room still open.
+  bool from_peer = false;
+  bool waited_out = false;
+};
+// Whether this game reports the room's match void before anything else (Online::ReportPeerFault),
+// so that its leaving, or its silence while it waits, can't settle the match for the opponent.
+bool VoidFirst(const VerdictWaitInputs& in);
 
 // What the session does, at the same boundary, with a With Anyone pick (Casual or Ranked) the frame
 // hook saw while the game wasn't alone (UX/OnlineMenu.h TakeLobbyPick). Casual and Ranked leave the

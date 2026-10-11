@@ -168,12 +168,14 @@ namespace
 {
 std::mutex s_host_overlay_mutex;
 std::function<void()> s_host_overlay;
+std::function<void()> s_host_overlay_release;
 }  // namespace
 
-void SetHostOverlay(std::function<void()> draw)
+void SetHostOverlay(std::function<void()> draw, std::function<void()> release)
 {
   std::lock_guard lock{s_host_overlay_mutex};
   s_host_overlay = std::move(draw);
+  s_host_overlay_release = std::move(release);
 }
 
 void DrawHostOverlay()
@@ -181,6 +183,13 @@ void DrawHostOverlay()
   std::lock_guard lock{s_host_overlay_mutex};
   if (s_host_overlay)
     s_host_overlay();
+}
+
+void ReleaseHostOverlay()
+{
+  std::lock_guard lock{s_host_overlay_mutex};
+  if (s_host_overlay_release)
+    s_host_overlay_release();
 }
 
 void DrawMessages()

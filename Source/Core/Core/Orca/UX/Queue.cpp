@@ -715,6 +715,70 @@ std::optional<GCPadStatus> OwnPickPad()
   return Own().armed ? Own().pad : std::nullopt;
 }
 
+// ---- Where a pick's square is ----
+
+std::optional<PickPlaces::Placed> PickPlaces::Frame(int port, const CssPort& css)
+{
+  if (port < 0 || port >= 2)
+    return std::nullopt;
+  Hover& hover = m_hover[port];
+  if (!css.placed && css.hand_target == Rules::CSS_HAND_GRID_HOLDING &&
+      css.character != NO_CHARACTER)
+  {
+    if (hover.character != css.character)
+    {
+      hover.character = css.character;
+      hover.first_x = css.hand_x;
+      hover.first_y = css.hand_y;
+    }
+    hover.last_x = css.hand_x;
+    hover.last_y = css.hand_y;
+  }
+  std::optional<Placed> out;
+  if (css.placed && !m_was_placed[port])
+  {
+    Placed p;
+    p.character = css.character;
+    p.costume = css.costume;
+    p.learned = hover.character == css.character;
+    p.last_x = hover.last_x;
+    p.last_y = hover.last_y;
+    p.first_x = hover.first_x;
+    p.first_y = hover.first_y;
+    if (p.learned)
+    {
+      m_places[css.character] = {(hover.first_x + hover.last_x) / 2,
+                                 (hover.first_y + hover.last_y) / 2};
+    }
+    out = p;
+  }
+  m_was_placed[port] = css.placed;
+  return out;
+}
+
+std::optional<std::pair<float, float>> PickPlaces::Find(int character) const
+{
+  const auto it = m_places.find(character);
+  if (it == m_places.end())
+    return std::nullopt;
+  return it->second;
+}
+
+Identity Publishable(Identity pick, const std::optional<std::pair<float, float>>& place)
+{
+  if (!pick.HasPick())
+    return pick;
+  if (!place)
+  {
+    pick.character = -1;
+    pick.x = pick.y = 0;
+    return pick;
+  }
+  pick.x = place->first;
+  pick.y = place->second;
+  return pick;
+}
+
 // ---- Memory ----
 
 bool CssTaskReadable(const GuestMemory& m)
@@ -899,21 +963,8 @@ struct Local
   bool printed_ready = false;
   Identity printed;
   SkipHold skip;
-  std::array<bool, 2> was_placed{};
-  // Where each hand first and last hovered over one character while holding its token. The
-  // midpoint is used as the pick's position, safely inside the character's square.
-  struct Hover
-  {
-    int character = -1;
-    std::pair<float, float> first{}, last{};
-    std::pair<float, float> Middle() const
-    {
-      return {(first.first + last.first) / 2, (first.second + last.second) / 2};
-    }
-  };
-  std::array<Hover, 2> hover{};
-  std::pair<float, float> pick_place{};
-  int pick_place_character = -1;
+  // Each character's place on the select, learned from the hands (PickPlaces).
+  PickPlaces places;
 };
 Local& L()
 {
@@ -963,11 +1014,6 @@ std::string NameFor(const std::vector<Events::PortInfo>& ports, int port, int* r
       return p.name;
   }
   return fmt::format("Player {}", port + 1);
-}
-
-bool solo_css_for_pick(const View& v)
-{
-  return v.queue2 && v.solo && v.css;
 }
 
 }  // namespace
@@ -1288,32 +1334,22 @@ void Frame(const Core::CPUThreadGuard& guard, int frame, bool resimulating,
   Local& l = L();
   for (int p = 0; p < 2 && v.queue2 && v.css; ++p)
   {
-    const CssPort& port = v.ports[p];
-    Local::Hover& hover = l.hover[p];
-    if (!port.placed && port.hand_target == Rules::CSS_HAND_GRID_HOLDING &&
-        port.character != NO_CHARACTER)
+    const auto placed = l.places.Frame(p, v.ports[p]);
+    if (!placed)
+      continue;
+    if (placed->learned)
     {
-      if (hover.character != port.character)
-      {
-        hover.character = port.character;
-        hover.first = {port.hand_x, port.hand_y};
-      }
-      hover.last = {port.hand_x, port.hand_y};
-    }
-    if (port.placed && !l.was_placed[p])
-    {
-      const auto middle = hover.character == port.character ? hover.Middle() : hover.last;
       NOTICE_LOG_FMT(ROLLBACK, "Queue: frame {}: port {} put its token on character {:#x} costume "
                      "{} (the hand held it at {:.2f}, {:.2f}; over it from {:.2f}, {:.2f})",
-                     frame, p + 1, port.character, port.costume, hover.last.first,
-                     hover.last.second, hover.first.first, hover.first.second);
-      if (p == 0 && solo_css_for_pick(v))
-      {
-        l.pick_place = middle;
-        l.pick_place_character = port.character;
-      }
+                     frame, p + 1, placed->character, placed->costume, placed->last_x,
+                     placed->last_y, placed->first_x, placed->first_y);
     }
-    l.was_placed[p] = port.placed;
+    else
+    {
+      NOTICE_LOG_FMT(ROLLBACK, "Queue: frame {}: port {}'s token is on character {:#x} costume {} "
+                     "(no hand over it, so no place learned)",
+                     frame, p + 1, placed->character, placed->costume);
+    }
   }
   const bool solo_css = v.queue2 && v.solo && v.css;
   // Only a solo frame can set this. A non-solo frame (a pending `host` or `join`) leaves it.
@@ -1329,25 +1365,32 @@ void Frame(const Core::CPUThreadGuard& guard, int frame, bool resimulating,
     Identity pick;
     pick.character = own.placed ? own.character : -1;
     pick.costume = own.costume;
-    if (own.placed && l.pick_place_character == own.character)
-    {
-      pick.x = l.pick_place.first;
-      pick.y = l.pick_place.second;
-    }
     if (ready && (!l.printed_ready || l.printed.character != pick.character ||
                   l.printed.costume != pick.costume))
     {
+      // Only a pick whose place is known is put back by steering; otherwise the player picks by
+      // hand in the room.
+      const Identity published = Publishable(pick, l.places.Find(pick.character));
       {
         std::lock_guard lk(s_mutex);
-        s_pick = pick;
+        s_pick = published;
       }
       PublishIdentity();
       l.printed_ready = true;
       l.printed = pick;
       const std::string text = fmt::format("orca queue ready {} {} {}", v.ranked ? "ranked" : "casual",
                                            pick.character, pick.costume);
-      NOTICE_LOG_FMT(ROLLBACK, "Queue: frame {}: {} (the hand at {:.1f}, {:.1f})", frame, text,
-                     pick.x, pick.y);
+      if (published.HasPick())
+      {
+        NOTICE_LOG_FMT(ROLLBACK, "Queue: frame {}: {} (the hand at {:.1f}, {:.1f})", frame, text,
+                       published.x, published.y);
+      }
+      else
+      {
+        NOTICE_LOG_FMT(ROLLBACK, "Queue: frame {}: {} (its place is unknown: picked by hand in the "
+                       "room)",
+                       frame, text);
+      }
       Orca::Status::Line(text);
     }
     else if (!ready && l.printed_ready)

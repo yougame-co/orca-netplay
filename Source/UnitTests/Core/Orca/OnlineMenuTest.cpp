@@ -1659,6 +1659,48 @@ TEST(OrcaOnlineMenuDropIn, AMenuStillLoadingIsNeverLeft)
   EXPECT_EQ(RunUntilMove(in, 100), 3121 + static_cast<int>(FriendsMove::MENU_SETTLE_FRAMES));
 }
 
+TEST(OrcaOnlineMenuDropIn, TheNameKeypadIsNeverLeft)
+{
+  // Project+, Orca 0.3.38 (reports 6c4ed71a, d3e6d812): the host typed a name (Options > Controls >
+  // New entry) when the friend plugged in; leaving the menu with the keypad open crashed both games
+  // at 0x80677f54. With the keypad open the friend waits, however long; once it closes, the built
+  // menu counts its half second again.
+  Inputs in = OnMenu(700);
+  in.keypad = true;
+  in.plugged = 0x03;
+  Outputs out = Decide(in);
+  EXPECT_EQ(out.pending, 1);
+  EXPECT_EQ(out.menu_since, 0u);
+  EXPECT_FALSE(out.move);
+  in = After(in, out);
+  for (; in.frame < 2000;)
+  {
+    out = Decide(in);
+    ExpectIdempotent(in, out);
+    EXPECT_FALSE(out.move) << in.frame;
+    EXPECT_EQ(out.menu_since, 0u) << in.frame;
+    EXPECT_EQ(out.pending, 1) << in.frame;
+    in = After(in, out);
+  }
+  in.keypad = false;
+  EXPECT_EQ(RunUntilMove(in, 100), 2000 + static_cast<int>(FriendsMove::MENU_SETTLE_FRAMES));
+
+  // Opened during the half second: the count starts over once it closes.
+  in = OnMenu(3000);
+  in.plugged = 0x03;
+  out = Decide(in);
+  EXPECT_EQ(out.menu_since, 3001u);
+  in = After(in, out, 10);
+  in.keypad = true;
+  out = Decide(in);
+  EXPECT_FALSE(out.move);
+  EXPECT_EQ(out.menu_since, 0u);
+  EXPECT_EQ(out.pending, 1);
+  in = After(in, out, 100);
+  in.keypad = false;
+  EXPECT_EQ(RunUntilMove(in, 100), 3110 + static_cast<int>(FriendsMove::MENU_SETTLE_FRAMES));
+}
+
 TEST(OrcaOnlineMenuDropIn, NoMoveForQueueRoomsVersusOrAFriendWhoLeft)
 {
   {
@@ -1775,6 +1817,77 @@ FakeMemory CharacterSelect(bool readable)
   return m;
 }
 }  // namespace
+
+namespace
+{
+// A gfTask at `task` named `name` (its string at task + 0x100), linked to `prev` and `next`.
+void Task(FakeMemory& m, u32 task, std::string_view name, u32 prev, u32 next)
+{
+  m.Fill(task, 0x40);
+  m.Write32(task, task + 0x100);
+  m.Text(task + 0x100, name);
+  m.Write32(task + FriendsMove::TASK_PREV, prev);
+  m.Write32(task + FriendsMove::TASK_NEXT, next);
+}
+
+// The main menu's process list as Project+ has it on Options > Controls (measured, 0.3.38):
+// MainMenuTask, muPanelCtrl, Menu, Menu, and with the keypad open MuName and MuNameRemoteTask.
+FakeMemory MenuWithTasks(bool keypad)
+{
+  FakeMemory m = MainMenu(true);
+  m.Write32(0x80910000 + FriendsMove::MENU_TASK, 0x81000000);
+  Task(m, 0x81000000, "MainMenuTask", 0, 0x81001000);
+  Task(m, 0x81001000, "muPanelCtrl", 0x81000000, 0x81002000);
+  Task(m, 0x81002000, "Menu", 0x81001000, 0x81003000);
+  Task(m, 0x81003000, "Menu", 0x81002000, keypad ? 0x81004000 : 0);
+  if (keypad)
+  {
+    Task(m, 0x81004000, "MuName", 0x81003000, 0x81005000);
+    Task(m, 0x81005000, "MuNameRemoteTask", 0x81004000, 0);
+  }
+  m.writes = 0;
+  return m;
+}
+}  // namespace
+
+TEST(OrcaOnlineMenuDropIn, ReadsTheNameKeypadFromTheMenusTasks)
+{
+  using FriendsMove::KeypadOpen;
+  EXPECT_TRUE(KeypadOpen(MenuWithTasks(true), 0x80910000));
+  EXPECT_FALSE(KeypadOpen(MenuWithTasks(false), 0x80910000));
+  // Linked before the menu's task: found the other way.
+  {
+    FakeMemory m = MenuWithTasks(false);
+    Task(m, 0x81004000, "MuName", 0, 0x81000000);
+    m.Write32(0x81000000 + FriendsMove::TASK_PREV, 0x81004000);
+    EXPECT_TRUE(KeypadOpen(m, 0x80910000));
+  }
+  // Only that exact name: another task whose name starts with it is not the keypad.
+  {
+    FakeMemory m = MenuWithTasks(false);
+    Task(m, 0x81004000, "MuNameRemoteTask", 0x81003000, 0);
+    m.Write32(0x81003000 + FriendsMove::TASK_NEXT, 0x81004000);
+    EXPECT_FALSE(KeypadOpen(m, 0x80910000));
+  }
+  // A loop in the links, unmapped links or names, no task: false, and the walk ends.
+  {
+    FakeMemory m = MenuWithTasks(false);
+    m.Write32(0x81003000 + FriendsMove::TASK_NEXT, 0x81001000);
+    EXPECT_FALSE(KeypadOpen(m, 0x80910000));
+    m.Write32(0x81003000 + FriendsMove::TASK_NEXT, 0x8F000000);
+    EXPECT_FALSE(KeypadOpen(m, 0x80910000));
+    m.Write32(0x81003000 + FriendsMove::TASK_NEXT, 0x81004000);
+    Task(m, 0x81004000, "MuName", 0x81003000, 0);
+    m.Write32(0x81004000, 0x8F000000);
+    EXPECT_FALSE(KeypadOpen(m, 0x80910000));
+  }
+  EXPECT_FALSE(KeypadOpen(MainMenu(true), 0x80910000));
+  EXPECT_FALSE(KeypadOpen(FakeMemory{}, 0x80910000));
+  // Reading never writes.
+  FakeMemory m = MenuWithTasks(true);
+  (void)KeypadOpen(m, 0x80910000);
+  EXPECT_EQ(m.writes, 0);
+}
 
 TEST(OrcaOnlineMenuFresh, ReadsTheBuiltMainMenuAndTheCharacterSelect)
 {
@@ -1921,6 +2034,122 @@ TEST(OrcaOnlineMenuLobby, TheMenusAreTheMainMenuAndACharacterSelect)
   EXPECT_FALSE(MenusScene("scSelctCharacter", "sqSingleSimple"));
   EXPECT_FALSE(MenusScene("scSelctCharacter", "sqTraining"));
   EXPECT_FALSE(MenusScene("muMenuMain", "sqHomerun"));
+}
+
+// A queue room's match still being decided when the opponent breaks the session, or when the wait
+// for its verdict runs out with the room still open: this game reports it void before it goes, so
+// its leave or its silence never settles the set for the opponent. Not in a friends room, not once
+// the set is over or the room has ended, and not for this machine's own failures.
+TEST(OrcaOnlineMenuLobby, APeerFaultOrAVerdictThatNeverCameVoidsFirst)
+{
+  using Rollback::OnlineMatch::VerdictWaitInputs;
+  using Rollback::OnlineMatch::VoidFirst;
+  VerdictWaitInputs in;
+  in.queue_room = true;
+  in.match_live = true;
+  in.from_peer = true;
+  EXPECT_TRUE(VoidFirst(in));
+  in.from_peer = false;
+  EXPECT_FALSE(VoidFirst(in)) << "this machine's own failure";
+  in.waited_out = true;
+  EXPECT_TRUE(VoidFirst(in));
+  const auto with = [&in](auto change) {
+    VerdictWaitInputs other = in;
+    change(other);
+    return VoidFirst(other);
+  };
+  EXPECT_FALSE(with([](VerdictWaitInputs& o) { o.queue_room = false; }));
+  EXPECT_FALSE(with([](VerdictWaitInputs& o) { o.match_live = false; }));
+  EXPECT_FALSE(with([](VerdictWaitInputs& o) { o.set_over = true; }));
+  EXPECT_FALSE(with([](VerdictWaitInputs& o) { o.room_ended = true; }));
+}
+
+// A peer that lets one input through just before each silence limit (10 s) restarts every single
+// stall, but not the budget across them: the game counts it as silent once it has been held for
+// STALL_BUDGET of the last STALL_WINDOW, so the trickle can't freeze the game for good.
+TEST(OrcaStallBudget, ATrickleUnderTheSilenceLimitRunsTheBudgetOut)
+{
+  using Rollback::OnlineMatch::StallBudget;
+  using namespace std::chrono_literals;
+  const StallBudget::Clock::time_point t0{};
+  StallBudget budget;
+  auto t = t0 + 100s;
+  // Two stalls of 9.9 s, a frame of play between them: the second runs the budget out mid-stall.
+  budget.Add(t, t + 9900ms);
+  t += 9900ms + 17ms;
+  EXPECT_FALSE(budget.Spent(t, t));
+  EXPECT_FALSE(budget.Spent(t + 5s, t));
+  EXPECT_TRUE(budget.Spent(t + 5200ms, t));
+  // An honest link that stalls a second at a time, every 10 s, never runs it out.
+  StallBudget honest;
+  for (auto at = t0 + 100s; at < t0 + 400s; at += 10s)
+  {
+    honest.Add(at, at + 1s);
+    EXPECT_FALSE(honest.Spent(at + 1s)) << (at - t0) / 1s;
+  }
+  // Stalls leave the window: 14 s an hour ago counts for nothing.
+  StallBudget old;
+  old.Add(t0 + 100s, t0 + 114s);
+  EXPECT_EQ(old.Stalled(t0 + 3700s), StallBudget::Clock::duration::zero());
+  EXPECT_FALSE(old.Spent(t0 + 3700s, t0 + 3699s));
+  // A stall partly in the window counts the part in it.
+  EXPECT_EQ(old.Stalled(t0 + 170s), 4s);
+}
+
+// The host decides every port's values so every machine writes the same bytes, but a joiner's own
+// controls, queue identity (its pick) and name are what it sent: the joiner checks the entries for
+// its own port, and a host that rewrites them ends the session (OwnValuesKept).
+TEST(OrcaOnlineMenuLobby, AJoinersOwnPortValuesAreItsOwn)
+{
+  using Orca::Net::KeyframeInfo;
+  using Orca::Net::NEVER;
+  using Rollback::OnlineMatch::OwnValues;
+  using Rollback::OnlineMatch::OwnValuesKept;
+  const std::vector<u8> controls{0x10, 0x20, 0x30};
+  const std::vector<u8> queue{0x01, 0xff, 0xff, 0x05, 0x00, 0, 0, 0, 0, 0, 0, 0, 0};
+  const OwnValues own{"bo", controls, queue};
+  const KeyframeInfo::Name host{0, 1524, "ada", {}, {}};
+  const KeyframeInfo::Name honest{1, 1730, "bo", controls, queue};
+  // An honest host: the joiner's entry from its plug-in frame is what it sent.
+  EXPECT_TRUE(OwnValuesKept({host, honest}, 1, NEVER, own));
+  EXPECT_TRUE(OwnValuesKept({host, honest}, 1, 1730, own));
+  // An earlier stay's entry before this plug-in frame plays no frame of this stay.
+  KeyframeInfo::Name earlier = honest;
+  earlier.from = 300;
+  earlier.controls = {0x99};
+  EXPECT_TRUE(OwnValuesKept({host, earlier, honest}, 1, 1730, own));
+  // Another pick (a character the joiner never chose), other controls, another name: refused.
+  KeyframeInfo::Name forced = honest;
+  forced.queue[3] = 0x11;
+  EXPECT_FALSE(OwnValuesKept({host, forced}, 1, NEVER, own));
+  EXPECT_FALSE(OwnValuesKept({host, forced}, 1, 1730, own));
+  KeyframeInfo::Name remapped = honest;
+  remapped.controls = {0x10, 0x20, 0x31};
+  EXPECT_FALSE(OwnValuesKept({host, remapped}, 1, 1730, own));
+  KeyframeInfo::Name renamed = honest;
+  renamed.name = "bob";
+  EXPECT_FALSE(OwnValuesKept({host, renamed}, 1, 1730, own));
+  // A name the joiner doesn't know yet isn't checked.
+  EXPECT_TRUE(OwnValuesKept({host, renamed}, 1, 1730, OwnValues{"", controls, queue}));
+  // A pick added for a joiner that sent none, or the joiner's values dropped.
+  EXPECT_FALSE(OwnValuesKept({host, honest}, 1, 1730, OwnValues{"bo", controls, {}}));
+  KeyframeInfo::Name bare = honest;
+  bare.controls.clear();
+  bare.queue.clear();
+  EXPECT_FALSE(OwnValuesKept({host, bare}, 1, 1730, own));
+  EXPECT_FALSE(OwnValuesKept({host}, 1, 1730, own));
+  EXPECT_TRUE(OwnValuesKept({host}, 1, 1730, OwnValues{"bo", {}, {}}));
+  // The right values later, the wrong ones in force at the plug-in frame; or a later change.
+  KeyframeInfo::Name moved = honest;
+  moved.from = 1800;
+  EXPECT_FALSE(OwnValuesKept({host, forced, moved}, 1, 1730, own));
+  KeyframeInfo::Name later = forced;
+  later.from = 2400;
+  EXPECT_FALSE(OwnValuesKept({host, honest, later}, 1, 1730, own));
+  // Other ports are the host's to name.
+  KeyframeInfo::Name other = forced;
+  other.seat = 2;
+  EXPECT_TRUE(OwnValuesKept({host, honest, other}, 1, 1730, own));
 }
 
 TEST(OrcaOnlineMenuLobby, AFormerJoinerComesHomeOnTheMenusAlone)
@@ -2109,8 +2338,9 @@ TEST(OrcaOnlineMenuLobby, APickKeptWithFriendsIsArmedOnceTheyAreGone)
 
 TEST(OrcaOnlineMenuLobby, EveryCapFitsTheAppsCapsLine)
 {
-  // Apps before the Music switch's release read at most 16 caps words (that release reads 24): more
-  // needs it as the minimum app.
+  // Apps before the Music switch's release read at most 16 caps words; desktop 0.12.39 and later
+  // read 24. With "gfx" (17) Orca needs at least that app; its manifest asks for 0.12.41, the app
+  // that sends "gfx".
   // The most any profile offers is all of them.
   const std::string all = fmt::format(
       "{} {} {} {} {} {}", Orca::Status::CAPS, Orca::Status::MUSIC_CAP, Orca::Status::RESULTS_CAP,
@@ -2122,7 +2352,7 @@ TEST(OrcaOnlineMenuLobby, EveryCapFitsTheAppsCapsLine)
     ++count;
     EXPECT_LE(word.size(), 24u) << word;
   }
-  EXPECT_LE(count, 16);
+  EXPECT_LE(count, 24);
 }
 
 TEST(OrcaOnlineMenuLobby, APickWithNobodyToLeaveIsAnnounced)

@@ -146,10 +146,17 @@ Orca::Net::Step StepSession(Orca::Net::Session& session, Orca::Net::Game& game, 
                             const std::function<Orca::Net::Pad()>& sample_local,
                             const std::function<bool()>& stopping,
                             std::chrono::microseconds stall_wait,
-                            std::chrono::milliseconds give_up_after, bool* gave_up)
+                            std::chrono::milliseconds give_up_after, bool* gave_up,
+                            std::chrono::nanoseconds* waited_time)
 {
   Orca::Net::Pad local_pad = sample_local();
   bool waited = false;
+  // From the end of the first call that said wait or stall to the start of the last call.
+  std::optional<std::chrono::steady_clock::time_point> wait_from;
+  const auto end_wait = [&](std::chrono::steady_clock::time_point until) {
+    if (waited_time && wait_from && until > *wait_from)
+      *waited_time += until - *wait_from;
+  };
   std::optional<std::chrono::steady_clock::time_point> held_since;
   std::chrono::steady_clock::time_point last_poll;
   // Whether this call has held the emulator longer than give_up_after. A gap of over a second
@@ -168,13 +175,22 @@ Orca::Net::Step StepSession(Orca::Net::Session& session, Orca::Net::Game& game, 
   };
   while (true)
   {
+    const auto call_start = std::chrono::steady_clock::now();
     const Orca::Net::Step step = session.OnBoundary(completed_frame, local_pad);
+    if (step.kind == Orca::Net::StepKind::Wait || step.kind == Orca::Net::StepKind::Stall)
+    {
+      if (!wait_from)
+        wait_from = std::chrono::steady_clock::now();
+    }
     if (step.kind == Orca::Net::StepKind::Wait)
     {
       // Time sync: this machine is ahead. Hold one frame, then pace from now so the throttle
       // doesn't race to make up the held frame.
       if (stopping() || held_too_long())
+      {
+        end_wait(std::chrono::steady_clock::now());
         return {Orca::Net::StepKind::Ended, step.frame};
+      }
       std::this_thread::sleep_for(FRAME_PERIOD);
       waited = true;
       // The session decides a wait before sampling, so the frame uses the pad read now.
@@ -183,12 +199,16 @@ Orca::Net::Step StepSession(Orca::Net::Session& session, Orca::Net::Game& game, 
     }
     if (step.kind != Orca::Net::StepKind::Stall)
     {
+      end_wait(call_start);
       if (waited)
         game.ResetPacing();
       return step;
     }
     if (stopping() || held_too_long())
+    {
+      end_wait(std::chrono::steady_clock::now());
       return {Orca::Net::StepKind::Ended, step.frame};
+    }
     if (stall_wait.count() > 0)
       std::this_thread::sleep_for(stall_wait);
   }

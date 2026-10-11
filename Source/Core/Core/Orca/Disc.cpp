@@ -15,6 +15,7 @@
 #include "Common/IOFile.h"
 #include "Core/IOS/ES/Formats.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/Sandbox.h"
 #include "DiscIO/Enums.h"
 #include "DiscIO/Volume.h"
 #include "DiscIO/VolumeDisc.h"
@@ -101,11 +102,18 @@ DiscCheck CheckDisc(const std::string& path, std::string_view game_id)
 
 DiscCheck CheckBootFile(const std::string& path)
 {
+  // Inside the app's sandbox, a file it wasn't given looks missing or unreadable: say it's the
+  // sandbox, so the app can tell the player to move the disc (Orca/Sandbox.h).
+  const auto refuse = [&path](const char* code) {
+    if (!path.empty() && Sandbox::Jailed() && Sandbox::ReadDenied(path))
+      return DiscCheck{false, Sandbox::DISC_ERROR, Sandbox::DISC_SENTENCE};
+    return DiscCheck{false, code, path};
+  };
   if (path.empty() || !File::Exists(path))
-    return DiscCheck{false, "disc_missing", path};
+    return refuse("disc_missing");
   // A folder (an extracted disc) is left to the boot's own checks.
   if (!File::IsDirectory(path) && !File::IOFile(path, "rb").IsOpen())
-    return DiscCheck{false, "disc_unreadable", path};
+    return refuse("disc_unreadable");
   return DiscCheck{true, {}, {}};
 }
 }  // namespace Orca

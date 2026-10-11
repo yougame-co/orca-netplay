@@ -95,6 +95,36 @@ TEST(OrcaKeyframe, ReplayRoundTripsInputsAndTypedEvents)
   EXPECT_TRUE(decoded.boundary.clear_ready);
 }
 
+// A replay whose history writes another game's ruleset into the match block, even on frames in the
+// middle with the room's header back by its end, is refused before it plays: it would select the
+// other game's memory writes here.
+TEST(OrcaKeyframe, AReplayNeverSetsAnotherGamesRules)
+{
+  constexpr u8 BRAWL = 1, PPLUS = 2;
+  ReplayArchive replay;
+  replay.first_frame = 100;
+  replay.frames.resize(40);
+  replay.frames[5].header = ReplayHeader{2, BRAWL, 0, 0, 1234};
+  replay.boundary.header = ReplayHeader{2, BRAWL, 0, 0, 1234};
+  EXPECT_TRUE(HeadersFitRuleset(replay, BRAWL));
+  // A header that clears the block is fine anywhere.
+  replay.frames[9].header = ReplayHeader{};
+  EXPECT_TRUE(HeadersFitRuleset(replay, BRAWL));
+  // Project+ on frames 10-19 of a vanilla Brawl game, Brawl's again by the end.
+  for (int f = 10; f < 20; ++f)
+    replay.frames[static_cast<size_t>(f)].header = ReplayHeader{2, PPLUS, 0, 0, 1234};
+  EXPECT_FALSE(HeadersFitRuleset(replay, BRAWL));
+  EXPECT_FALSE(HeadersFitRuleset(replay, PPLUS));
+  // Only the boundary's.
+  ReplayArchive boundary_only;
+  boundary_only.first_frame = 100;
+  boundary_only.boundary.header = ReplayHeader{1, PPLUS, 0, 0, 0};
+  EXPECT_FALSE(HeadersFitRuleset(boundary_only, BRAWL));
+  EXPECT_TRUE(HeadersFitRuleset(boundary_only, PPLUS));
+  // A game with no ruleset takes no ruleset's header.
+  EXPECT_FALSE(HeadersFitRuleset(boundary_only, 0));
+}
+
 TEST(OrcaKeyframe, RejectsLegacyStatesTruncationAndTrailingData)
 {
   const auto blob = PackKeyframe(2, Replay(2));

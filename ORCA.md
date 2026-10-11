@@ -37,6 +37,7 @@ and why. Paths are relative to `Source/Core/Core/` unless they start with `Sourc
 - [Input latency](#input-latency)
 - [Music switch](#music-switch)
 - [Match start](#match-start)
+- [Graphics](#graphics)
 - [Code the JIT doesn't see](#code-the-jit-doesnt-see)
 - [Game patches](#game-patches)
 - [Free space and the match block](#free-space-and-the-match-block)
@@ -50,6 +51,7 @@ and why. Paths are relative to `Source/Core/Core/` unless they start with `Sourc
 - [Character select](#character-select)
 - [On-screen UI](#on-screen-ui)
 - [Embedding](#embedding)
+- [The sandbox](#the-sandbox)
 - [Changes by release](#changes-by-release)
 
 ## Building
@@ -96,6 +98,8 @@ game) is seat 0, controller port 1; a friend's seat is its room slot.
 | Variable | Meaning |
 |---|---|
 | `YOUGAME_BRIDGE`, `YOUGAME_TOKEN` | Set by the YouGame desktop app: tickets come from its loopback bridge. |
+| `YOUGAME_STDIO` | `1`, set by the app instead: its bridge is Orca's stdin and stdout ([The stdio bridge](#the-stdio-bridge)). |
+| `ORCA_NET` | Set by the app when it sandboxes Orca: `internet` or `internet-lan` ([Network](#network)). |
 | `ORCA_ROOM` | Room code (6-12 of `a-z0-9`). Default: the app's invite, else a new code. |
 | `ORCA_JOIN` | `1`: join the friend's game in that room. |
 | `ORCA_NAME` | Name shown in the room. |
@@ -1027,11 +1031,13 @@ match's PowerPC code. Both now compile before the match is on screen.
 
 ### Shaders
 
-Sessions force (`Orca/Profile.cpp`, `Source/Core/VideoCommon/ShaderCache.cpp`):
+Sessions force or allow (`Orca/Profile.cpp`, `Source/Core/VideoCommon/ShaderCache.cpp`):
 
-- **Asynchronous ubershaders:** a pipeline never drawn compiles in the background and is drawn with
-  an ubershader meanwhile. Dolphin's default compiles it on the emulation thread, which in a session
-  is also the GPU thread.
+- **Asynchronous shaders only:** a pipeline never drawn compiles in the background and is drawn with
+  an ubershader meanwhile (AsyncUber, the default), or not drawn until it is ready (AsyncSkip, the
+  player's choice since 0.3.39: lightest on the graphics card, and a new effect may be missing for a
+  moment on that player's screen only). Dolphin's default compiles it on the emulation thread,
+  which in a session is also the GPU thread, so a session refuses it ([Graphics](#graphics)).
 - **Compile before starting:** the ubershaders and every pipeline in `Cache/<game>.uidcache` compile
   on all cores before the first frame, the UID cache first (it is what the match draws and is far
   quicker than the ubershaders).
@@ -1097,6 +1103,138 @@ Brawl 170) counts the frame times a player sees after the loading image.
 A rollback in Project+ recompiles 40-120 blocks (pages with code also hold data that changes every
 frame, and a restore drops every block in a restored page). Invalidating only changed 32-byte lines
 would keep most of them (not done).
+
+## Graphics
+
+Since 0.3.39 the player picks every graphics setting that only changes what their own machine
+draws, and how fast. The YouGame app keeps them per computer and passes them on every start
+(`-C Graphics.*` and `-C Dolphin.Core.GFXBackend`, the CommandLine layer). Code:
+`Orca/Profile.cpp` (what a session forces), `Orca/Perf.*` (live changes, speed, the switch to
+Performance).
+
+**Why they can differ between players.** In a session nothing drawn reaches the game: EFB and XFB
+copies stay on the GPU and RAM only gets a placeholder whose size comes from the game's own
+registers; EFB peeks, bounding box and perf queries return constants; single core is forced, so the
+host GPU's speed changes when a frame runs, never what it computes. Rollback snapshots skip the
+framebuffer and texture cache, and the desync check hashes MEM1 and MEM2 only. So a setting that
+only changes drawing can only make this machine slower or faster, and a slower machine is what the
+speed lines below are for.
+
+**What the player picks** (the app's Graphics panel): backend and graphics card (next start),
+internal resolution (Auto, Native, 2x-4x; `MaxInternalResolution` is 4, so Auto never picks 5x or
+6x on a 4K screen), anti-aliasing (next start: it reloads every pipeline, and with the shader wait
+forced that would freeze both players), texture filtering, the scaling filter, scaled EFB copies,
+the shader compilation mode (AsyncUber or AsyncSkip) and compile threads (next start), GPU texture
+decoding, CPU culling and backend multithreading. The app offers the backends each package carries:
+Direct3D 11 and 12 and OpenGL on Windows (its build has `ENABLE_VULKAN` off), Metal on macOS, OpenGL
+on Linux. On Windows the adapter list leaves out trailing software adapters (WARP, "Microsoft Basic
+Render Driver"), so a one-card PC lists one card.
+
+**What stays forced** (`ForEachUniversalSetting`, checked by `VerifyForcedSettings` at boot):
+
+- everything that changes what the game computes or shows only some players: the CPU and timing
+  settings, EFB/XFB copies to RAM, EFB access, bounding box, perf queries, graphics mods, VSync off,
+  Immediate XFB and the presentation pacing, the shader wait;
+- since 0.3.39, also the settings a player's Dolphin.ini or GFX.ini could change before: the GDB
+  stub (off: it would serve the game's memory to anyone), debugging and the 14 JIT debug switches,
+  the low DCBZ hack, fastmem internals, the boot IOS, the HSP device, emulation speed (1.0) and
+  Dolphin's pacing settings, Cap Immediate XFB, and, for fairness, the widescreen hack, Disable Fog,
+  wireframe, the texture-format overlay and Free Look; from the review, PauseOnPanic (it turns on
+  the JIT's memory checks, so an unresolved access breaks into a DSI instead of reading 0), the
+  audio buffer size (80 ms: it bounds the throttle's fallback like the other pacing settings) and
+  VertexRounding (a shader host-config bit only away from native resolution: with it on, the switch to
+  Performance or a live `gfx res` would reload every shader on the CPU thread mid-match with no time
+  limit). Each is Dolphin's default, so nothing a normal player computes changes and the
+  compatibility key needs nothing new;
+- the shader compilation mode within a range: a session takes the player's value only if it is
+  AsyncUber or AsyncSkip, else forces AsyncUber (Synchronous and SyncUber compile on the emulation
+  thread). A compile thread count outside -1 and 1-4 (0 is the emulation thread; hundreds from a
+  hand-edited GFX.ini) becomes -1, Dolphin's Auto. With no
+  value from anywhere, a session uses what it forced before 0.3.39 (AsyncUber and Auto), not
+  Dolphin's defaults (Synchronous and one thread). Both are pinned at boot, so a game INI layer a
+  launcher's disc brings in later can't change them.
+
+**Live changes:** `gfx <key> <value>` on stdin (cap `gfx`), applied at the next frame boundary on
+the CPU thread, for this run only (the app passes the stored choice at the next start). The keys are
+a fixed list, because the CurrentRun layer they write outranks the forced one and
+`VerifyForcedSettings` runs only at boot:
+
+| Key | Setting | Values |
+|---|---|---|
+| `res` | `Graphics.Settings.InternalResolution` | 0 Auto, 1 native, 2-4 |
+| `aniso` | `Graphics.Enhancements.MaxAnisotropy` | -1 the game's own, 0-4 (1x-16x) |
+| `filter` | `Graphics.Enhancements.ForceTextureFiltering` | 0 the game's own, 1 nearest, 2 linear |
+| `resample` | `Graphics.Enhancements.OutputResampling` | 0-6 |
+| `efb` | `Graphics.Hacks.EFBScaledCopy` | 0, 1 |
+| `gpudecode` | `Graphics.Settings.EnableGPUTextureDecoding` | 0, 1 |
+| `cpucull` | `Graphics.Settings.CPUCull` | 0, 1 |
+
+`res` and `gpudecode` cost one short hitch (the EFB is rebuilt or the texture cache dropped), which
+the other player sees as one stall. Only the last value queued for each key is kept, so a burst of
+lines (a page while the game is paused) applies as at most one change per key. No `gfx` key, and
+nothing the switch to Performance writes, changes the shader host config (the
+`OrcaGraphicsSettings.ResolutionChangesNeverReloadTheShaders` test).
+
+### This machine's speed
+
+Orca measures its own speed (`Orca/Perf.h`) and reports it as `orca perf {json}` on stdout,
+embedded only, each line at most 300 bytes, versioned with `"v":1`:
+
+- `{"v":1,"k":"info","be":"D3D","gpu":"...","ad":[...],"ai":0,"cpu":"...","th":12,"os":"win","rev":"..."}`
+  once after `ready`: the backend in use, the graphics card it uses, up to 3 adapter names and the
+  adapter index, the CPU's name (dropped if the line would pass 300 bytes), logical threads, the OS
+  and this build's source revision. Names are printable ASCII, at most 40 characters.
+- `{"v":1,"k":"win","m":"1v1","n":858,"cap":51.7,"fc":58.0,"rw":12.4,"rv":180,"w50":18.9,"w95":24.1,"g95":3.2,"fps":51.6,"rbf":212,"res":1,"pf":1,"as":1}`
+  every 15 s of running time (a pause doesn't count), menus included (`n` is 0 there), with
+  `"t":1` at the end when a test switch shaped the run.
+- `{"v":1,"k":"auto","cap":44.3}` once, when the run switched itself to Performance (`cap`: the
+  median speed of the windows that switched it, at the reference re-run load below).
+
+How it is measured. A forward frame is a boundary whose frame ran for the first time in real time.
+Its time since the previous forward boundary includes any rollback re-runs (they are this machine's
+cost); taken out are the CPU thread's sleeps in CoreTiming (the throttle and the present pacing)
+and the session's stall and time-sync waits (`StepSession`). What is left is the frame's work. A
+frame counts once the game has been in a match for 900 frames (Brawl's scene, as the JIT warm-up
+reads it), and not when the game was paused, hidden by the page, held for a load, caught up after a
+join or run unseen. The work is also split at the frame's last re-run boundary: before it is re-run
+work (the rollback's load and its re-run frames, waits out), after it forward work. Re-runs depend on
+the opponent (their distance, how often their inputs change), forward work only on this machine, so
+the page can read the machine at a reference re-run load whoever it played. In a window, `n` is the
+counted frames, `cap` is `n` over their total work (the frames per second this machine could run,
+not capped at 60), `fc` the same over forward work only, `rw` the re-run work per re-run frame (ms)
+over the `rv` re-run frames inside the counted frames, `w50`/`w95` the median and 95th
+percentile work in ms, `g95` the 95th percentile time blocked binding the back buffer and presenting
+(a GPU-bound machine has most of its work there), `fps` frames shown per running second, `rbf`
+re-run frames, `m` the peers plugged in (`solo`, `1v1`, `multi`), `res` the EFB scale in use (Auto
+resolved), `pf` 1 when the picture settings are Performance's with anti-aliasing off, `as` 1 when
+the switch fired this run and the picture is still Performance's (anti-aliasing aside, which waits
+for the next start; a player who raised the picture again is measured on their own settings).
+
+**The switch to Performance.** A window counts when it has at least 600 frames, solo or 1v1 (3-4
+player rooms dip normally). It is read at the page's reference re-run load (`CapAtRef`, the page's
+`perfCapAtRef`): its forward work per frame plus 0.1 re-run frames at the re-run cost it measured
+(`rw`, once `rv` is 30 or more; else the last cost the run measured; with none, `fc` alone). The
+raw `cap` grows with the distance to the opponent: an i7-8700 / RTX 2080 at 40 ms each way read
+51-56 with 63-71 forward frames a second, and switched in every match before this rule. After 4
+counted windows in a row under 58 fps at that load, with the picture settings not already
+Performance's, Orca switches once per run: native resolution, unscaled EFB
+copies, the game's own texture filtering, the default scaling filter and no post-processing shader,
+at once and mid-match too (one hitch beats a match of stalls). It shows "Graphics set to Performance
+to hold 60 fps" and prints the `auto` line; the page keeps Performance (and anti-aliasing off) for
+the next start. Menus and big rooms in between don't break the run; a counted window at 58 or more,
+one already on Performance, or a `gfx` change starts it over. Why 58: time sync gives back at most
+one frame in 30, so the faster side can only slow to about 59.94 x 30/31 = 58.0 fps; under that the
+other player stalls.
+
+Test switches, read only with `ORCA_TEST_COMMANDS=1` in a session (a harness run; the app passes
+Orca neither) and marked `"t":1` on every window line: `ORCA_TEST_PERF=<window_s>[,<warm_frames>]`
+shortens the windows (and starts the lines without the app's `ready`), `ORCA_PERF_AUTO=0` turns the
+switch off, and `ORCA_TEST_SLOW=<ms>[,<ms_on_performance>]` makes a slow machine: each forward frame
+spins the CPU thread that long (the second value while the picture is Performance's), so the switch
+fires and helps.
+
+Observation only: wall-clock time and drawing settings never reach emulation, the replay, the
+checksums or the compatibility key.
 
 ## Code the JIT doesn't see
 
@@ -1213,14 +1351,17 @@ away.
 | `+0x1B4`-`+0x1BF` | The two stage cursors |
 | `+0x1C0`-`+0x1EF` | The queue's character select |
 | `+0x1F0` | Saved rules' flags |
+| `+0x1F4`-`+0x1FF` | Character order: where each hand last held its token |
 | `+0x200`-`+0x20F` | Character order |
 | `+0x210`-`+0x28F` | The ranked set (`SetBlock`, authoritative) |
 | `+0x290`-`+0x297` | A friend's move from the menus |
 
 Any new header (another mode, ruleset, coin or room) starts every track's state fresh. Compatibility:
-anything that changes what the game computes bumps `UX::kCompatVersion` (currently `ux=26`, since
-0.3.37: the history's seed, [Random numbers](#random-numbers), and tags typed in the game,
-[Port values](#port-values-each-players-name-and-controls)), which is in the compatibility key.
+anything that changes what the game computes bumps `UX::kCompatVersion` (currently `ux=28`: a
+friend's move from the menus waits while Options > Controls is open; `ux=27`: how a turn ends in
+the [Character order](#character-order), and who turns Brawl's stage select page; `ux=26` since
+0.3.37: the history's seed, [Random numbers](#random-numbers), and tags typed in the game, [Port
+values](#port-values-each-players-name-and-controls)), which is in the compatibility key.
 
 ## Input gate
 
@@ -1358,7 +1499,11 @@ origin, the built main menu 30 frames on ([How it works](#how-it-works)).
 the main menu has built its pages and run 30 frames, the frame hook leaves the menu with exit code 25,
 as With Friends does, so both games go to the character select at the same boundary. It counts from
 the menu's build (`+0xAC8` of muMenuMain), not its start: moving before the build made the menu's
-exit call destructors through uninitialised page slots and froze both games. Never in a queue room.
+exit call destructors through uninitialised page slots and froze both games. Never while Options >
+Controls is open: its name list and keypad run as a gfTask of their own (`MuName`, linked after the
+menu's task), and leaving the menu under it froze (the list) or crashed (the keypad, `0x80677f54`)
+both games, so the friend waits on the host's menu until the host backs out of it, then 30 frames
+more. Never in a queue room.
 That character select is online, so its CPUs go and a friend whose panel had one takes it at once
 ([No CPUs online](#no-cpus-online)).
 
@@ -1670,8 +1815,10 @@ by both games. Stages are the ruleset's legal list, starters first, as bit masks
   is skipped, a pick takes the first allowed stage.
 
 **Brawl** (`Orca/UX/BrawlStages.*`): stages the current step doesn't allow are drawn as plain grey
-tiles. The flow's own picks (the last starter, a timer's default) move the game's cursor there (via
-the page button for Pokemon Stadium on the Melee page) and press A until the game takes it. A stage
+tiles. The page (Brawl or Melee stages) is both players' view, so only the player whose step it is
+turns it with A on the page button (either, on a casual game's step both take at once). The flow's
+own picks (the last starter, a timer's default) move the game's cursor there (via the page button
+for Pokemon Stadium on the Melee page) and press A until the game takes it. A stage
 taken against the steps is replaced before the screen copies it out. The stage select task is the
 scene's `+0x3AC`: `+0x200` the cursor (`+0x3C`/`+0x40` x and y), `+0x224` the state, `+0x228` the
 page, `+0x244` the hovered item, `+0x258` the taken stage (a write before the screen leaves changes
@@ -1759,8 +1906,13 @@ one constant:
 A picks (puts the token down), B takes it back up, **Start locks the pick in** (read from the raw
 latch; the game never sees that Start). Off-turn players' controllers do nothing. When the second
 player locks in, the stage select comes at once. The tokens stay down between games, so Start alone
-keeps last game's character. A player whose time runs out with the token in hand has it put on the
-character under the hand. Game 1 has no order (both pick at once). L or R held as you lock in
+keeps last game's character. A player whose turn ends with the token in hand has no input until it
+is down: Orca holds their stick, brings the hand back to where it last held the token over a
+character this order (`+0x1F4`-`+0x1FF`), and puts it down there. The next turn starts only once it
+is down, so the second picker always sees the first pick, and nobody shows as locked in with a token
+in hand. A token still in hand 45 s after both turns makes its player the ranked no-show, who leaves
+the set. Game 1 has no order (both pick
+at once). L or R held as you lock in
 carries into the game (Zero Suit Samus, Sheik, Project+'s Nana-led Ice Climbers): kept as the turn
 ends and held for that player while the select ends. State: 16 bytes at `+0x200` (magic `YGCO`, the
 step, the first picker, the lock-ins, the step's start frame, the kept L and R at `+0x20E`).
@@ -1787,7 +1939,11 @@ The page owns the room: Orca never leaves on a skip or a timeout by itself.
   game (it readies through the latch); while ready, B only un-readies.
 - **The pick's identity.** At ready, Orca keeps the pick (character, costume, where the hand placed
   it) and the page's `queue rating`, as a 13-byte queue identity that rides the session's value
-  channel, so every machine has the joiner's at its plug frame.
+  channel, so every machine has the joiner's at its plug frame. The place is learned from a hand
+  over that same character (`Queue::PickPlaces`, kept per character for the run); a token that was
+  already down (the queue image after a ranked set) teaches nothing, and a pick with no known place
+  goes out with no pick, so the player picks by hand rather than having the hand parked on another
+  square with their controller held for 10 s.
 - **The room's select.** Game 1: the host's pick goes back on it after its fresh start, by its own
   inputs ([Fresh starts](#fresh-starts)), and locks once down; the joiner's pick is put in from its
   identity by the input gate (its stick held centred for 20 frames, since the game takes a newly
@@ -1829,7 +1985,14 @@ Everything Orca shows should look like the game drew it. Two ways:
 - **The kit** (`Orca/UX/Kit.*`, `Widgets.*`): everything else is drawn by the host over the picture,
   local display only, in the game's own fonts (read at run time from the player's disc,
   `system/font/`, never shipped) and the look of that game's menus. Without the disc it falls back to
-  ImGui's font.
+  ImGui's font. The fonts' two textures are freed as the video backend shuts down
+  (`OSD::SetHostOverlay`'s release function, called first in `VideoBackendBase::ShutdownShared`).
+  Up to 0.3.38 they lived until process exit: on D3D11 they held 4 device references ("Unreleased
+  references: 4"), so the device and the graphics driver outlived `D3D::Destroy`, which unloads
+  d3d11.dll, and a driver thread calling back into it ended Orca with `0xC0000005` a moment after
+  the game (12 of 132 embedded or jailed exits on an NVIDIA PC); a standalone window, which exits
+  through the CRT, crashed every time in their destructors. `D3D::Destroy` now also keeps d3d11.dll
+  loaded if anything still holds the device.
 - **Relabelled textures** (`Orca/UX/Relabel.*`, `CssTitle.*`): the game's big words (READY TO
   FIGHT!, STAGE SELECT, the character select's BRAWL / VERSUS title) are textures. Orca changes a
   value nobody sees (a transparent palette entry's blue, or one texel's high nibble) so the texture
@@ -1865,8 +2028,10 @@ line protocol as its libretro host. Code: `Source/Core/DolphinNoGUI/Embed.*`, `P
 `Tools/orca/embed-test-host.m` (macOS) and `embed-test-host-win.cpp`.
 
 ```
-Orca --embed --parent <handle> --rect X Y W H [-u <user>] -e <disc> [-C ...]
+Orca --embed --parent <handle> --rect X Y W H [--embed-adopted] [-u <user>] -e <disc> [-C ...]
 ```
+
+`--embed-adopted` is the sandbox's way to embed on Windows ([Adopted window](#adopted-window)).
 
 - `--parent`: on Windows the HWND as a decimal number; on macOS the window's **CGWindowID** (in
   Electron, the middle field of `win.getMediaSourceId()`), since an `NSView*` means nothing to
@@ -1904,6 +2069,7 @@ moves inside the window.
 | `volume V` | 0 to 1, this run only. |
 | `perf off\|fps\|detailed` | The overlay's frame meter (frames shown in the last second and the longest; yellow under 59 fps or past 20 ms, red under 50 fps or past two frames). A frame the game itself holds in emulated time (Project+ loading between scenes) counts as the video frames it held, so the meter, `fps` and the `hi` hitch count in `orca stats` show only this machine falling behind; `hil` counts the frames a load alone made slow (`hi` + `hil` is the older builds' `hi`). |
 | `music on\|off` | The player's Music switch ([Music switch](#music-switch)), cap `music`. |
+| `gfx <key> <value>` | A live change to one of the player's drawing-only graphics settings ([Graphics](#graphics)), cap `gfx`. |
 | `save N` / `load N` / `reset` | Refused in a session. |
 | `prepare-join` | The host invited a friend: a queue or search under way ends (`orca menu cancel`). Since 0.3.34 no keyframe is made ahead: the friend's arrival may [fresh-start](#fresh-starts) the game first. |
 | `join <code>` / `leave` | Into or out of a friend's game. |
@@ -1942,6 +2108,7 @@ never pauses Orca: the page sends `blur`, the player's pad goes neutral, and the
 | `orca menu ...`, `orca result ...`, `orca queue ...` | See [Online menu](#online-menu) and [Matchmaking](#matchmaking-and-results). |
 | `orca controls <hex>` | The player's own controls: changed in the game, or loaded from Orca's file at boot. The page keeps them. |
 | `orca active <interval_s> <active_s> <inputs> <mode> <pads>` | How much the player played: every 60 s while the game runs, and once more when it stops ([Activity lines](#activity-lines)). |
+| `orca perf <json>` | This machine's speed: `info` once after `ready`, `win` every 15 s of running time, `auto` when the run switched its graphics to Performance ([This machine's speed](#this-machines-speed)). |
 | `exit <code>` | Always last: 0 normal, 1 a reported error, 2 bad arguments. |
 
 ### Activity lines
@@ -2048,9 +2215,137 @@ size asks at once). The game, and an online match, carry on. stderr says so once
 error code) and again when the picture works. A lost graphics device still ends Orca, after saying
 so. Since 0.3.35; before, a refused resize ended Orca (exit `0x80000003`).
 
+## The sandbox
+
+The YouGame desktop app can run Orca inside its sandbox: on Windows an AppContainer started by
+`yougame-sandbox.exe`, inside a job (low integrity, no loopback, files only where the app grants
+them), and later on macOS a `sandbox-exec` profile. Orca's side of it is a handful of switches, all
+off unless the app sets them, so an Orca with them runs exactly as before under an app without the
+sandbox. The app jails only an Orca whose manifest entry (and the installer's `orca.json`) says
+`"sandbox": 1`. The build says so itself in `Sys/Orca/features.json` (`{"sandbox": 1}`: it speaks
+`YOUGAME_STDIO`, `--embed-adopted` and `ORCA_NET`), which the release scripts copy into the
+manifest entry, so a build without the mode can never be marked as having it. Code: `Orca/Sandbox.*`, `Orca/Bridge.*`, `DolphinNoGUI/Embed.*`,
+`PlatformWin32.cpp`; tests: `OrcaBridge*`, `OrcaSandbox.*` (`SandboxTest.cpp`) and
+`OrcaLive.StdioBridgeMirrorsTheRoomAndTakesLeave`.
+
+| What | How |
+|---|---|
+| `YOUGAME_STDIO=1` | The app's bridge on stdin and stdout instead of a loopback server ([The stdio bridge](#the-stdio-bridge)). |
+| `--embed-adopted` | Windows: the window waits to be made a child of the app's ([Adopted window](#adopted-window)). |
+| `ORCA_NET` | The network the sandbox gives Orca ([Network](#network)). |
+| Every session | Dolphin's own GameCube adapter code never starts (`GCAdapter::Init`): the app's controller helper owns the adapter and sends its ports in the snapshots. No libusb or UsbDk is loaded, and a planted `Dolphin.ini` can't reach the adapter. |
+| macOS session on the stdio bridge | No Quartz keyboard device, so nothing reads the global key state (`CGEventSourceKeyState`): the page sends the keyboard as a pad. |
+| Windows, D3D | `d3dcompiler_47.dll` is loaded by its full path beside `Orca.exe` (the name is the fallback when there is none, as in a dev build), so neither the sandbox's prefer-System32 rule nor a DLL elsewhere on the search path swaps in another compiler, whose bytes would miss every cached shader (`FxcCache.cpp`). |
+| Inside the sandbox | stderr says `Orca: in the app's sandbox (network <mode>[, stdio bridge])`. A user folder Orca may not write ends the run at once with `orca error sandbox_denied`. |
+| Embedded (or `ORCA_TEST_COMMANDS`), on the stdio bridge | `orca alive` on stdout about once a second from the thread that owns the window (`Bridge::Heartbeat`, every main-loop pass). The app stops a running Orca that said it once and then goes quiet for 10 s: an adopted window shares the app window's input queue, so a hung window thread would hang the app too. Never on the loopback bridge, so an older app never sees it. `Tools/orca/stdio-app.py` fails a run without one at least every 3 s. |
+| `--sandbox-probe -u <folder>` | No boot: what a boot asks of the system before its first frame (UICommon, the GPU backend's info with no window, the controllers without the Mac keyboard, the sound out), then `orca probe ok` and exit 0. The app runs it under its macOS sandbox once per macOS and Orca version, with an empty folder and no disc, to choose the strict or relaxed profile from this run alone (never from a player's run, which a crafted disc or setting could end on purpose). Not with `--embed` or `--verify`. |
+
+**Error codes** (`orca error <code> <sentence>`):
+
+| Code | When |
+|---|---|
+| `sandbox_disc` | Inside the sandbox, the disc can't be opened for lack of permission: the app didn't grant it (a network share, a file an admin tool made). "Orca can't read this disc where it is. Copy it into a folder of yours, such as Documents, and choose the copy." (the app's words for the same refusal) |
+| `sandbox_embed` | `--embed-adopted`: nothing adopted the window within 10 s. "Orca couldn't open in the YouGame window. Try again." |
+| `sandbox_denied` | Inside the sandbox, Orca may not write its user folder. "Orca isn't allowed into its own folder, so it didn't start. Reset Orca's files from YouGame's Help menu, then press Play again." |
+
+**Windows zip layout.** A release zip for the sandbox carries, beside `Orca/Orca.exe`, the pinned
+`d3dcompiler_47.dll` (10.0.20348 from the Windows SDK's `Redist/D3D/x64`, SHA-256
+`a05f99734f7c4822fefc12b367af21fd0976ed6608752fb1e1e80b6ece7ecbbb`, the one YouGame's installer ships) and `Orca/shaders/D3D-fxc.cache`, the
+compiled-shader cache made with that compiler and that build (the app's `orca.ts`
+`downloadedShaders` merges it into the player's). The 0.3.30-0.3.38 zips have neither.
+
+### The stdio bridge
+
+With `YOUGAME_STDIO=1` the app's bridge is Orca's own stdin and stdout, the pipes embedding already
+uses, so a sandboxed Orca needs no loopback (an AppContainer can't reach it) and no token. Each
+bridge line starts with `yg `; every other line keeps its embed meaning.
+
+| Direction | Line |
+|---|---|
+| Orca to app (stdout) | `yg {"id":<n>,"type":"hello"\|"mpTicket"\|"mpRoom",...}`: the only three requests Orca makes, at most 32 KB. `mpTicket` carries `players`, `mode`, `ranked` (always `false`), `room` and `lobby`, nothing else. |
+| App to Orca (stdin) | `yg {"re":<n>,"ok":true,"result":{...}}` or `yg {"re":<n>,"ok":false,"error":"..."}`: the reply to request `n`. |
+| | `yg {"push":{"type":"controllers","snapshot":{...}}}`: a controller snapshot, the same schema-1 object the loopback stream's `data:` lines carry. |
+| | `yg {"push":{"slug":"<game>","cmd":"leave"\|"kick",...}}`: the page's lobby commands, as the loopback event stream sent them. |
+
+- The stdin reader reads 64 KB at a time and routes bridge lines on its own thread, so neither a
+  reply nor a pad waits for the frame loop: a reply wakes the request waiting for it (any thread,
+  with a timeout), a snapshot goes straight into the controller cache the CPU thread reads once per
+  frame, a lobby command to the current room.
+- Only the newest controller snapshot of one read is parsed; the older ones are stale already
+  (counted as `coalesced`).
+- A stdin line over 128 KB is dropped whole, through its newline; a bridge line over 64 KB, one that
+  isn't JSON, nests deeper than 8 or has a shape Orca doesn't know is dropped and counted, never
+  acted on. A reply nobody waits for is dropped. A closed stdin fails every waiting request at once.
+- Bridge lines are dropped unless `YOUGAME_STDIO=1`, and they never reach the embed commands.
+- Requests need stdout as the protocol channel and stdin read: `--embed`, or `ORCA_TEST_COMMANDS=1`
+  for tests. Without either the bridge is off (stderr says so) and the session plays offline.
+- The loopback bridge (`YOUGAME_BRIDGE`, `YOUGAME_TOKEN`) stays for an app without the stdio
+  bridge and for tests; dev tickets (`ORCA_TEST_DEV_GAME`) work as before.
+
+### Adopted window
+
+A process in an AppContainer (low integrity) may not create a window under the app's (medium
+integrity), so with `--embed-adopted` Orca:
+
+1. creates a hidden top-level `WS_POPUP` window (`WS_EX_NOPARENTNOTIFY | WS_EX_TOOLWINDOW`, so it
+   never shows on the taskbar), class and caption both `Orca`, and never retitles it. It is made at
+   the app's rect: `SetParent` keeps a window's coordinates and reads them in the parent's client
+   area, so the window lands at its rect even when the launcher's `SetParent` moves it after Orca
+   placed it (made at 0,0, it covered the app's header for the rest of the boot);
+2. answers messages until `GetParent` is the `--parent` window: the launcher (outside the
+   sandbox, `--embed-parent <hwnd> --embed-class Orca --embed-title Orca --embed-keep-style`) makes
+   it a `WS_CHILD` of the app's window. After 10 s it gives up with `orca error sandbox_embed`;
+3. then places it at the last `rect` and shows it, checks the place once more 50 ms later, and
+   from the main loop on puts it back at the app's rect whenever it is found elsewhere.
+
+Everything else is embed mode as before: the swap chain is made on the adopted child, `rect`,
+`view`, `hide`, `show` and focus work the same, and Orca stops when the app's window is destroyed.
+It also exits like embed mode (`exit <code>`, then `_exit` without the CRT's exit-time work), not
+like a standalone window, whose exit crashed with `0xC0000005` up to 0.3.38 (the kit's font
+textures, [On-screen UI](#on-screen-ui)). Elsewhere the flag changes nothing: a Mac's Orca window is
+top-level anyway.
+
+### Network
+
+`ORCA_NET` says which network the sandbox gives Orca, for the [direct links](#direct-links):
+
+| Value | Direct links |
+|---|---|
+| unset | Every candidate, as before. In a Windows AppContainer started without it: what the token allows (`internet-lan` with the `privateNetworkClientServer` capability, else `internet`). |
+| `internet` | No loopback and no LAN candidate (RFC 1918, link-local, IPv6 unique-local) is offered or tried, and there is no upgrade to the LAN. |
+| `internet-lan` | LAN candidates too (the player's setting, on by default on Windows), never loopback. |
+| anything else | `internet`, the strictest. |
+
+`ORCA_DIRECT_LOOPBACK` has no effect when `ORCA_NET` is set. The room's WebSocket, the site's HTTPS,
+STUN and TURN are internet traffic and work in every mode.
+
 ## Changes by release
 
 What each release changed for players, in plain words.
+
+### 0.3.39
+
+- **Your graphics, your choice.** Every graphics setting that only changes what your own screen
+  shows is now yours to pick in the YouGame app: resolution, anti-aliasing, texture filtering, the
+  backend and graphics card, and more. Settings that would change the game or show you more than
+  your opponent stay the same for everyone.
+- **Orca keeps up on slower computers.** If your computer can't hold 60 frames a second in a match,
+  Orca switches its graphics to Performance by itself, once, and tells you. Your opponent stops
+  freezing.
+- **The app sees how fast your computer is,** so it can tell you when a setting helps.
+- **Stability and ranked fixes.**
+- **A friend joining while you set up your controls no longer crashes both games.** If a friend
+  dropped in while you were in Options > Controls (making a name or typing it), both games crashed
+  or froze. Now your friend waits on your menu until you leave Controls, then you both go to the
+  character select.
+- **Stopping a game while it loads** no longer counts as a game that couldn't start.
+- **Windows: no more crash after a game ends.** Orca could close with an error a moment after a
+  game had ended, which sent a crash report. Games themselves were never affected.
+- **Options > Controls no longer freezes the game.** After any character select, opening the
+  game's Controls menu stopped the game for good: Orca put your name tag in the last of the
+  game's 120 slots, and the menu can't list tags while the first slot is empty. Your tag now goes
+  in the first free slot, as the game puts its own (`NameTags.cpp` `MakeTag`), and making it no
+  longer clears memory past the tag table.
 
 ### 0.3.38
 

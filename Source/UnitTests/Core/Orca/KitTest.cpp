@@ -17,6 +17,15 @@
 #include "Core/Orca/UX/GameFont.h"
 #include "Core/Orca/UX/Kit.h"
 #include "Core/Orca/UX/YgCard.h"
+#include "VideoCommon/AbstractFramebuffer.h"
+#include "VideoCommon/AbstractGfx.h"
+#include "VideoCommon/AbstractPipeline.h"
+#include "VideoCommon/AbstractShader.h"
+#include "VideoCommon/AbstractStagingTexture.h"
+#include "VideoCommon/AbstractTexture.h"
+#include "VideoCommon/NativeVertexFormat.h"
+#include "VideoCommon/OnScreenDisplay.h"
+#include "VideoCommon/TextureConfig.h"
 
 using namespace Orca::UX;
 
@@ -562,6 +571,120 @@ TEST(OrcaKitDraw, TitlesFollowTheLook)
   EXPECT_GT(channel(pplus.bottom, IM_COL32_B_SHIFT), channel(pplus.bottom, IM_COL32_R_SHIFT) + 50);
   EXPECT_EQ(brawl.px, pplus.px);
   EXPECT_EQ(Kit::LabelLook(7.2f).top, IM_COL32_WHITE);
+}
+
+namespace
+{
+// A backend that only counts the textures it has made and not yet destroyed.
+class CountingTexture final : public AbstractTexture
+{
+public:
+  CountingTexture(const TextureConfig& config, int* live) : AbstractTexture(config), m_live(live)
+  {
+    ++*m_live;
+  }
+  ~CountingTexture() override { --*m_live; }
+  void CopyRectangleFromTexture(const AbstractTexture*, const MathUtil::Rectangle<int>&, u32, u32,
+                                const MathUtil::Rectangle<int>&, u32, u32) override
+  {
+  }
+  void ResolveFromTexture(const AbstractTexture*, const MathUtil::Rectangle<int>&, u32,
+                          u32) override
+  {
+  }
+  void Load(u32, u32, u32, u32, const u8*, size_t, u32) override {}
+
+private:
+  int* m_live;
+};
+
+class CountingGfx final : public AbstractGfx
+{
+public:
+  bool IsHeadless() const override { return true; }
+  std::unique_ptr<AbstractTexture> CreateTexture(const TextureConfig& config,
+                                                 std::string_view) override
+  {
+    return std::make_unique<CountingTexture>(config, &live);
+  }
+  std::unique_ptr<AbstractStagingTexture> CreateStagingTexture(StagingTextureType,
+                                                               const TextureConfig&) override
+  {
+    return nullptr;
+  }
+  std::unique_ptr<AbstractFramebuffer> CreateFramebuffer(AbstractTexture*, AbstractTexture*,
+                                                         std::vector<AbstractTexture*>) override
+  {
+    return nullptr;
+  }
+  std::unique_ptr<AbstractShader> CreateShaderFromSource(ShaderStage, std::string_view,
+                                                         VideoCommon::ShaderIncluder*,
+                                                         std::string_view) override
+  {
+    return nullptr;
+  }
+  std::unique_ptr<AbstractShader> CreateShaderFromBinary(ShaderStage, const void*, size_t,
+                                                         std::string_view) override
+  {
+    return nullptr;
+  }
+  std::unique_ptr<NativeVertexFormat>
+  CreateNativeVertexFormat(const PortableVertexDeclaration&) override
+  {
+    return nullptr;
+  }
+  std::unique_ptr<AbstractPipeline> CreatePipeline(const AbstractPipelineConfig&, const void*,
+                                                   size_t) override
+  {
+    return nullptr;
+  }
+  SurfaceInfo GetSurfaceInfo() const override { return {}; }
+
+  int live = 0;
+};
+}  // namespace
+
+// The overlay's font textures go when the backend shuts down (VideoBackendBase::ShutdownShared
+// calls OSD::ReleaseHostOverlay, the overlay registers Kit::ReleaseGpu), not at process exit. One
+// kept past the backend held a D3D11 device reference each (texture and view): the device and the
+// driver lived on after D3D::Destroy unloaded d3d11.dll, and a driver thread calling back into it
+// ended Orca with 0xC0000005 at exit; outside the app, the textures' destructors ran after their
+// backend at exit and crashed every time.
+TEST(OrcaKit, FontTexturesGoWithTheBackend)
+{
+  GameFont::Atlas atlas;
+  atlas.width = 4;
+  atlas.height = 4;
+  atlas.levels = {std::vector<u8>(4 * 4 * 4, 0xff), std::vector<u8>(2 * 2 * 4, 0xff)};
+  atlas.cell_height = 4;
+  Kit::UseFontsForTests(&atlas, &atlas);
+  auto gfx = std::make_unique<CountingGfx>();
+  CountingGfx* counting = gfx.get();
+  g_gfx = std::move(gfx);
+  OSD::SetHostOverlay([] {}, &Kit::ReleaseGpu);
+
+  Kit::BeginFrame();
+  EXPECT_EQ(counting->live, 2);
+  EXPECT_TRUE(Kit::HasGameFont(Kit::Face::Body));
+  EXPECT_TRUE(Kit::HasGameFont(Kit::Face::Heavy));
+  Kit::BeginFrame();
+  EXPECT_EQ(counting->live, 2);
+
+  // The backend shuts down: the textures go while it is alive.
+  OSD::ReleaseHostOverlay();
+  EXPECT_EQ(counting->live, 0);
+  EXPECT_FALSE(Kit::HasGameFont(Kit::Face::Body));
+  EXPECT_FALSE(Kit::HasGameFont(Kit::Face::Heavy));
+
+  // A backend started again uploads them again.
+  Kit::BeginFrame();
+  EXPECT_EQ(counting->live, 2);
+  OSD::ReleaseHostOverlay();
+  EXPECT_EQ(counting->live, 0);
+
+  OSD::SetHostOverlay({});
+  g_gfx.reset();
+  Kit::UseFontsForTests(nullptr, nullptr);
 }
 
 // With a Brawl disc image (ORCA_TEST_DISC): both font faces read, unpack and parse, with every

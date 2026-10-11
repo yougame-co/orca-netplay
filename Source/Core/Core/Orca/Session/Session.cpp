@@ -71,6 +71,18 @@ constexpr int MAX_RTT_MS = 10000;
 // than this many frames ahead on average; anything less is jitter.
 constexpr int TIME_SYNC_FRAMES = 30;
 constexpr double TIME_SYNC_LEAD = 1.0;
+// Input lateness. An honest packet carries its sender's inputs up to its own frame plus its delay
+// less one, whatever the link: both come from the same packet. A player whose inputs keep coming
+// after its own frame, by more than LATE_SLACK frames on average for LATE_WINDOWS windows of
+// LATE_WINDOW_FRAMES in a row, holds them back (a lag switch: this machine would run on guesses up
+// to the rollback limit every frame). Such a player gets LATE_STALL_LIMIT frames of guesses rather
+// than max_rollback, until it comes on time for LATE_WINDOWS windows again. Two-player sessions
+// only: with a third player catching up, a sender's packets carry that player's oldest inputs
+// first.
+constexpr int LATE_WINDOW_FRAMES = 60;
+constexpr double LATE_SLACK = 2.0;
+constexpr int LATE_WINDOWS = 3;
+constexpr int LATE_STALL_LIMIT = 3;
 // Snapshot spacing: one more predicted frame between snapshots per this many ms a save costs (about
 // what a non-rendered re-run frame costs on a slow PC), with hysteresis around each step.
 constexpr double SAVE_MS_PER_SPACING = 3.0;
@@ -164,7 +176,69 @@ bool Session::RerunFrom(int frame)
 int Session::StallLimit() const
 {
   // How far past the slowest player's inputs this player may run.
-  return CatchingUp() ? 0 : m_config.max_rollback;
+  if (CatchingUp())
+    return 0;
+  for (int s = 0; s < m_config.seats; ++s)
+  {
+    if (s != m_config.local_seat && m_late[s] && InPlay(s))
+      return std::min(m_config.max_rollback, LATE_STALL_LIMIT);
+  }
+  return m_config.max_rollback;
+}
+
+bool Session::LateSeat(int seat) const
+{
+  return seat >= 0 && seat < MAX_SEATS && m_late[seat];
+}
+
+void Session::ResetLateness(int seat)
+{
+  m_late[seat] = false;
+  m_late_sum[seat] = 0;
+  m_late_samples[seat] = 0;
+  m_late_windows[seat] = 0;
+  m_clean_windows[seat] = 0;
+}
+
+void Session::UpdateLateness()
+{
+  if (m_frame - m_late_window_start < LATE_WINDOW_FRAMES)
+    return;
+  m_late_window_start = m_frame;
+  for (int s = 0; s < m_config.seats; ++s)
+  {
+    if (s == m_config.local_seat)
+      continue;
+    if (m_late_samples[s] >= LATE_WINDOW_FRAMES / 4)
+    {
+      const double average = static_cast<double>(m_late_sum[s]) / m_late_samples[s];
+      if (average > LATE_SLACK)
+      {
+        m_clean_windows[s] = 0;
+        if (++m_late_windows[s] >= LATE_WINDOWS && !m_late[s])
+        {
+          m_late[s] = true;
+          ++m_stats.late_seats;
+          m_delay_notes.push_back(fmt::format(
+              "frame {}: player {}'s inputs come {:.1f} frames after its own frame: it gets {} "
+              "frames of guesses",
+              m_frame, s + 1, average, std::min(m_config.max_rollback, LATE_STALL_LIMIT)));
+        }
+      }
+      else
+      {
+        m_late_windows[s] = 0;
+        if (m_late[s] && ++m_clean_windows[s] >= LATE_WINDOWS)
+        {
+          m_late[s] = false;
+          m_delay_notes.push_back(
+              fmt::format("frame {}: player {}'s inputs are on time again", m_frame, s + 1));
+        }
+      }
+    }
+    m_late_sum[s] = 0;
+    m_late_samples[s] = 0;
+  }
 }
 
 int Session::SettleFrom() const
@@ -177,6 +251,17 @@ int Session::SettleFrom() const
       newest = std::max(newest, m_plan[s].plug_from);
   }
   return newest + SETTLE_SECONDS * m_config.frame_rate;
+}
+
+int Session::PlayersInPlay() const
+{
+  int players = 0;
+  for (int s = 0; s < m_config.seats; ++s)
+  {
+    if (s == m_config.local_seat || InPlay(s))
+      ++players;
+  }
+  return players;
 }
 
 bool Session::InPlay(int seat) const
@@ -288,6 +373,7 @@ void Session::AddPeer(int seat, int live_from, int history_from)
   m_peer_rtt[seat].reset();
   m_peer_sequence[seat] = 0;
   m_peer_checksum_frame[seat] = -1;
+  ResetLateness(seat);
   AdvanceReceived(seat);
 }
 
@@ -399,8 +485,8 @@ void Session::ApplyRoster(const std::array<SeatPlan, MAX_SEATS>& roster)
         }
         else if (now.live_from != m_own_live_from)
         {
-          Fail(fmt::format("The host moved this player's live frame from {} to {}",
-                           m_own_live_from, now.live_from));
+          FailPeer(fmt::format("The host moved this player's live frame from {} to {}",
+                               m_own_live_from, now.live_from));
           return;
         }
       }
@@ -408,14 +494,14 @@ void Session::ApplyRoster(const std::array<SeatPlan, MAX_SEATS>& roster)
           (mine.plug_from != NEVER || now.plug_from < std::max(m_frame, LogEnd()) ||
            m_own_live_from == NEVER || LogEnd() < m_own_live_from))
       {
-        Fail(fmt::format("The host moved this controller's plug-in from frame {} to {}",
-                         mine.plug_from, now.plug_from));
+        FailPeer(fmt::format("The host moved this controller's plug-in from frame {} to {}",
+                             mine.plug_from, now.plug_from));
         return;
       }
       if (now.unplug_from > mine.unplug_from)
       {
-        Fail(fmt::format("The host moved this controller's unplug from frame {} to {}",
-                         mine.unplug_from, now.unplug_from));
+        FailPeer(fmt::format("The host moved this controller's unplug from frame {} to {}",
+                             mine.unplug_from, now.unplug_from));
         return;
       }
     }
@@ -434,6 +520,7 @@ void Session::ApplyRoster(const std::array<SeatPlan, MAX_SEATS>& roster)
     {
       m_peer_sequence[s] = 0;
       m_peer_checksum_frame[s] = -1;
+      ResetLateness(s);
     }
     mine = now;
     AdvanceReceived(s);
@@ -466,8 +553,8 @@ void Session::ReceiveHistory(const Packet& packet)
       break;
     if (f >= m_own_live_from || f >= m_plan[m_config.local_seat].plug_from)
     {
-      Fail(fmt::format("The host sent history for frame {}, past this player's live frame {}", f,
-                       m_own_live_from));
+      FailPeer(fmt::format("The host sent history for frame {}, past this player's live frame {}",
+                           f, m_own_live_from));
       return;
     }
     if (const auto used = m_used.find(f); used != m_used.end() && used->second != pads)
@@ -517,6 +604,13 @@ void Session::PlugCaughtUpPeers()
     plan.plug_from = m_frame + m_config.max_rollback + 2 * m_config.max_delay + rtt_frames + 4;
     AdvanceReceived(s);
   }
+}
+
+Step Session::FailPeer(std::string error)
+{
+  if (m_error.empty())
+    m_error_from_peer = true;
+  return Fail(std::move(error));
 }
 
 Step Session::Fail(std::string error)
@@ -679,6 +773,7 @@ Step Session::OnBoundary(int completed_frame, const Pad& local_pad)
     ChooseSnapshotEvery();
   }
   TrackAdvantage();
+  UpdateLateness();
 
   AppendConfirmedToLog();
   // The host's call: a player who unplugged and whose last inputs are in is gone.
@@ -1230,7 +1325,7 @@ void Session::ReceivePackets()
         packet.history.size() > static_cast<size_t>(MAX_HISTORY_IN_PACKET) ||
         packet.history_first < 0 || packet.history_ack > far_limit)
     {
-      Fail(fmt::format("Player {} sent an invalid packet", s + 1));
+      FailPeer(fmt::format("Player {} sent an invalid packet", s + 1));
       return;
     }
     // A packet can arrive twice (direct link and relay) and out of order. Inputs, history, acks,
@@ -1334,8 +1429,18 @@ void Session::ReceivePackets()
         m_edge_frame[s] = m_frame;
     }
     m_remote_frame[s] = packet.current_frame;
+    // How far its inputs trail its own frame (UpdateLateness). Time sync places it no further on
+    // than its inputs have come: holding them back makes this machine wait as real lag would.
+    int peer_frame = packet.current_frame;
+    if (!CatchingUp() && PlayersInPlay() == 2 && Plugged(s, packet.current_frame) &&
+        m_received[s] >= m_plan[s].plug_from)
+    {
+      m_late_sum[s] += packet.current_frame - m_received[s];
+      ++m_late_samples[s];
+      peer_frame = std::min(peer_frame, m_received[s] + 1);
+    }
     // Our lead over this peer, transit included (it cancels against the peer's own figure).
-    m_advantage[s] = m_frame - packet.current_frame;
+    m_advantage[s] = m_frame - peer_frame;
     // Its own lead and round trip: telemetry, bounded rather than trusted.
     if (packet.advantage)
     {

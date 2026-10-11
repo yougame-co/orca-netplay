@@ -31,6 +31,7 @@
 #include "Core/IOS/IOS.h"
 #include "Core/Orca/Activity.h"
 #include "Core/Orca/JitWarm.h"
+#include "Core/Orca/Perf.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Session/Events.h"
 #include "Core/Orca/Session/Online.h"
@@ -665,6 +666,9 @@ void OnFrameBoundary(const Core::CPUThreadGuard& guard)
       !(RingPort::Active() && RingPort::Active()->CatchingUp()))
   {
     Orca::JitWarm::OnBoundary(guard);
+    // This machine's speed counts frames only once a match is under way (Orca/Perf.h).
+    if (Orca::Perf::Measuring())
+      Orca::Perf::NoteScene(Orca::JitWarm::SceneIsMatch(guard));
   }
 
   // Skip host rendering for re-run frames. The emulated GPU still runs, so RAM and timing match.

@@ -6,14 +6,18 @@
 #include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
+#include "Core/Orca/Sandbox.h"
+#include "Core/Orca/Status.h"
 #include "Core/Orca/UX/YgOrb.h"
 #include "Core/System.h"
 
 #include <windows.h>
-#include <windowsx.h>
+#include <chrono>
 #include <climits>
 #include <cstdio>
+#include <cstdlib>
 #include <dwmapi.h>
+#include <windowsx.h>
 
 #include "VideoCommon/Present.h"
 #include "resource.h"
@@ -43,11 +47,16 @@ private:
 
   static bool RegisterRenderWindowClass(bool embedded);
   bool CreateRenderWindow();
+  bool CreateAdoptedWindow();
   void UpdateWindowPosition();
   void ProcessEvents();
   void UpdateEmbedFocus();
+  void KeepAdoptedPlaced();
 
   HWND m_hwnd{};
+  // --embed-adopted: the app's launcher made the window a child of the app's (Embed.h).
+  bool m_adopted = false;
+  int m_misplaced_notes = 0;
   // Embed mode: the app's "show" / "hide". A rect while hidden must not show the window again.
   bool m_embed_visible = true;
   // The app's "focus" / "blur": whether the game gets input. On by default, as on macOS.
@@ -95,8 +104,72 @@ bool PlatformWin32::RegisterRenderWindowClass(bool embedded)
   return true;
 }
 
+// --embed-adopted (the sandbox): a sandboxed process may not create a window under the app's, so
+// the window starts top-level and hidden, and yougame-sandbox.exe (outside the sandbox) makes it a
+// child of the app's window, finding it by its class and caption, both "Orca", which never change.
+// Messages are answered while waiting; after 10 s without that, Orca gives up (sandbox_embed).
+bool PlatformWin32::CreateAdoptedWindow()
+{
+  const HWND parent = reinterpret_cast<HWND>(static_cast<uintptr_t>(m_embed.parent));
+  const Embed::Rect& r = m_embed.rect;
+  // A tool window, so it never shows on the taskbar while it waits. No WM_PARENTNOTIFY once
+  // adopted: each one is a synchronous call into the app's UI thread. Made at the app's rect: the
+  // launcher's SetParent keeps a window's coordinates as they are and reads them in the parent's
+  // client area, so the window lands at its rect even when SetParent's own move comes after ours.
+  m_hwnd = CreateWindowEx(WS_EX_NOPARENTNOTIFY | WS_EX_TOOLWINDOW, WINDOW_CLASS_NAME, _T("Orca"),
+                          WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN, r.x, r.y, r.w, r.h,
+                          nullptr, nullptr, GetModuleHandle(nullptr), this);
+  if (!m_hwnd)
+  {
+    fprintf(stderr, "Orca: CreateWindowEx for adoption failed (%lu)\n", GetLastError());
+    return false;
+  }
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (GetParent(m_hwnd) != parent && std::chrono::steady_clock::now() < deadline)
+  {
+    MSG msg;
+    while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+    {
+      TranslateMessage(&msg);
+      DispatchMessage(&msg);
+    }
+    Sleep(5);
+  }
+  if (GetParent(m_hwnd) != parent)
+  {
+    fprintf(stderr, "Orca: nothing adopted the window into the app's in 10 s\n");
+    Orca::Status::Error(Orca::Sandbox::EMBED_ERROR, Orca::Sandbox::EMBED_SENTENCE);
+    return false;
+  }
+  fprintf(stderr, "Orca: adopted into the app's window\n");
+  m_adopted = true;
+  // Placed only now: a window moved before the launcher's SetParent stays where it was on screen.
+  m_embed_visible = !m_embed.too_small;  // Hidden until a big enough rect (Embed.h).
+  SetWindowPos(m_hwnd, HWND_TOP, r.x, r.y, r.w, r.h,
+               SWP_NOACTIVATE | (m_embed_visible ? SWP_SHOWWINDOW : 0));
+  // GetParent can say "adopted" while the launcher's SetParent is still on its way out: once more,
+  // a moment later, so the window is where it belongs for the rest of the boot too (MainLoop keeps
+  // it there after that).
+  const auto settle = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
+  while (std::chrono::steady_clock::now() < settle)
+  {
+    MSG msg;
+    while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+    {
+      TranslateMessage(&msg);
+      DispatchMessage(&msg);
+    }
+    Sleep(5);
+  }
+  KeepAdoptedPlaced();
+  UpdateEmbedFocus();
+  return true;
+}
+
 bool PlatformWin32::CreateRenderWindow()
 {
+  if (IsEmbedded() && m_embed.adopted)
+    return CreateAdoptedWindow();
   if (IsEmbedded())
   {
     // A child window of the app's window, placed at the player box in the parent's client pixels,
@@ -161,6 +234,9 @@ bool PlatformWin32::Init()
 
 void PlatformWin32::SetTitle(const std::string& string)
 {
+  // An adopted window keeps the caption the launcher knows it by.
+  if (m_embed.adopted)
+    return;
   SetWindowTextW(m_hwnd, UTF8ToWString(string).c_str());
 }
 
@@ -174,6 +250,8 @@ void PlatformWin32::MainLoop()
     UpdateWindowPosition();
     if (IsEmbedded())
       UpdateEmbedFocus();
+    if (m_adopted)
+      KeepAdoptedPlaced();
 
     // TODO: Is this sleep appropriate?
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -202,6 +280,31 @@ void PlatformWin32::UpdateWindowPosition()
   m_window_y = rc.top;
   m_window_width = rc.right - rc.left;
   m_window_height = rc.bottom - rc.top;
+}
+
+// An adopted window can end up somewhere else in the app's window (Windows keeps a window's screen
+// position across SetParent): put it back at the app's rect. A couple of pixels of display-scaling
+// rounding are left alone.
+void PlatformWin32::KeepAdoptedPlaced()
+{
+  const HWND parent = GetParent(m_hwnd);
+  RECT rc{};
+  if (!m_embed_visible || !parent || !GetWindowRect(m_hwnd, &rc))
+    return;
+  MapWindowPoints(HWND_DESKTOP, parent, reinterpret_cast<POINT*>(&rc), 2);
+  const Embed::Rect& r = m_embed.rect;
+  const auto off = [](long a, int b) { return std::abs(a - static_cast<long>(b)) > 2; };
+  if (!off(rc.left, r.x) && !off(rc.top, r.y) && !off(rc.right - rc.left, r.w) &&
+      !off(rc.bottom - rc.top, r.h))
+  {
+    return;
+  }
+  if (m_misplaced_notes++ < 3)
+  {
+    fprintf(stderr, "Orca: the window was at %ld %ld %ld %ld, put back at %d %d %d %d\n", rc.left,
+            rc.top, rc.right - rc.left, rc.bottom - rc.top, r.x, r.y, r.w, r.h);
+  }
+  SetWindowPos(m_hwnd, HWND_TOP, r.x, r.y, r.w, r.h, SWP_NOACTIVATE);
 }
 
 void PlatformWin32::EmbedSetRect(const Embed::Rect& r)

@@ -70,4 +70,8 @@ void OnBlockFinalized(const JitBlock& block);
 
 // Called at each frame boundary whose next frame is a first pass, in host float mode.
 void OnBoundary(const Core::CPUThreadGuard& guard);
+
+// Whether the running scene is a match, for a game whose scenes Orca reads (Brawl rev 2 and the
+// launchers that boot it); nullopt while the scene can't be read, and for any other game.
+std::optional<bool> SceneIsMatch(const Core::CPUThreadGuard& guard);
 }  // namespace Orca::JitWarm

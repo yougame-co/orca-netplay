@@ -12,7 +12,7 @@ namespace Orca::UX
 // Bump whenever anything here that writes emulated memory, masks inputs or changes how a session
 // ends changes. The session hashes it into the compatibility key as `ux=<n>`, so two builds that
 // would diverge never meet in a room.
-constexpr int kCompatVersion = 26;
+constexpr int kCompatVersion = 28;
 
 // The disc the game boots from. The overlay reads the game's own fonts from it. Call before Init.
 void SetGameDisc(std::string path);

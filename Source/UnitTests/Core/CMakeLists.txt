@@ -19,6 +19,9 @@ add_dolphin_test(FileSystemTest IOS/FS/FileSystemTest.cpp)
 add_dolphin_test(OrcaSessionTest Orca/SessionTest.cpp)
 add_dolphin_test(OrcaRoomTest Orca/RoomTest.cpp)
 add_dolphin_test(OrcaDirectLinkTest Orca/DirectLinkTest.cpp)
+# The stdio bridge and the sandbox's switches; Embed.cpp for --embed-adopted and the stdin reader.
+add_dolphin_test(OrcaSandboxTest Orca/SandboxTest.cpp
+  ${CMAKE_SOURCE_DIR}/Source/Core/DolphinNoGUI/Embed.cpp)
 add_dolphin_test(OrcaDiscTest Orca/DiscTest.cpp)
 add_dolphin_test(OrcaDiscVerifyTest Orca/DiscVerifyTest.cpp)
 add_dolphin_test(OrcaPanicDiagTest Orca/PanicDiagTest.cpp)
@@ -56,6 +59,8 @@ target_link_libraries(OrcaSetEndTest PRIVATE imgui)
 add_dolphin_test(OrcaNativeTextTest Orca/NativeTextTest.cpp)
 add_dolphin_test(OrcaLayoutTest Orca/LayoutTest.cpp)
 add_dolphin_test(OrcaPresentPacingTest Orca/PresentPacingTest.cpp)
+add_dolphin_test(OrcaPerfTest Orca/PerfTest.cpp)
+add_dolphin_test(OrcaGraphicsSettingsTest Orca/GraphicsSettingsTest.cpp)
 
 add_dolphin_test(SkylandersTest IOS/USB/SkylandersTest.cpp)
 

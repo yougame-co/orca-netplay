@@ -13,6 +13,11 @@
 #include "Common/CommonTypes.h"
 #include "InputCommon/GCPadStatus.h"
 
+namespace picojson
+{
+class value;
+}
+
 // Parses the YouGame desktop app's controller snapshots and maps them to the local player's
 // GameCube pad. Pure functions with no I/O or clocks, so unit tests cover all of it. This only
 // decides which bytes the local player sends, so it is not part of the compatibility key.
@@ -54,6 +59,12 @@ struct Snapshot
 
 // Parses one SSE `data:` payload. Anything malformed or out of range rejects the whole snapshot.
 std::optional<Snapshot> ParseSnapshotEvent(std::string_view json);
+// The same event already parsed ({type: "controllers", snapshot}), from the stdio bridge
+// (Orca/Bridge.h).
+std::optional<Snapshot> ParseSnapshotEvent(const picojson::value& event);
+// Whether picojson may parse `text`: at most 64 KB, nested at most 8 deep, and no number long
+// enough to overflow a double (picojson has no nesting limit and aborts on such a number).
+bool SafeJson(std::string_view text);
 
 // Input older than this is treated as neutral. The helper republishes every 100 ms.
 constexpr double STALE_MS = 250;

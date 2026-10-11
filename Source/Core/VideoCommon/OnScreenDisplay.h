@@ -55,9 +55,11 @@ void ClearMessages();
 void DiscardTypedMessage(MessageType type);
 
 // Orca: an extra ImGui layer (the online overlay) drawn after the messages on every presented
-// frame. Pass an empty function to clear it.
-void SetHostOverlay(std::function<void()> draw);
+// frame. Pass an empty function to clear it. `release` frees what the layer made with g_gfx: the
+// backend calls it on the video thread as it shuts down, while its device is still alive.
+void SetHostOverlay(std::function<void()> draw, std::function<void()> release = {});
 void DrawHostOverlay();
+void ReleaseHostOverlay();
 // Orca: y position in pixels where this frame's messages end, or 0 with none, so the host
 // overlay can stay clear of them.
 float MessagesBottom();

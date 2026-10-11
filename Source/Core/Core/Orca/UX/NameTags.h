@@ -21,7 +21,9 @@ class CPUThreadGuard;
 // layout in someone else's game.
 //
 // Memory layout (Brawl rev 2; Project+ runs the same executable):
-//   - Save tags: g_GameGlobal (0x805A00E0) +0x28 -> records (0x90172D40), tag i at
+//   - Save tags: g_GameGlobal (0x805A00E0) +0x28 -> records (0x90172D40), one heap block of
+//     120 entries of 0x124 bytes (0x88E0; the next block's header and gmGlobalRecord follow).
+//     Entry i starts at +i * 0x124 with a 0xE0-byte per-name block; its tag (below) is at
 //     +0xE0 + i * 0x124. Name first, up to 5 UTF-16BE characters and a 0. Empty name = unused.
 //   - Tag controls: +0x0C rumble (1 on), +0x14 layout, 0x2D bytes, defaults at 0x80406938.
 //     GameCube 12 bytes (L, R, Z, D-pad up, side, down, A, B, C-stick, Y, X, then flags: tap jump
@@ -38,7 +40,7 @@ class CPUThreadGuard;
 //     gmPlayerInitData (+0x0C name, +0x18 tag index).
 //
 // On every character-select frame, a joined port with a named player and no tag gets one: the tag
-// already holding that name, else the highest unused one, built as the game builds one. A duplicate
+// already holding that name, else the lowest unused one, built as the game builds one. A duplicate
 // name gets its port number as the last character (SAND2). The player's controls are written into
 // it. A port with controls but no showable name gets "P<port>". A port with neither gets nothing.
 // The game's own name list types tags in full-width characters (U+FF21 for A) while Orca writes

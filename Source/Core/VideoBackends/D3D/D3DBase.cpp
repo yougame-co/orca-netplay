@@ -159,9 +159,17 @@ void Destroy()
   }
 
   if (remaining_references)
+  {
     ERROR_LOG_FMT(VIDEO, "Unreleased references: {}.", remaining_references);
+    // Orca: the device lives on with its driver, whose threads call back into d3d11.dll, so the
+    // DLL stays loaded until the process ends: unloaded under them, the process crashes later.
+    HMODULE pinned;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"d3d11.dll", &pinned);
+  }
   else
+  {
     NOTICE_LOG_FMT(VIDEO, "Successfully released all device references!");
+  }
 
   dxgi_factory.Reset();
   D3DCommon::UnloadLibraries();

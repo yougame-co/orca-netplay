@@ -219,15 +219,54 @@ u8 ClampByte(int v)
   return static_cast<u8>(std::clamp(v, 0, 255));
 }
 
+// The byte of an 8-bit axis (0..255, resting at 128), if `v` came from one. Box controllers (B0XX,
+// HayBox) send exact GameCube stick bytes: over DInput as an 8-bit HID axis, which the OS scales to
+// SDL's int16 as 257 * byte - 32768 (IOKit and DirectInput both map 0..255 linearly), and over
+// XInput as 257 * (byte - 128) + 128 (HayBox): both 128 above a multiple of 257. The helper sends
+// int16 / 32767 (/ 32768 below zero); a negated axis (SDL's XInput Y, an axis inverted in the
+// Controls panel) lands on 129 instead. On that lattice floor((s + 32768) / 257) is the byte the
+// device sent (the mirrored byte when negated), where 128 + lround(127 * v) comes out one unit
+// short of every leftward and downward push. Analog sticks (16-bit, centred on 0) are off the
+// lattice but for one value in 257, which then moves by at most one unit.
+std::optional<int> EightBitAxis(float v)
+{
+  for (const double scale : {32767.0, 32768.0})
+  {
+    const double s = static_cast<double>(v) * scale;
+    const double whole = std::round(s);
+    // A float holds the helper's value to within 0.002 of an int16 step.
+    if (std::abs(s - whole) > 0.004)
+      continue;
+    const int i = static_cast<int>(whole);
+    const int m = ((i % 257) + 257) % 257;
+    if (m == 128 || m == 129)
+      return (i + 32768) / 257;  // i + 32768 >= 0: floor
+  }
+  return std::nullopt;
+}
+
 // -1..1 to a GameCube axis byte around `centre`; `invert` for Y (the pad's down is the GC's -).
+// Never 0: a full push is 1..255 either way, as before.
 u8 AxisByte(float v, bool invert)
 {
   if (!std::isfinite(v))
     return GCPadStatus::MAIN_STICK_CENTER_X;
-  const float s = std::clamp(invert ? -v : v, -1.0f, 1.0f);
+  const float c = std::clamp(v, -1.0f, 1.0f);
+  if (const auto byte = EightBitAxis(c))
+    return static_cast<u8>(std::clamp(invert ? 255 - *byte : *byte, 1, 255));
+  const float s = invert ? -c : c;
   return ClampByte(GCPadStatus::MAIN_STICK_CENTER_X +
                    static_cast<int>(std::lround(s * GCPadStatus::MAIN_STICK_RADIUS)));
 }
+
+// A standard pad's C-stick inside this radius (of a full push, both axes together) reads as
+// centred. Brawl takes a new C-stick attack only once the C-stick is back at neutral: resting 5
+// units (4%) off centre, every C-stick smash and aerial after the first is ignored (4 units off is
+// still neutral), and analog sticks often rest that far off. The adapter's controllers get their
+// rest as their origin (the app's helper); a standard pad has none, hence this (a little under the
+// 0.265 XInput recommends for a right stick). Outside it nothing is rescaled: flicks and a box
+// controller's exact C-stick values reach the game as before. Only the local player's bytes change.
+constexpr float C_STICK_DEAD_ZONE = 0.2f;
 
 // W3C standard gamepad button indices.
 enum StandardButton
@@ -253,12 +292,24 @@ enum StandardButton
 constexpr float TRIGGER_CLICK = 0.5f;
 }  // namespace
 
+bool SafeJson(std::string_view text)
+{
+  return SafeToParse(text);
+}
+
 std::optional<Snapshot> ParseSnapshotEvent(std::string_view json)
 {
   if (!SafeToParse(json))
     return std::nullopt;
   picojson::value root;
-  if (!picojson::parse(root, std::string(json)).empty() || !root.is<picojson::object>())
+  if (!picojson::parse(root, std::string(json)).empty())
+    return std::nullopt;
+  return ParseSnapshotEvent(root);
+}
+
+std::optional<Snapshot> ParseSnapshotEvent(const picojson::value& root)
+{
+  if (!root.is<picojson::object>())
     return std::nullopt;
   const auto& event = root.get<picojson::object>();
   const picojson::value* type = Field(event, "type");
@@ -387,8 +438,12 @@ GCPadStatus MapStandardPad(const StandardPad& pad)
     status.button |= PAD_TRIGGER_R;
   status.stickX = AxisByte(pad.axes[0], false);
   status.stickY = AxisByte(pad.axes[1], true);
-  status.substickX = AxisByte(pad.axes[2], false);
-  status.substickY = AxisByte(pad.axes[3], true);
+  const float cx = pad.axes[2], cy = pad.axes[3];
+  if (cx * cx + cy * cy >= C_STICK_DEAD_ZONE * C_STICK_DEAD_ZONE)
+  {
+    status.substickX = AxisByte(cx, false);
+    status.substickY = AxisByte(cy, true);
+  }
   status.isConnected = true;
   return status;
 }

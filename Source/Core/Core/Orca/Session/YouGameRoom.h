@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <map>
 #include <memory>
 #include <optional>
@@ -18,9 +19,9 @@
 // A private YouGame room carrying an Orca drop-in session. The host plays from boot and friends
 // join by room code (up to four players). Each player's seat is its room slot (seat 0, the host, is
 // port 1), and session packets travel as relayed room messages. Tickets come from the YouGame
-// desktop app's loopback bridge (YOUGAME_BRIDGE / YOUGAME_TOKEN), or for tests from the site as an
-// anonymous dev game (ORCA_TEST_DEV_GAME), whose rooms never meet real players. All network work
-// runs on one thread.
+// desktop app's bridge, on stdin and stdout (YOUGAME_STDIO=1, Orca/Bridge.h) or on loopback
+// (YOUGAME_BRIDGE / YOUGAME_TOKEN), or for tests from the site as an anonymous dev game
+// (ORCA_TEST_DEV_GAME), whose rooms never meet real players. All network work runs on one thread.
 namespace Orca::Net
 {
 struct RoomOptions
@@ -216,6 +217,10 @@ public:
   std::string Code() const;
   // The roster's name for a seat (this player's included); "" when nobody holds it.
   std::string SeatName(int seat) const;
+  // A joiner's own controls and queue identity exactly as its hello carries them (none past their
+  // wire bounds): what an honest host puts in this player's port.
+  std::vector<u8> HelloControls() const;
+  std::vector<u8> HelloQueue() const;
   // A line for the UI or log: what the room is doing, or why it ended.
   std::string Status() const;
   // Once Ended: the app's error code (Orca::Status), empty for a normal end. One code is internal:
@@ -251,11 +256,21 @@ public:
   // A ranked set's game began (`start`: its fight's first frame): tells the room's match with a
   // `game-start` (GameStartMessage), queued with the reports, once per game.
   void ReportGameStart(int start);
+  // The games of the room's ranked match this player has played (its game-starts) or heard the
+  // verdict of, whichever is more: a joiner's keyframe holds no more (Rules::SetFitsJoin).
+  int KnownSetGames() const;
   // The games desynced: report the match in progress void (a ranked set, or a casual game).
   void ReportDesync();
   // The opponent's inputs stopped mid ranked set: send a `finish` naming this player the winner,
   // once, if the set is still open.
   void ReportStall();
+  // The session ended for the opponent's doing, or the wait for a verdict ran out: report the
+  // room's match in progress void, as for a desync, before this player leaves or goes quiet.
+  void ReportFault();
+  // A ranked set's room while this game waits there for the verdict without a session: say every
+  // so often that this game still runs (the room counts it as heard). Call from the emulation
+  // thread, which is what a stall claim is about.
+  void KeepAlive();
 
   void Send(const Packet& packet) override;
   std::vector<Packet> Receive() override;
@@ -293,6 +308,8 @@ public:
   // set's end, once (nothing after it).
   std::optional<End> Game(const std::string& winner);
   int Wins(const std::string& id) const;
+  // Games with a verdict so far, void and drawn ones included.
+  int Games() const { return m_games; }
   void Reset();
 
 private:
@@ -305,6 +322,27 @@ private:
 // {"t":"game-start","matchId":"<match>","id":"g<start>"}, the id the game's `game-report` carries.
 // Empty when none may go: a room other than a ranked queue's, no room match, the set already
 // decided (this side sent its finish, or the verdict came), or no fight frame.
+// Parses a room message the way the room does: a value the parser can't take safely (nested too
+// deep, a number with an exponent or too many digits) is read as null, and the rest still parses.
+bool ParseRoomJson(const std::string& text, picojson::value* value);
+// A host's `drop` to the joiner in a room whose match is still being decided: the joiner reports
+// the match void and stays to wait for the verdict, rather than ending its room (leaving a live
+// ranked set loses it). False: its room ends with the reason, as in a friends room.
+bool DropKeepsRoom(const std::string& queue, bool match_live, bool set_over);
+// Whether a keep-alive (YouGameRoom::KeepAlive) goes out now: the emulation thread asked for one
+// since the last went, and the last is at least KEEP_ALIVE_EVERY old.
+constexpr std::chrono::milliseconds KEEP_ALIVE_EVERY{2000};
+bool KeepAliveDue(std::chrono::steady_clock::time_point now,
+                  std::optional<std::chrono::steady_clock::time_point> wanted,
+                  std::optional<std::chrono::steady_clock::time_point> sent);
+// The `finish` for a room's match: a winner, or void when `winner` is empty.
+std::string FinishMessage(const std::string& match, const std::string& winner);
+// The games of a room match this player knows of (YouGameRoom::KnownSetGames), kept by match id for
+// the life of the process (exposed for tests): records `known` for `match` and returns the most
+// this process ever knew of it. A player whose room link dropped comes back on a fresh room with
+// the same match, and what it knew comes back with it. Only this player's own count: nothing the
+// room or the host sends goes in. An empty `match` keeps nothing and returns `known`.
+int RememberKnownSetGames(const std::string& match, int known);
 std::string GameStartMessage(const std::string& queue, const std::string& match, bool decided,
                              int start);
 // Packets as room messages (exposed for tests).

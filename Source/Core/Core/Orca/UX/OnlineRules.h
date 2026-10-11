@@ -11,6 +11,7 @@
 
 #include "Common/CommonTypes.h"
 #include "Core/Orca/UX/MatchBlock.h"
+#include "Core/Orca/UX/SetBlock.h"
 #include "Core/Rollback/InputGate.h"
 
 namespace Core
@@ -267,10 +268,16 @@ void MemoryReplaced();
 // Affects only the header; the rest of the UX still uses `alone`.
 void SetHeaderFree(bool free);
 // A joiner just loaded its keyframe into a room of `mode` (None: friends room). The host's header
-// is checked at the next frame hook.
-void ExpectHeader(Mode mode, std::string_view code = {}, u8 flags = 0);
+// is checked at the next frame hook. `known_games` (a ranked room): the games of the room's match
+// this player has played or heard the verdict of (Online::KnownSetGames); -1: the set isn't
+// checked.
+void ExpectHeader(Mode mode, std::string_view code = {}, u8 flags = 0, int known_games = -1);
 // Whether a joiner accepts the host's header `h` (pure).
 bool HeaderFitsRoom(const Header& h, Mode mode, Ruleset ruleset, std::string_view code, u8 flags);
+// Whether a joiner accepts the set the host's game holds (pure): no more decided games than the
+// `known_games` this player knows of in the room's match, and with none known, a set not begun.
+// A host's history can't hand anyone games nobody played in the room.
+bool SetFitsJoin(const SetBlock::SetState& set, int known_games);
 // "mismatch" once the check failed; the joiner leaves.
 std::optional<std::string> TakeMismatch();
 // The ranked no-show port (0-based), once frames through it are `confirmed` final.

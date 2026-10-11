@@ -448,6 +448,45 @@ bool InTraining()
 
 namespace FriendsMove
 {
+namespace
+{
+bool IsKeypadTask(const GuestMemory& m, u32 task)
+{
+  if (!Pointer(m, task))
+    return false;
+  const u32 name = m.Read32(task);
+  for (u32 i = 0; i <= KEYPAD_TASK.size(); ++i)
+  {
+    if (!m.Valid(name + i))
+      return false;
+    const char want = i < KEYPAD_TASK.size() ? KEYPAD_TASK[i] : '\0';
+    if (static_cast<char>(m.Read8(name + i)) != want)
+      return false;
+  }
+  return true;
+}
+}  // namespace
+
+bool KeypadOpen(const GuestMemory& m, u32 menu)
+{
+  if (!Pointer(m, menu + MENU_TASK))
+    return false;
+  const u32 own = m.Read32(menu + MENU_TASK);
+  // Both ways from the menu's own task: the keypad is linked after it, but nothing here relies on
+  // that.
+  for (const u32 link : {TASK_NEXT, TASK_PREV})
+  {
+    u32 task = own;
+    for (int i = 0; i < TASK_WALK_MAX && Pointer(m, task) && Pointer(m, task + link); ++i)
+    {
+      if (IsKeypadTask(m, task))
+        return true;
+      task = m.Read32(task + link);
+    }
+  }
+  return false;
+}
+
 Outputs Decide(const Inputs& in)
 {
   namespace B = MatchBlock;
@@ -470,9 +509,10 @@ Outputs Decide(const Inputs& in)
   // No friend, a queue match, or already in Versus: nothing to do.
   if (!(in.plugged & FRIEND_PORTS) || in.queue || IsVersusSequence(in.sequence))
     pending = false;
-  // Only a built main menu (MENU_BUILT) can be left safely.
+  // Only a built main menu (MENU_BUILT) without Options > Controls open (KEYPAD_TASK) can be left
+  // safely.
   const bool menu = in.scene == "muMenuMain" && in.step == STEP_RUNNING && in.menu_built &&
-                    in.exit_code == 0 && in.frame >= 0;
+                    !in.keypad && in.exit_code == 0 && in.frame >= 0;
   const u32 since = kept ? in.menu_since : 0;
   // When the built main menu started running with a friend waiting.
   out.menu_since = pending && menu ? (since != 0 ? since : static_cast<u32>(in.frame) + 1) : 0;
@@ -539,6 +579,7 @@ bool Frame(const Core::CPUThreadGuard& guard, int frame, bool resimulating,
     // ReadSceneName already validated this pointer.
     const u32 menu = m.Read32(manager + MANAGER_SCENE);
     in.menu_built = m.Valid(menu + MENU_BUILT) && m.Read8(menu + MENU_BUILT) != 0;
+    in.keypad = in.menu_built && KeypadOpen(m, menu);
   }
   in.frame = frame;
   in.tag = m.Read8(B::FRIENDS_TAG);

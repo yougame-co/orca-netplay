@@ -274,6 +274,9 @@ struct Stats
   // noisy.
   int rtt_median = -1;
   int peer_rtt_median = -1;
+  // Players whose inputs kept coming late against their own frame (Session::LateSeat), counted
+  // each time one was found so.
+  int late_seats = 0;
 };
 
 class Session
@@ -358,6 +361,15 @@ public:
   std::vector<std::string> TakeDelayNotes() { return std::exchange(m_delay_notes, {}); }
 
   const std::string& Error() const { return m_error; }
+  // The error was another player's doing (a packet or a host roster no honest Orca sends), not
+  // this machine's: this player can play on, and the match it was in doesn't count.
+  bool ErrorFromPeer() const { return m_error_from_peer; }
+  // Whether `seat`'s inputs keep coming late against its own frame (a player holding them back):
+  // this machine then runs fewer frames on guesses for it.
+  bool LateSeat(int seat) const;
+  // Ends the session for something another player sent that this machine caught outside it (a
+  // host's values for this player's own port): the next step ends, ErrorFromPeer.
+  void EndForPeer(std::string error) { FailPeer(std::move(error)); }
   const Stats& GetStats() const { return m_stats; }
   int CurrentFrame() const { return m_frame; }
   bool Resimulating() const { return m_resim_until >= 0; }
@@ -374,7 +386,11 @@ private:
   bool NeedsSnapshot(int frame) const;
   void ChooseSnapshotEvery();
   void CheckChecksums();
+  void UpdateLateness();
+  void ResetLateness(int seat);
   Step Fail(std::string error);
+  // Fail, for what another player sent (ErrorFromPeer).
+  Step FailPeer(std::string error);
   bool SaveOnce(int frame);
   void SampleLocal(const Pad& local_pad);
   void AdaptDelay();
@@ -387,6 +403,8 @@ private:
   void TrackAdvantage();
   int KnownThrough(int seat) const;
   bool InPlay(int seat) const;
+  // This player and every other one in play.
+  int PlayersInPlay() const;
   int SettleFrom() const;
   int StallLimit() const;
   void AdvanceReceived(int seat);
@@ -500,6 +518,14 @@ private:
   // smoothed lead over its slowest peer as reported. The balance (ours - theirs) / 2 is averaged
   // over a window.
   std::array<std::optional<double>, MAX_SEATS> m_advantage;
+  // Input lateness per seat (UpdateLateness): this window's sum and samples, late and on-time
+  // windows in a row, and whether the seat counts as late.
+  std::array<int, MAX_SEATS> m_late_sum{};
+  std::array<int, MAX_SEATS> m_late_samples{};
+  std::array<int, MAX_SEATS> m_late_windows{};
+  std::array<int, MAX_SEATS> m_clean_windows{};
+  std::array<bool, MAX_SEATS> m_late{};
+  int m_late_window_start = 0;
   std::array<std::optional<double>, MAX_SEATS> m_smoothed_advantage;
   std::array<std::optional<double>, MAX_SEATS> m_remote_advantage;
   double m_balance_sum = 0;
@@ -537,5 +563,6 @@ private:
 
   Stats m_stats;
   std::string m_error;
+  bool m_error_from_peer = false;
 };
 }  // namespace Orca::Net

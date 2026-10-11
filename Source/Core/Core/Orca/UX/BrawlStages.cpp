@@ -362,7 +362,8 @@ constexpr u8 TURN_FRAMES = 90;  // give up after this many frames
 
 // Handles each player's presses on their own cursor: X strikes or bans on your turn, Y skips an
 // optional ban, A picks on your pick step and proposes otherwise, B withdraws a proposal, A on the
-// page button turns the page. Presses are edges, so a resimulated frame sees none twice.
+// page button turns the page on your turn (the page is both players' view; on a step both take at
+// once, either's). Presses are edges, so a resimulated frame sees none twice.
 void CursorPresses(const RS::Plan& plan, State* s, StageCursors::State* c, u32 page)
 {
   const StageCursors::Layout& layout = StageCursors::BrawlLayout();
@@ -375,8 +376,12 @@ void CursorPresses(const RS::Plan& plan, State* s, StageCursors::State* c, u32 p
     const int on = StageCursors::Hovered(layout, page, mine.x, mine.y);
     const RS::Step* step = RS::Current(plan, s->progress);
     const bool my_turn = step && step->port == port;
-    if ((pressed & StageCursors::BTN_A) && on == StageCursors::PAGE_BUTTON && c->page_turn == 0)
+    const bool may_turn = my_turn || (step && step->port == RS::BOTH);
+    if ((pressed & StageCursors::BTN_A) && on == StageCursors::PAGE_BUTTON && c->page_turn == 0 &&
+        may_turn)
+    {
       c->page_turn = static_cast<u8>(TURN_ON | port | (page & 1) << 1);
+    }
     if (on >= 0 && my_turn && (pressed & StageCursors::BTN_X) &&
         (step->kind == RS::StepKind::Strike || step->kind == RS::StepKind::Ban))
     {

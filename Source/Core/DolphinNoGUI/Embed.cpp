@@ -11,6 +11,7 @@
 #include <mutex>
 #include <sstream>
 #include <thread>
+#include <utility>
 
 #ifdef _WIN32
 #include <io.h>
@@ -18,6 +19,8 @@
 #else
 #include <unistd.h>
 #endif
+
+#include "Core/Orca/Bridge.h"
 
 namespace Embed
 {
@@ -103,6 +106,10 @@ std::optional<Options> TakeArguments(std::vector<char*>* argv, std::string* erro
     {
       options.enabled = true;
     }
+    else if (std::strcmp(arg, "--embed-adopted") == 0)
+    {
+      options.adopted = true;
+    }
     else if (std::strcmp(arg, "--parent") == 0)
     {
       const char* value = next(1);
@@ -152,6 +159,11 @@ std::optional<Options> TakeArguments(std::vector<char*>* argv, std::string* erro
     *error = "--embed needs --parent";
     return std::nullopt;
   }
+  if (options.adopted && !options.enabled)
+  {
+    *error = "--embed-adopted needs --embed";
+    return std::nullopt;
+  }
   *argv = std::move(kept);
   return options;
 }
@@ -193,37 +205,51 @@ void StartReading()
   // Read the raw file descriptor, not stdin: a thread blocked in a FILE read holds that FILE's
   // lock, and fflush(nullptr) at shutdown or exit would then hang forever.
   std::thread([] {
-    std::string pending;
-    char buffer[512];
+    // 64 KB reads: a controller snapshot on the stdio bridge is a few KB, and many can queue up.
+    Orca::Bridge::LineSplitter splitter(Orca::Bridge::MAX_LINE);
+    // Never freed, like the inbox: this thread may still be blocked on stdin when the process
+    // exits.
+    auto* const buffer = new char[64 * 1024];
+    u64 dropped = 0;
     while (true)
     {
 #ifdef _WIN32
-      const int got = _read(0, buffer, sizeof(buffer));
+      const int got = _read(0, buffer, 64 * 1024);
 #else
-      const ssize_t got = read(STDIN_FILENO, buffer, sizeof(buffer));
+      const ssize_t got = read(STDIN_FILENO, buffer, 64 * 1024);
       if (got < 0 && errno == EINTR)
         continue;
 #endif
       if (got <= 0)
         break;
-      pending.append(buffer, static_cast<size_t>(got));
-      size_t newline;
-      bool quit = false;
-      while ((newline = pending.find('\n')) != std::string::npos)
+      // Bridge lines are handled here, on this thread; the commands wait for the frame loop.
+      std::vector<std::string> lines =
+          Orca::Bridge::Route(splitter.Feed(std::string_view(buffer, static_cast<size_t>(got))));
+      if (splitter.Dropped() != dropped)
       {
-        std::string line = pending.substr(0, newline);
-        pending.erase(0, newline + 1);
-        if (!line.empty() && line.back() == '\r')
-          line.pop_back();
-        Inbox& inbox = GetInbox();
-        std::lock_guard lock(inbox.mutex);
-        inbox.lines.push_back(line);
+        dropped = splitter.Dropped();
+        std::fprintf(stderr, "Orca: dropped a line over %zu bytes from the app (%llu so far)\n",
+                     Orca::Bridge::MAX_LINE, static_cast<unsigned long long>(dropped));
+      }
+      if (lines.empty())
+        continue;
+      bool quit = false;
+      Inbox& inbox = GetInbox();
+      std::lock_guard lock(inbox.mutex);
+      for (std::string& line : lines)
+      {
         quit = quit || line == "quit";
+        inbox.lines.push_back(std::move(line));
       }
       if (quit)
+      {
+        // Nothing more is read, so no reply can come.
+        Orca::Bridge::Close();
         return;
+      }
     }
     // The app closed the pipe or died, so there is nobody left to show the game to.
+    Orca::Bridge::Close();
     Inbox& inbox = GetInbox();
     std::lock_guard lock(inbox.mutex);
     inbox.lines.emplace_back("quit");

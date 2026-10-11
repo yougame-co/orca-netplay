@@ -16,6 +16,7 @@
 #include <picojson.h>
 
 #include "Common/CommonTypes.h"
+#include "Core/Orca/Sandbox.h"
 
 // Direct links between the Orcas in a room: one UDP path per pair of players alongside the room's
 // relay, so inputs go straight to the other machine instead of through Cloudflare and the room's
@@ -97,6 +98,9 @@ struct DirectOptions
   bool loopback = false;
   int loss_percent = 0;
   bool blocked = false;
+  // The network the app's sandbox gives Orca (ORCA_NET, Orca/Sandbox.h): without the LAN, no LAN
+  // host candidate is offered or tried and there is no upgrade to the LAN; never loopback.
+  Orca::Sandbox::NetMode net = Orca::Sandbox::NetMode::All;
   // ORCA_TEST_NET_DELAY_MS / ORCA_TEST_NET_JITTER_MS, applied as on the relay: every datagram waits
   // this long (plus 0..jitter) on the way out and again on the way in.
   std::optional<int> net_delay_ms;
@@ -169,6 +173,9 @@ public:
 private:
   std::unique_ptr<Impl> m_impl;
 };
+
+// The ICE lines of a description libjuice wrote, without a candidate `net` can't reach (tests).
+std::string DescriptionFor(std::string_view description, Orca::Sandbox::NetMode net);
 
 // Exposed for tests: whether two machines are on one LAN, checked before the "upgrade" rule trades
 // a working server-reflexive or TURN link for their LAN addresses. A shared host subnet (IPv4 /24

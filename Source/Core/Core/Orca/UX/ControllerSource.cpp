@@ -21,6 +21,7 @@
 
 #include "Common/HttpRequest.h"
 #include "Common/Logging/Log.h"
+#include "Core/Orca/Bridge.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Session/PadCodec.h"
 #include "Core/Orca/UX/Controllers.h"
@@ -170,6 +171,9 @@ public:
   {
     m_thread = std::thread([this] { Run(); });
   }
+  // The stdio bridge's stream: no thread of its own; the app's snapshots arrive through Accept, on
+  // the stdin reader's thread (Orca/Bridge.h).
+  Stream() = default;
   ~Stream()
   {
     m_done = true;
@@ -381,9 +385,12 @@ private:
     return static_cast<Stream*>(user)->m_done ? 1 : 0;
   }
 
-  void OnEvent(std::string_view json)
+  void OnEvent(std::string_view json) { Accept(ParseSnapshotEvent(json)); }
+
+public:
+  // One snapshot from the app (nullopt: a malformed one), newest wins.
+  void Accept(std::optional<Snapshot> parsed)
   {
-    std::optional<Snapshot> parsed = ParseSnapshotEvent(json);
     const auto arrived = Clock::now();
     const double arrived_epoch = EpochMs();
     std::lock_guard lk(m_lock);
@@ -413,6 +420,7 @@ private:
     m_attached = true;
   }
 
+private:
   // `trip` is arrival time minus sent_at, across two clocks. Returns it minus the fastest trip of
   // the last HOP_FLOOR_PERIOD. Only adapter snapshots count, since only they use the helper's
   // clock. Call under m_lock.
@@ -536,11 +544,15 @@ private:
 
 std::mutex s_stream_lock;
 std::unique_ptr<Stream> s_stream;
+// The stdio bridge's handler for the controller snapshots, while its stream runs.
+u64 s_bridge_token = 0;
 
 // Swaps the stream out and joins it outside the lock. `log` writes the input-age summary first;
 // skip it at static destruction, when the logger may be gone.
 void StopStream(bool log)
 {
+  // The stdin thread may be handing over a snapshot: this waits it out (no lock held here).
+  Orca::Bridge::ClearControllersHandler(std::exchange(s_bridge_token, 0));
   std::unique_ptr<Stream> stream;
   {
     std::lock_guard lk(s_stream_lock);
@@ -621,8 +633,30 @@ std::shared_ptr<const Snapshot> LatestSnapshot(double* age_ms)
   return cached->snapshot;
 }
 
+void StartControllerStreamFromStdio()
+{
+  StopStream(false);
+  {
+    std::lock_guard lk(s_stream_lock);
+    s_stream = std::make_unique<Stream>();
+  }
+  s_bridge_token = Orca::Bridge::SetControllersHandler([](const picojson::value& event) {
+    // Parsed before the lock, so the CPU thread's read never waits on it.
+    std::optional<Snapshot> parsed = ParseSnapshotEvent(event);
+    std::lock_guard lk(s_stream_lock);
+    if (s_stream)
+      s_stream->Accept(std::move(parsed));
+  });
+}
+
 void StartControllerStreamFromEnvironment()
 {
+  // Under the app on the stdio bridge, the snapshots come on stdin.
+  if (Orca::Bridge::Enabled())
+  {
+    StartControllerStreamFromStdio();
+    return;
+  }
   const std::string bridge = Env("YOUGAME_BRIDGE"), token = Env("YOUGAME_TOKEN");
   if (bridge.empty() || token.empty())
     return;

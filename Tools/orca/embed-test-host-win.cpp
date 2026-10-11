@@ -7,10 +7,14 @@
 //   cl /nologo /EHsc /std:c++20 /utf-8 /W4 Tools\orca\embed-test-host-win.cpp ^
 //      /Fe:embed-test-host-win.exe user32.lib gdi32.lib gdiplus.lib
 // Run:
-//   embed-test-host-win.exe [--commands <file>] [--stderr <file>] <DolphinNoGUI.exe> [orca args...]
+//   embed-test-host-win.exe [--commands <file>] [--stderr <file>] [--adopt 0|1] <DolphinNoGUI.exe>
+//       [orca args...]
 // The host adds `--embed --parent <its HWND> --rect X Y W H` in front of the orca arguments; pass
 // the rest (-u, -v D3D, -C "Dolphin.DSP.Backend=No Audio Output", -e <disc>). Set ORCA_SESSION=0 in
-// the environment for solo play.
+// the environment for solo play. `--adopt 1` plays the sandbox's way (ORCA.md "Adopted window"):
+// Orca gets `--embed-adopted` too, and this host adopts its window as yougame-sandbox.exe does
+// with --embed-keep-style (WS_POPUP becomes WS_CHILD, then SetParent); `--adopt 0` starts it with
+// `--embed-adopted` and never adopts it (Orca must give up with sandbox_embed after 10 s).
 //
 // Commands, one per line, on this program's stdin or appended to the --commands file (polled):
 //   send LINE        a raw line for Orca's stdin (rect, hide, show, focus, blur, pause, quit...)
@@ -594,10 +598,57 @@ std::wstring QuoteArg(const std::wstring& arg)
 }
 }  // namespace
 
+// --adopt: Orca's top-level "Orca" window (class and caption) of process `pid`, as the launcher
+// finds it.
+struct Adoption
+{
+  DWORD pid;
+  HWND found;
+};
+BOOL CALLBACK FindOrcaWindow(HWND h, LPARAM l)
+{
+  auto* a = reinterpret_cast<Adoption*>(l);
+  DWORD pid = 0;
+  GetWindowThreadProcessId(h, &pid);
+  wchar_t cls[64], title[64];
+  if (pid == a->pid && GetClassNameW(h, cls, 64) && std::wstring(cls) == L"Orca" &&
+      GetWindowTextW(h, title, 64) && std::wstring(title) == L"Orca")
+  {
+    a->found = h;
+    return FALSE;
+  }
+  return TRUE;
+}
+
+// What yougame-sandbox.exe does with --embed-parent and --embed-keep-style, from outside Orca.
+void Adopt(HANDLE process, DWORD pid, HWND parent)
+{
+  const long long start = Ms();
+  while (WaitForSingleObject(process, 5) == WAIT_TIMEOUT)
+  {
+    Adoption a{pid, nullptr};
+    EnumWindows(FindOrcaWindow, reinterpret_cast<LPARAM>(&a));
+    if (!a.found)
+      continue;
+    LONG_PTR style = GetWindowLongPtrW(a.found, GWL_STYLE);
+    style = (style & ~static_cast<LONG_PTR>(WS_POPUP)) | WS_CHILD;
+    const LONG_PTR ex = GetWindowLongPtrW(a.found, GWL_EXSTYLE);
+    if (!(ex & WS_EX_NOPARENTNOTIFY))
+      SetWindowLongPtrW(a.found, GWL_EXSTYLE, ex | WS_EX_NOPARENTNOTIFY);
+    SetWindowLongPtrW(a.found, GWL_STYLE, style);
+    if (SetParent(a.found, parent))
+      Print("host", "adopted Orca's window %lld ms after the start", Ms() - start);
+    else
+      Print("host", "could not adopt Orca's window (%lu)", GetLastError());
+    return;
+  }
+}
+
 int wmain(int argc, wchar_t** argv)
 {
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
   std::string command_file, stderr_file;
+  int adopt = -1;  // --adopt: 1 adopt the window, 0 never; -1 plain --embed
   int first = 1;
   while (first + 1 < argc && argv[first][0] == L'-' && argv[first][1] == L'-')
   {
@@ -608,6 +659,8 @@ int wmain(int argc, wchar_t** argv)
       command_file = narrow;
     else if (flag == L"--stderr")
       stderr_file = narrow;
+    else if (flag == L"--adopt")
+      adopt = narrow == "1" ? 1 : 0;
     else
       break;
     first += 2;
@@ -615,7 +668,7 @@ int wmain(int argc, wchar_t** argv)
   if (first >= argc)
   {
     std::fprintf(stderr, "usage: embed-test-host-win [--commands FILE] [--stderr FILE] "
-                         "<DolphinNoGUI.exe> [orca args...]\n");
+                         "[--adopt 0|1] <DolphinNoGUI.exe> [orca args...]\n");
     return 2;
   }
 
@@ -634,8 +687,10 @@ int wmain(int argc, wchar_t** argv)
   AppendMenuW(file, MF_STRING, MENU_FILE_QUIT, L"&Quit");
   AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(file), L"&File");
   AppendMenuW(menu, MF_STRING, 0, L"&View");
-  s_window = CreateWindowExW(0, wc.lpszClassName, L"Orca embed test host", WS_OVERLAPPEDWINDOW,
-                             100, 100, 1280, 800, nullptr, menu, wc.hInstance, nullptr);
+  // AGENT TEST: a test window must never be taken for a player's.
+  s_window = CreateWindowExW(0, wc.lpszClassName, L"AGENT TEST Orca embed test host",
+                             WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, nullptr, menu, wc.hInstance,
+                             nullptr);
   // 1280x800 DIPs of client area.
   RunCommand("size 1280 800");
   ShowWindow(s_window, SW_SHOW);
@@ -660,6 +715,8 @@ int wmain(int argc, wchar_t** argv)
   cmdline += L" --embed --parent " + std::to_wstring(reinterpret_cast<uintptr_t>(s_window)) +
              L" --rect " + std::to_wstring(b.left) + L" " + std::to_wstring(b.top) + L" " +
              std::to_wstring(b.right - b.left) + L" " + std::to_wstring(b.bottom - b.top);
+  if (adopt >= 0)
+    cmdline += L" --embed-adopted";
   for (int i = first + 1; i < argc; ++i)
     cmdline += L" " + QuoteArg(argv[i]);
 
@@ -680,6 +737,11 @@ int wmain(int argc, wchar_t** argv)
   CloseHandle(orca_stdout_write);
   s_orca_process = pi.hProcess;
   Print("host", "started Orca (pid %lu): %ls", pi.dwProcessId, cmdline.c_str());
+  if (adopt == 1)
+  {
+    const DWORD pid = pi.dwProcessId;
+    std::thread([pid] { Adopt(s_orca_process, pid, s_window); }).detach();
+  }
 
   std::thread([orca_stdout_read] {
     std::string pending;

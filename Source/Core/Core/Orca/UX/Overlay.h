@@ -164,6 +164,7 @@ void ShutdownOverlay();
 void RepresentDuringStall(int stalled_ms);
 // The app hid or showed the game. No stall redraws while hidden.
 void SetHostVisible(bool visible);
+bool HostVisible();
 // Dims the frame N percent black (0-100, 0 is off) while the app's menu is open over the game.
 // Drawn last on every present and eased over DIM_EASE_S. Host-only, so screenshots and frame dumps
 // never include it. Any thread.

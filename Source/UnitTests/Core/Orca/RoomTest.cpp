@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 
+#include <fmt/format.h>
 #include <gtest/gtest.h>
 
 #include "Core/Orca/Session/Online.h"
@@ -227,7 +228,7 @@ TEST(OrcaRoom, RejectsMalformedPackets)
   EXPECT_FALSE(DecodePacket(with("[130,-1,-1,-1]", "[130,-2,-1,-1]"), &got));
   EXPECT_FALSE(DecodePacket(with("\"h\":\"fedcba9876543210\"", "\"h\":\"fedcba98\""), &got));
   // Bad telemetry must never refuse a packet, since that would end the match: out-of-range values
-  // are clamped, fractions truncated, non-numbers ignored. (SafeToParse already rejects exponents.)
+  // are clamped, fractions truncated, non-numbers ignored (an exponent reads as null).
   const auto telemetry = [&](const std::string& from, const std::string& to) {
     Packet out;
     EXPECT_TRUE(DecodePacket(with(from, to), &out)) << to;
@@ -300,6 +301,107 @@ TEST(OrcaRoom, GameStartIsTheRoomsMessage)
   EXPECT_EQ(GameStartMessage("ranked", "", false, 4210), "");
   EXPECT_EQ(GameStartMessage("ranked", match, true, 4210), "");
   EXPECT_EQ(GameStartMessage("ranked", match, false, -1), "");
+}
+
+// A host's `drop` in a ranked set still being decided keeps the joiner in the room to report the
+// match void and wait for the verdict; anywhere else the joiner's room ends as before.
+TEST(OrcaRoom, ADropMidSetKeepsTheRoom)
+{
+  EXPECT_TRUE(DropKeepsRoom("ranked", true, false));
+  EXPECT_FALSE(DropKeepsRoom("ranked", false, false));
+  EXPECT_FALSE(DropKeepsRoom("ranked", true, true));
+  EXPECT_FALSE(DropKeepsRoom("casual", true, false));
+  EXPECT_FALSE(DropKeepsRoom("private", true, false));
+}
+
+// A player whose room link dropped mid set comes back on a fresh room in the same match: the games
+// it knew of come back with it (a joiner's keyframe may then hold that many, OnlineRules
+// SetFitsJoin), while a match it never played starts from none. Only the most it knew counts: a
+// fresh room's lower count never lowers it.
+TEST(OrcaRoom, AReconnectKeepsTheGamesItKnew)
+{
+  const std::string match = "6f1c2b9e-0d3a-4c55-9a7e-reconnect01";
+  EXPECT_EQ(RememberKnownSetGames(match, 0), 0);
+  EXPECT_EQ(RememberKnownSetGames(match, 1), 1);
+  EXPECT_EQ(RememberKnownSetGames(match, 2), 2);
+  // The fresh room after the drop knows nothing yet.
+  EXPECT_EQ(RememberKnownSetGames(match, 0), 2);
+  EXPECT_EQ(RememberKnownSetGames(match, 1), 2);
+  // Another match starts from what it saw.
+  EXPECT_EQ(RememberKnownSetGames("another-match-0002", 0), 0);
+  // No match: nothing kept.
+  EXPECT_EQ(RememberKnownSetGames("", 3), 3);
+  EXPECT_EQ(RememberKnownSetGames("", 0), 0);
+  // A few matches are kept, the oldest go first.
+  for (int i = 0; i < 20; ++i)
+    RememberKnownSetGames(fmt::format("filler-{}", i), 1);
+  EXPECT_EQ(RememberKnownSetGames(match, 0), 0);
+}
+
+// The void a room's match hears is exactly the room's `finish` (rooms/src/game-lobby.ts).
+TEST(OrcaRoom, FinishIsTheRoomsMessage)
+{
+  EXPECT_EQ(FinishMessage("m1", ""), "{\"t\":\"finish\",\"matchId\":\"m1\",\"void\":true}");
+  EXPECT_EQ(FinishMessage("m1", "u2"), "{\"t\":\"finish\",\"matchId\":\"m1\",\"winner\":\"u2\"}");
+  picojson::value v;
+  ASSERT_TRUE(picojson::parse(v, FinishMessage("a\"b", "")).empty());
+  EXPECT_EQ(v.get<picojson::object>().at("matchId").get<std::string>(), "a\"b");
+}
+
+// A keep-alive goes only when the emulation thread asked since the last one, and at most every
+// KEEP_ALIVE_EVERY: a game whose emulation froze stops sending them.
+TEST(OrcaRoom, KeepAliveOnlyWhileTheGameRuns)
+{
+  using Clock = std::chrono::steady_clock;
+  const Clock::time_point t0 = Clock::now();
+  EXPECT_FALSE(KeepAliveDue(t0, std::nullopt, std::nullopt));
+  EXPECT_TRUE(KeepAliveDue(t0, t0, std::nullopt));
+  // Asked again right after one went: wait for the interval.
+  EXPECT_FALSE(
+      KeepAliveDue(t0 + std::chrono::milliseconds(500), t0 + std::chrono::milliseconds(400), t0));
+  EXPECT_TRUE(KeepAliveDue(t0 + KEEP_ALIVE_EVERY, t0 + std::chrono::milliseconds(1900), t0));
+  // Nothing asked since the last one (the emulation thread stopped): none, however long.
+  EXPECT_FALSE(KeepAliveDue(t0 + std::chrono::seconds(60), t0, t0));
+}
+
+// A value the parser can't take (another player's, echoed in a server message such as the welcome)
+// costs only that value: the rest of the message is still read, so a welcome still names this
+// player and its room. Nothing deep or huge reaches picojson.
+TEST(OrcaRoom, AnUnreadableValueCostsOnlyThatValue)
+{
+  const std::string head =
+      R"({"t":"welcome","me":"c1","lifecycle":"game","room":{"code":"abc123"},)";
+  std::string deep_object = "1";
+  for (int i = 0; i < 3000; ++i)
+    deep_object = R"({"a":)" + deep_object + "}";
+  const std::string deep_array = std::string(5000, '[') + std::string(5000, ']');
+  for (const std::string& bad :
+       {std::string("1e999"), std::string("-2E+308"), std::string(400, '9'),
+        std::string("0.") + std::string(40, '1'), deep_array, deep_object})
+  {
+    SCOPED_TRACE(bad.substr(0, 16));
+    picojson::value v;
+    ASSERT_TRUE(ParseRoomJson(head + R"("state":{"x":)" + bad + R"(,"y":2},"n":3})", &v));
+    ASSERT_TRUE(v.is<picojson::object>());
+    const picojson::object& o = v.get<picojson::object>();
+    EXPECT_EQ(o.at("t").get<std::string>(), "welcome");
+    EXPECT_EQ(o.at("me").get<std::string>(), "c1");
+    EXPECT_EQ(o.at("room").get<picojson::object>().at("code").get<std::string>(), "abc123");
+    EXPECT_EQ(o.at("n").get<double>(), 3);
+    const picojson::object& state = o.at("state").get<picojson::object>();
+    // A number goes whole; a deep value keeps its first levels, and what is past them goes.
+    if (bad != deep_array && bad != deep_object)
+      EXPECT_TRUE(state.at("x").is<picojson::null>());
+    EXPECT_EQ(state.at("y").get<double>(), 2);
+  }
+  // Strings are left alone, escapes and brackets inside them included.
+  picojson::value v;
+  ASSERT_TRUE(ParseRoomJson(R"({"s":"1e999 [[[ \" }","d":-12.5,"t":true,"f":false,"z":null})", &v));
+  EXPECT_EQ(v.get<picojson::object>().at("s").get<std::string>(), "1e999 [[[ \" }");
+  EXPECT_EQ(v.get<picojson::object>().at("d").get<double>(), -12.5);
+  // What never closes is still refused.
+  EXPECT_FALSE(ParseRoomJson(R"({"s":"open)", &v));
+  EXPECT_FALSE(ParseRoomJson(std::string(40, '[') + "1", &v));
 }
 
 TEST(OrcaRoom, CoalescingKeepsEarlierInputsAndChecksum)

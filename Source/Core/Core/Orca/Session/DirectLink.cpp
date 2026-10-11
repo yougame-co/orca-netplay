@@ -40,6 +40,7 @@
 #include "Common/Random.h"
 #include "Common/SocketContext.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/Sandbox.h"
 
 namespace Orca::Net
 {
@@ -344,11 +345,12 @@ bool Allowed(const std::string& force, const std::string& type)
   return true;
 }
 
-// A description as libjuice writes it, keeping only ICE lines and the candidates `force` allows.
-// Host candidate addresses go to `hosts` and server-reflexive ones to `srflx`, for the one-LAN
-// check; never logged.
+// A description as libjuice writes it, keeping only ICE lines and the candidates `force` and the
+// sandbox's network (`net`) allow. Host candidate addresses go to `hosts` and server-reflexive ones
+// to `srflx`, for the one-LAN check; never logged.
 std::string FilterDescription(std::string_view description, const std::string& force,
-                              std::vector<std::string>* hosts, std::vector<std::string>* srflx)
+                              std::vector<std::string>* hosts, std::vector<std::string>* srflx,
+                              Orca::Sandbox::NetMode net)
 {
   std::string out;
   size_t start = 0;
@@ -364,7 +366,8 @@ std::string FilterDescription(std::string_view description, const std::string& f
     if (line.starts_with("a=candidate:"))
     {
       const auto c = ParseCandidate(line);
-      if (!c || line.size() > MAX_CANDIDATE_LENGTH)
+      if (!c || line.size() > MAX_CANDIDATE_LENGTH ||
+          !Orca::Sandbox::AddressAllowed(net, c->address))
         continue;
       if (c->type == "host" && hosts && c->address != "127.0.0.1" && c->address != "::1")
         hosts->push_back(c->address);
@@ -523,6 +526,11 @@ void PrimeFirewall()
   }
 }
 }  // namespace
+
+std::string DescriptionFor(std::string_view description, Orca::Sandbox::NetMode net)
+{
+  return FilterDescription(description, "", nullptr, nullptr, net);
+}
 
 bool OneLan(const std::vector<std::string>& my_hosts, const std::vector<std::string>& their_hosts,
             const std::vector<std::string>& my_srflx, const std::vector<std::string>& their_srflx)
@@ -768,7 +776,10 @@ std::optional<DirectOptions> DirectOptionsFromEnv()
   options.force = GetEnv("ORCA_DIRECT_FORCE");
   if (options.force != "turn" && options.force != "srflx")
     options.force.clear();
-  options.loopback = GetEnv("ORCA_DIRECT_LOOPBACK") == "1";
+  // In the app's sandbox, the network it gives Orca (Orca/Sandbox.h): never loopback there.
+  options.net = Orca::Sandbox::NetModeFromEnv();
+  options.loopback =
+      GetEnv("ORCA_DIRECT_LOOPBACK") == "1" && Orca::Sandbox::LoopbackAllowed(options.net);
   options.loss_percent = std::clamp(std::atoi(GetEnv("ORCA_DIRECT_LOSS").c_str()), 0, 100);
   options.blocked = GetEnv("ORCA_DIRECT_BLOCK") == "1";
   options.net_delay_ms = TestNetDelayMs();
@@ -1446,6 +1457,7 @@ struct DirectLink::Impl
         peer->my_srflx.push_back(c->address);
       // Host candidates already went out with the description.
       if (!c || c->type == "host" || !Allowed(options.force, c->type) ||
+          !Orca::Sandbox::AddressAllowed(options.net, c->address) ||
           event.candidate.size() > MAX_CANDIDATE_LENGTH)
       {
         break;
@@ -1603,7 +1615,7 @@ struct DirectLink::Impl
   void AddRemoteCandidate(Peer& peer, const std::string& line)
   {
     const auto c = ParseCandidate(line);
-    if (!c)
+    if (!c || !Orca::Sandbox::AddressAllowed(options.net, c->address))
       return;
     if (c->type == "host" && c->address != "127.0.0.1" && c->address != "::1")
       peer.their_hosts.push_back(c->address);
@@ -1638,8 +1650,8 @@ struct DirectLink::Impl
     }
     peer.their_hosts.clear();
     peer.their_srflx.clear();
-    const std::string remote =
-        FilterDescription(description, options.force, &peer.their_hosts, &peer.their_srflx);
+    const std::string remote = FilterDescription(description, options.force, &peer.their_hosts,
+                                                 &peer.their_srflx, options.net);
     if (juice_set_remote_description(peer.link->agent, remote.c_str()) != JUICE_ERR_SUCCESS)
     {
       WARN_LOG_FMT(NETPLAY, "Orca direct link: seat {} sent a description libjuice refused",
@@ -1828,17 +1840,20 @@ struct DirectLink::Impl
     peer.my_hosts.clear();
     peer.my_srflx.clear();
     std::string mine =
-        FilterDescription(description, options.force, &peer.my_hosts, &peer.my_srflx);
+        FilterDescription(description, options.force, &peer.my_hosts, &peer.my_srflx, options.net);
     if (options.loopback && options.force.empty())
       mine += LoopbackCandidates(description);
     {
       std::lock_guard lock(send_mutex);
       sending.push_back(link);
     }
-    NOTICE_LOG_FMT(NETPLAY, "Orca direct link: seat {}: {} link {} ({}{}{})", peer.slot + 1,
-                 peer.low ? "offering" : "answering", peer.generation, reason,
-                 config.turn_servers_count > 0 ? ", TURN" : "",
-                 options.force.empty() ? "" : ", forced " + options.force);
+    NOTICE_LOG_FMT(NETPLAY, "Orca direct link: seat {}: {} link {} ({}{}{}{})", peer.slot + 1,
+                   peer.low ? "offering" : "answering", peer.generation, reason,
+                   config.turn_servers_count > 0 ? ", TURN" : "",
+                   options.force.empty() ? "" : ", forced " + options.force,
+                   options.net == Orca::Sandbox::NetMode::All ?
+                       std::string() :
+                       fmt::format(", sandbox {}", Orca::Sandbox::NetModeName(options.net)));
     picojson::object d;
     d["k"] = picojson::value("dl");
     if (config.turn_servers_count > 0)
@@ -2011,8 +2026,8 @@ struct DirectLink::Impl
       }
       else if (connected && !peer.upgrade_tried && peer.connected_at &&
                now - *peer.connected_at > UPGRADE_AFTER &&
-               (peer.turn || peer.pair.ends_with("/srflx")) &&
-               options.force.empty() &&
+               (peer.turn || peer.pair.ends_with("/srflx")) && options.force.empty() &&
+               Orca::Sandbox::LanAllowed(options.net) &&
                OneLan(peer.my_hosts, peer.their_hosts, peer.my_srflx, peer.their_srflx))
       {
         reason = "upgrade";

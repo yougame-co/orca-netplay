@@ -17,8 +17,8 @@
 // boundary. One room per process; its I/O runs on its own thread.
 namespace Orca::Online
 {
-// Online play is on: ORCA_SESSION=1 plus the desktop app's bridge (YOUGAME_BRIDGE / YOUGAME_TOKEN),
-// or ORCA_TEST_DEV_GAME for tests.
+// Online play is on: ORCA_SESSION=1 plus the desktop app's bridge (YOUGAME_STDIO=1 with Orca's
+// stdout carrying it, or YOUGAME_BRIDGE / YOUGAME_TOKEN), or ORCA_TEST_DEV_GAME for tests.
 bool Enabled();
 
 // Starts the room at the first frame boundary. It runs on its own thread, so the host keeps playing
@@ -32,6 +32,9 @@ void StartRoom(const std::string& code, bool joining);
 std::string Code();
 // The roster's name for a seat; "" when unknown or with no room.
 std::string SeatName(int seat);
+// A joiner's own controls and queue identity as its hello sent them (YouGameRoom::HelloControls).
+std::vector<u8> HelloControls();
+std::vector<u8> HelloQueue();
 
 // The app's "join <code>" and "leave" (embed mode). Any thread, never blocks; taken at the next
 // frame boundary.
@@ -59,8 +62,16 @@ void ReportGame(const Net::GameReport& report);
 // A ranked set's game began (its fight's first frame, the id its report will carry): tells a ranked
 // queue room's match, so leaving from then on loses the set.
 void ReportGameStart(int start);
+// The games of the room's ranked match this player knows of (YouGameRoom::KnownSetGames).
+int KnownSetGames();
 // The games desynced: the room's match in progress is void.
 void ReportDesync();
+// The session ended for the opponent's doing (Session::ErrorFromPeer), or a ranked set's wait for
+// its verdict ran out: the room's match in progress is void (YouGameRoom::ReportFault).
+void ReportPeerFault();
+// Waiting in a ranked set's room for the verdict, with no session: this game still runs
+// (YouGameRoom::KeepAlive). Emulation thread.
+void KeepAlive();
 // In a ranked set whose opponent stopped sending inputs (15 s stalled, or silent), this player
 // claims the set. Does nothing outside a ranked room's live match.
 void ReportStall();
@@ -144,8 +155,9 @@ std::string StatusLine();
 
 // Reports why the session ended to the desktop app (Orca::Status): a desync, the room's reason, or
 // the session's own error; nothing for a normal leave. False when the game can't continue solo
-// (this machine's emulation failed; "internal" is always terminal).
-bool ReportSessionEnd(const std::string& session_error);
+// (this machine's emulation failed; "internal" is always terminal). `from_peer`: the error was
+// another player's doing (Session::ErrorFromPeer), never this machine's: it plays on.
+bool ReportSessionEnd(const std::string& session_error, bool from_peer = false);
 
 // Why this Orca leaves its room, sent in its goodbye: "mismatch" (a queue room's header it wouldn't
 // play) or "no-show" (it didn't pick in time). Any thread.

@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <algorithm>
+
 #include <memory>
 #include <charconv>
 #include <optional>
@@ -94,6 +96,17 @@ struct ReplayArchive
   }
   const ReplayFrame* At(int frame) const { return const_cast<ReplayArchive*>(this)->At(frame); }
 };
+
+// Whether every match-block header the replay writes (its frames' and its boundary's) is for
+// `ruleset` (the running game's) or for none: a host's history never selects another game's rules,
+// and so another game's memory writes, on this machine.
+inline bool HeadersFitRuleset(const ReplayArchive& replay, u8 ruleset)
+{
+  const auto fits = [ruleset](const ReplayFrame& frame) {
+    return !frame.header || frame.header->ruleset == 0 || frame.header->ruleset == ruleset;
+  };
+  return fits(replay.boundary) && std::all_of(replay.frames.begin(), replay.frames.end(), fits);
+}
 
 // CPU-thread-only context for the existing trusted UI handlers. Exogenous changes are recorded
 // when first applied and replayed at exactly the same phase; resimulation retains those events.

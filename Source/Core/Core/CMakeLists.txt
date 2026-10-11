@@ -513,6 +513,8 @@ add_library(core
   Orca/BootLogs.h
   Orca/Branding.cpp
   Orca/Branding.h
+  Orca/Bridge.cpp
+  Orca/Bridge.h
   Orca/CrashNote.cpp
   Orca/CrashNote.h
   Orca/Disc.cpp
@@ -527,8 +529,12 @@ add_library(core
   Orca/Music.h
   Orca/PanicDiag.cpp
   Orca/PanicDiag.h
+  Orca/Perf.cpp
+  Orca/Perf.h
   Orca/Profile.cpp
   Orca/Profile.h
+  Orca/Sandbox.cpp
+  Orca/Sandbox.h
   Orca/Status.cpp
   Orca/Status.h
   Orca/ThreadPriority.cpp

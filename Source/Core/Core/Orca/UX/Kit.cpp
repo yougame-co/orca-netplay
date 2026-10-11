@@ -47,8 +47,8 @@ std::thread s_reader;
 std::atomic<bool> s_read{false};
 std::array<std::optional<GameFont::Atlas>, FACES> s_read_atlases;  // under s_lock
 
-// Video thread only: each face's atlas on the GPU. Textures from a destroyed backend are leaked
-// on purpose, since their device is already gone.
+// Video thread only: each face's atlas on the GPU, freed by ReleaseGpu as the backend shuts down.
+// A texture still here from a backend that went without it is leaked, since its device is gone.
 struct GpuFace
 {
   const AbstractGfx* gfx = nullptr;
@@ -445,6 +445,17 @@ void BeginFrame()
       ready |= 1 << face;
   }
   s_faces_ready = ready;
+}
+
+void ReleaseGpu()
+{
+  for (GpuFace& g : s_gpu)
+  {
+    g.texture.reset();
+    g.gfx = nullptr;
+    g.tried = false;
+  }
+  s_faces_ready = 0;
 }
 
 void Shutdown()
@@ -1539,6 +1550,18 @@ Box TextPlate(ImDrawList* dl, ImVec2 pos, float unit, const std::vector<std::str
 void UseAtlasForTests(Face face, const GameFont::Atlas* atlas, ImTextureID texture)
 {
   s_test_faces[static_cast<int>(face)] = {atlas, texture};
+}
+
+void UseFontsForTests(const GameFont::Atlas* body, const GameFont::Atlas* heavy)
+{
+  std::lock_guard lk(s_lock);
+  s_read_atlases = {};
+  if (body)
+    s_read_atlases[static_cast<int>(Face::Body)] = *body;
+  if (heavy)
+    s_read_atlases[static_cast<int>(Face::Heavy)] = *heavy;
+  s_started = body || heavy;
+  s_read = body || heavy;
 }
 
 int DemoMode()

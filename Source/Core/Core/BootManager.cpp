@@ -230,6 +230,7 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
       return false;
     }
     NOTICE_LOG_FMT(BOOT, "{}", Orca::DescribeForcedSettings(*orca_profile));
+    NOTICE_LOG_FMT(BOOT, "{}", Orca::DescribeGraphics());
   }
   Orca::SetActiveProfile(orca_profile);
 

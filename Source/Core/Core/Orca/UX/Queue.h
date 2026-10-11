@@ -4,9 +4,11 @@
 #pragma once
 
 #include <array>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "Common/CommonTypes.h"
@@ -273,6 +275,46 @@ bool OwnPickArmed();
 // The pad the last first-run frame hook chose for port 1 while armed; nullopt when it didn't steer
 // at that frame (not on the room's character select yet). CPU thread.
 std::optional<GCPadStatus> OwnPickPad();
+
+// ---- Where a pick's square is (local, first runs only) ----
+// The steering aims a hand at a place inside the pick's square, learned from the hands: while a
+// hand holds its token over a character, the first and last places it was seen there; when that
+// token goes down on the same character, their midpoint is that character's place. A token that
+// was already down when the select came up (the queue image after a ranked set, or a select the
+// game kept from an earlier visit) teaches nothing: the hand was never over it. Places are kept per
+// character for the whole run, from either panel, since every select has the same grid.
+class PickPlaces
+{
+public:
+  struct Placed
+  {
+    int character = NO_CHARACTER;
+    int costume = 0;
+    bool learned = false;  // the hand was over this character, so its place is now known
+    float last_x = 0, last_y = 0;    // where the hand last held the token over a character
+    float first_x = 0, first_y = 0;  // where it first came over that character
+  };
+  // Port `port` (0 or 1) on a queue character select this frame. Returns the token going down.
+  std::optional<Placed> Frame(int port, const CssPort& css);
+  // The place learned for `character`, if any.
+  std::optional<std::pair<float, float>> Find(int character) const;
+
+private:
+  struct Hover
+  {
+    int character = -1;
+    float first_x = 0, first_y = 0, last_x = 0, last_y = 0;
+  };
+  std::array<Hover, 2> m_hover{};
+  std::array<bool, 2> m_was_placed{};
+  std::map<int, std::pair<float, float>> m_places;
+};
+
+// The identity this player publishes for `pick`, with its place when known. With no known place it
+// carries no pick, so nobody steers it and the player picks by hand: steering to an unknown place
+// aimed the hand at (0, 0), another character's square, where it never pressed A and held the
+// player's controller for STEER_LIMIT_FRAMES. Pure.
+Identity Publishable(Identity pick, const std::optional<std::pair<float, float>>& place);
 
 // ---- Memory ----
 // Whether a character select's task and its first two panels can be read (scSelctCharacter), the

@@ -28,6 +28,7 @@
 #include "Core/Config/MainSettings.h"
 #include "Core/Core.h"
 #include "Core/Config/SessionSettings.h"
+#include "Core/Orca/Bridge.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Status.h"
 #include "Core/HW/SI/SI_Device.h"
@@ -62,7 +63,7 @@ bool Enabled()
 {
   if (!SessionActive())
     return false;
-  return (!Env("YOUGAME_BRIDGE").empty() && !Env("YOUGAME_TOKEN").empty()) ||
+  return Bridge::Ready() || (!Env("YOUGAME_BRIDGE").empty() && !Env("YOUGAME_TOKEN").empty()) ||
          !Env("ORCA_TEST_DEV_GAME").empty();
 }
 
@@ -211,6 +212,18 @@ void StartRoom(const std::string& code, bool joining)
   StartLocked(std::move(options));
 }
 
+std::vector<u8> HelloControls()
+{
+  const auto room = Room();
+  return room ? room->HelloControls() : std::vector<u8>{};
+}
+
+std::vector<u8> HelloQueue()
+{
+  const auto room = Room();
+  return room ? room->HelloQueue() : std::vector<u8>{};
+}
+
 std::string SeatName(int seat)
 {
   const auto room = Room();
@@ -291,6 +304,24 @@ void ReportGameStart(int start)
 {
   if (const auto room = Room())
     room->ReportGameStart(start);
+}
+
+int KnownSetGames()
+{
+  const auto room = Room();
+  return room ? room->KnownSetGames() : 0;
+}
+
+void ReportPeerFault()
+{
+  if (const auto room = Room())
+    room->ReportFault();
+}
+
+void KeepAlive()
+{
+  if (const auto room = Room())
+    room->KeepAlive();
 }
 
 void ReportDesync()
@@ -568,7 +599,7 @@ std::string StatusLine()
   return room ? room->Status() : "";
 }
 
-bool ReportSessionEnd(const std::string& session_error)
+bool ReportSessionEnd(const std::string& session_error, bool from_peer)
 {
   const auto room = Room();
   // Disagreeing inputs or checksums: the games desynced. Tell the friend before leaving, so both
@@ -604,10 +635,13 @@ bool ReportSessionEnd(const std::string& session_error)
   if (session_error.empty())
     return true;
   // The emulator side failed (a snapshot that wouldn't save or load, lost frame alignment), or the
-  // friend sent something an honest Orca never sends.
-  const bool from_peer = session_error.find("sent an invalid packet") != std::string::npos;
-  if (from_peer)
+  // friend sent something an honest Orca never sends (a bad packet, or a host's roster or history
+  // that takes back this player's seat): that one is the friend's doing, and this game goes on.
+  if (from_peer || session_error.find("sent an invalid packet") != std::string::npos)
   {
+    // The room's match hears it void first, so this player's going can't hand it to the friend.
+    if (room)
+      room->ReportFault();
     Status::Report("network", session_error);
     return true;
   }

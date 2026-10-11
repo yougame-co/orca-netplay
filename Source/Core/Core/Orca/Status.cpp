@@ -26,6 +26,7 @@ std::mutex s_mutex;
 std::string s_state;
 bool s_errored = false;
 std::atomic<bool> s_started{false};
+std::atomic<bool> s_stopping{false};
 std::FILE* s_out = nullptr;
 std::set<std::string, std::less<>> s_app_caps;
 void (*s_error_listener)(std::string_view, std::string_view) = nullptr;
@@ -219,6 +220,11 @@ void SetFirstFrameListener(void (*listener)())
   s_first_frame_listener = listener;
 }
 
+void Stopping()
+{
+  s_stopping.store(true, std::memory_order_relaxed);
+}
+
 int Finish()
 {
   if (!SessionActive())
@@ -228,7 +234,8 @@ int Finish()
   bool stuck;
   {
     std::lock_guard lock(s_mutex);
-    stuck = !s_errored && !s_started.load(std::memory_order_relaxed);
+    stuck = !s_errored && !s_started.load(std::memory_order_relaxed) &&
+            !s_stopping.load(std::memory_order_relaxed);
   }
   if (stuck)
     Error("boot", "Orca couldn't start the game");

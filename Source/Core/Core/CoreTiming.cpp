@@ -22,6 +22,7 @@
 #include "Core/Config/MainSettings.h"
 #include "Core/Core.h"
 #include "Core/HW/SystemTimers.h"
+#include "Core/Orca/Perf.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/Rollback/Rollback.h"
 #include "Core/System.h"
@@ -450,6 +451,8 @@ void CoreTimingManager::SleepUntil(TimePoint time_point)
     // Count amount of time sleeping for analytics
     const TimePoint time_after_sleep = Clock::now();
     m_system.GetPerfMetrics().CountThrottleSleep(time_after_sleep - time);
+    // Orca: and for this machine's own speed, which leaves waits out (Orca/Perf.h).
+    Orca::Perf::AddSleep(time_after_sleep - time);
   }
   else
   {

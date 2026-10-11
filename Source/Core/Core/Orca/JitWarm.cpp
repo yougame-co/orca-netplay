@@ -953,4 +953,11 @@ void OnBoundary(const Core::CPUThreadGuard& guard)
 {
   GetState().OnBoundary(guard);
 }
+
+std::optional<bool> SceneIsMatch(const Core::CPUThreadGuard& guard)
+{
+  if (!KnownGame())
+    return std::nullopt;
+  return InMatch(guard);
+}
 }  // namespace Orca::JitWarm

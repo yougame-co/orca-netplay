@@ -16,6 +16,7 @@ namespace PowerPC
 {
 enum class CPUCore;
 }
+enum class ShaderCompilationMode : int;
 
 struct Sram;
 namespace Core
@@ -246,9 +247,24 @@ u64 GetSeedSaveHash();
 void SetSeedSessionSave(bool seed);
 bool SeedSessionSave();
 
-// After every other boot-time config change: an error if anything outranks a forced setting.
+// After every other boot-time config change: an error if anything outranks a forced setting, or
+// if the shader settings (the player's, see below) are outside what a session allows.
 std::optional<std::string> VerifyForcedSettings(const Profile& profile);
 
 // One line naming the effective values of the main forced settings, for the boot log.
 std::string DescribeForcedSettings(const Profile& profile);
+
+// Graphics settings are the player's (the app passes them with -C), except the few the universal
+// list forces: see ORCA.md, "Graphics". Two have a range a session allows. The shader compilation
+// mode must be one of the asynchronous ones (AsyncUber or AsyncSkip): the others compile on the
+// emulation thread, which stalls the other player. The compile thread count is -1 (Dolphin's
+// Auto) or 1 to 4: never 0 (the emulation thread). ForcedConfigLoader pins the player's value for
+// the run, or AsyncUber or -1 in place of one outside the range or of none, and
+// VerifyForcedSettings checks the effective values.
+bool SessionShaderModeAllowed(ShaderCompilationMode mode);
+bool SessionShaderThreadsAllowed(int threads);
+// Every setting the universal list forces, for tests and the `gfx` command's check.
+std::vector<Config::Location> UniversalForcedLocations();
+// One line naming the graphics settings in use, for the boot log.
+std::string DescribeGraphics();
 }  // namespace Orca

@@ -13,8 +13,9 @@
 
 // The local player's controller, read from the YouGame desktop app. The app's helper reads
 // GameCube adapters and SDL gamepads and serves them as an authenticated SSE stream
-// ($YOUGAME_BRIDGE/controllers/events). A background thread keeps the newest snapshot in a
-// one-slot cache; the CPU thread reads it once per frame and never waits on the network.
+// ($YOUGAME_BRIDGE/controllers/events), or writes them on Orca's stdin (the stdio bridge,
+// Orca/Bridge.h). A background thread keeps the newest snapshot in a one-slot cache; the CPU thread
+// reads it once per frame and never waits on the network or the pipe.
 //
 // The session records the pad returned here, so rollback replays the recorded input rather than
 // reading again.
@@ -27,9 +28,12 @@ struct Snapshot;
 // input-age stats.
 std::optional<GCPadStatus> LocalPad(bool for_frame = false);
 
-// Starts the stream when running under the app (YOUGAME_BRIDGE and YOUGAME_TOKEN set).
-// Call on the main thread before the game boots.
+// Starts the stream when running under the app: on the stdio bridge (YOUGAME_STDIO=1,
+// Orca/Bridge.h) the app's snapshots arrive on stdin, otherwise from the loopback bridge
+// (YOUGAME_BRIDGE and YOUGAME_TOKEN set). Call on the main thread before the game boots.
 void StartControllerStreamFromEnvironment();
+// The stdio bridge's stream: the cache takes each snapshot Orca::Bridge routes to it.
+void StartControllerStreamFromStdio();
 
 // For tests: start the stream against an explicit bridge.
 void StartControllerStream(const std::string& bridge, const std::string& token);
