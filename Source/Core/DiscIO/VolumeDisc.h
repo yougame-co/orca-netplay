@@ -6,6 +6,7 @@
 #include <array>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "Common/CommonTypes.h"
 #include "Common/Crypto/SHA1.h"
@@ -39,6 +40,18 @@ public:
     std::array<char, 0x20> test_executable;              // 0xC0
     std::array<std::array<char, 0x20>, 8> credit_types;  // 0xE0
   };
+
+  // A byte that reads return in place of the disc's own.
+  struct ReadPatch
+  {
+    Partition partition;  // PARTITION_NONE: a raw disc offset
+    u64 offset = 0;
+    u8 original = 0;
+    u8 value = 0;
+  };
+  // Patches every later read, if each byte holds its original. False, with nothing patched, if one
+  // doesn't or this kind of volume can't patch reads.
+  virtual bool SetReadPatches(std::vector<ReadPatch> patches) { return false; }
 
   std::string GetGameID(const Partition& partition = PARTITION_NONE) const override;
   Country GetCountry(const Partition& partition = PARTITION_NONE) const override;

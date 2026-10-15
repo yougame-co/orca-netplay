@@ -26,6 +26,8 @@
 #include "Core/IOS/FS/FileSystem.h"
 #include "Core/IOS/Network/KD/NetKDTime.h"
 #include "Core/IOS/Network/KD/VFF/VFFUtil.h"
+#include "Core/IOS/IOS.h"
+#include "Core/Orca/Profile.h"
 #include "Core/IOS/Network/Socket.h"
 #include "Core/IOS/Uids.h"
 #include "Core/System.h"
@@ -170,7 +172,20 @@ NetKDRequestDevice::NetKDRequestDevice(EmulationKernel& ios, const std::string& 
   m_handle_mail = !ios.GetIOSC().IsUsingDefaultId() && !m_send_list.IsDisabled();
   m_scheduler_work_queue.Reset("WiiConnect24 Scheduler Worker");
 
-  m_scheduler_timer_thread = std::thread([this] { SchedulerTimer(); });
+  // Orca: no wall-clock scheduled mail or downloads in a rollback session (they would touch the NAND
+  // from a host thread at host-dependent times).
+  if (!Orca::SessionActive())
+    m_scheduler_timer_thread = std::thread([this] { SchedulerTimer(); });
+}
+
+std::optional<IPCReply> NetKDRequestDevice::RefuseInSession(const IOCtlRequest& request)
+{
+  if (!Orca::SessionActive())
+    return std::nullopt;
+  INFO_LOG_FMT(IOS_WC24, "NET_KD_REQ: refused in an Orca session (ioctl {:#x})", request.request);
+  if (request.buffer_out != 0 && request.buffer_out % 4 == 0 && request.buffer_out_size >= 4)
+    WriteReturnValue(GetSystem().GetMemory(), NWC24::WC24_ERR_NETWORK, request.buffer_out);
+  return IPCReply(IPC_SUCCESS);
 }
 
 NetKDRequestDevice::~NetKDRequestDevice()
@@ -181,13 +196,12 @@ NetKDRequestDevice::~NetKDRequestDevice()
 
   {
     std::lock_guard lg(m_scheduler_lock);
-    if (!m_scheduler_timer_thread.joinable())
-      return;
-
-    m_shutdown_event.Set();
+    if (m_scheduler_timer_thread.joinable())
+      m_shutdown_event.Set();
   }
 
-  m_scheduler_timer_thread.join();
+  if (m_scheduler_timer_thread.joinable())
+    m_scheduler_timer_thread.join();
   m_scheduler_work_queue.Shutdown();
   m_work_queue.Shutdown();
 }

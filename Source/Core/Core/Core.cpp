@@ -65,11 +65,15 @@
 #include "Core/Movie.h"
 #include "Core/NetPlayClient.h"
 #include "Core/NetPlayProto.h"
+#include "Core/Orca/Branding.h"
+#include "Core/Orca/Profile.h"
 #include "Core/PatchEngine.h"
 #include "Core/PowerPC/GDBStub.h"
 #include "Core/PowerPC/JitInterface.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/State.h"
+#include "Core/Rollback/Cow.h"
+#include "Core/Rollback/OnlineMatch.h"
 #include "Core/System.h"
 #include "Core/WiiRoot.h"
 
@@ -325,6 +329,8 @@ static void CpuThread(Core::System& system, const std::optional<std::string>& sa
     Common::SetCurrentThreadName("CPU thread");
   else
     Common::SetCurrentThreadName("CPU-GPU thread");
+  // Orca: a session samples and applies the pads in this thread's frame hook (Profile.h).
+  Orca::PrioritizeThread(Orca::LatencyThread::Cpu);
 
   // This needs to be delayed until after the video backend is ready.
   DolphinAnalytics::Instance().ReportGameStart();
@@ -388,6 +394,8 @@ static void CpuThread(Core::System& system, const std::optional<std::string>& sa
   s_memory_watcher.reset();
 #endif
 
+  // Rollback snapshots' write-protected RAM needs the fault handler: writable again first.
+  Rollback::Cow::StopTracking();
   if (exception_handler)
     EMM::UninstallExceptionHandler();
 
@@ -578,7 +586,9 @@ static void EmuThread(Core::System& system, std::unique_ptr<BootParameters> boot
   Common::ScopeGuard audio_guard([&system] { AudioCommon::ShutdownSoundStream(system); });
 
   HW::Init(system,
-           NetPlay::IsNetPlayRunning() ? &(boot_session_data.GetNetplaySettings()->sram) : nullptr);
+           NetPlay::IsNetPlayRunning() ? &(boot_session_data.GetNetplaySettings()->sram) :
+           Orca::SessionActive()      ? Orca::SessionSram() :
+                                        nullptr);
 
   Common::ScopeGuard hw_guard{[&system] {
     INFO_LOG_FMT(CONSOLE, "{}", StopMessage(false, "Shutting down HW"));
@@ -693,6 +703,10 @@ void SetState(Core::System& system, State state, bool report_state_change,
       if (!override_achievement_restrictions && !AchievementManager::GetInstance().CanPause())
         return;
 #endif  // USE_RETRO_ACHIEVEMENTS
+      // Orca: a session pauses only while this player is alone in it. With a friend, the other
+      // game keeps running and the CPU thread may be blocked waiting on the room.
+      if (Orca::SessionActive() && !Rollback::OnlineMatch::BeginPause())
+        return;
       // NOTE: GetState() will return State::Paused immediately, even before anything has
       //   stopped (including the CPU).
       system.GetCPU().SetStepping(true);  // Break
@@ -704,6 +718,7 @@ void SetState(Core::System& system, State state, bool report_state_change,
       break;
     case State::Running:
     {
+      Rollback::OnlineMatch::EndPause();
       system.GetCPU().SetStepping(false);
       Wiimote::Resume();
       break;
@@ -894,6 +909,13 @@ void Callback_NewField(Core::System& system)
 
 void UpdateTitle(Core::System& system)
 {
+  // Orca: a player in a session sees "Orca — <game> — <room status>", not build details.
+  if (Orca::SessionActive())
+  {
+    Host_UpdateTitle(Orca::WindowTitle());
+    return;
+  }
+
   // Settings are shown the same for both extended and summary info
   const std::string SSettings = fmt::format(
       "{} {} | {} | {}", system.GetPowerPC().GetCPUName(), system.IsDualCoreMode() ? "DC" : "SC",
@@ -942,7 +964,8 @@ void UpdateWantDeterminism(Core::System& system, bool initial)
   // For now, this value is not itself configurable.  Instead, individual
   // settings that depend on it, such as GPU determinism mode. should have
   // override options for testing,
-  bool new_want_determinism = system.GetMovie().IsMovieActive() || NetPlay::IsNetPlayRunning();
+  bool new_want_determinism = system.GetMovie().IsMovieActive() || NetPlay::IsNetPlayRunning() ||
+                              Orca::SessionActive();
   if (new_want_determinism != s_wants_determinism || initial)
   {
     NOTICE_LOG_FMT(COMMON, "Want determinism <- {}", new_want_determinism ? "true" : "false");

@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yougame.co/schemas/orca-mod.json",
+  "title": "Orca mod bundle: mod.json",
+  "description": "What Orca's engine reads from a mod bundle (YouGame docs/ORCA_MODS.md, section 2.1 and the Phase 1 contract): format 1, a tree bundle (ORCA_MOD_DIR with tree.json), or format 2, a flat bundle (ORCA.md \"Flat bundles\", Source/Core/Core/Orca/Bundle.h). Orca's parser (Source/Core/Core/Orca/Mod.cpp, ParseManifest) is the reference; this schema states the same rules for the site's publish check, and the unit tests OrcaMod.SchemaMatchesTheEngine and OrcaBundle.SchemaKnowsTheFlatForm keep the lists here equal to the engine's. Anything unknown or malformed refuses the session. Rules a JSON schema can't state are in x-orca-rules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "engine", "disc", "frameHook"],
+  "allOf": [
+    {
+      "if": { "properties": { "format": { "const": 1 } } },
+      "then": {
+        "not": {
+          "anyOf": [
+            { "required": ["listing"] },
+            { "required": ["serial"] },
+            { "required": ["sdImage"] },
+            { "required": ["patches"] },
+            { "required": ["jitwarm"] },
+            { "required": ["textures"] }
+          ]
+        }
+      }
+    },
+    {
+      "if": { "properties": { "format": { "const": 2 } } },
+      "then": {
+        "required": ["listing", "serial"],
+        "not": { "required": ["sd"] },
+        "properties": { "launcher": { "$ref": "#/$defs/flatName" } }
+      }
+    }
+  ],
+  "properties": {
+    "format": { "enum": [1, 2] },
+    "listing": {
+      "description": "Format 2: the YouGame listing the bundle is for. Orca refuses it under another listing (YOUGAME_GAME).",
+      "type": "string",
+      "pattern": "^[a-z0-9-]{1,80}$"
+    },
+    "serial": {
+      "description": "Format 2: the bundle's serial, above every bundle signed for the listing before. Orca refuses one below its MIN_FLAT_SERIAL, which a release raises to retire old bundles.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740992
+    },
+    "sdImage": {
+      "description": "Format 2: a file of the bundle used as the SD card as it is, pinned by size and chunked SHA-256 (x-orca-limits.sdHash).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "bytes", "sha256"],
+      "properties": {
+        "file": { "$ref": "#/$defs/flatName" },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 2147483648 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "patches": {
+      "description": "Format 2: the game patches files, applied in this order.",
+      "type": "array",
+      "maxItems": 4,
+      "items": { "allOf": [{ "$ref": "#/$defs/flatName" }], "pattern": "\\.patches$" }
+    },
+    "jitwarm": {
+      "description": "Format 2: the JIT seed (host-only, not in the key).",
+      "$ref": "#/$defs/flatName"
+    },
+    "textures": {
+      "description": "Format 2: the texture pack, the engine's own until a flat bundle can carry one.",
+      "const": "engine"
+    },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api", "minOrca"],
+      "properties": {
+        "api": {
+          "description": "The script API version the mod needs; Orca refuses a mod above its own (Mod::ENGINE_API).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1
+        },
+        "minOrca": {
+          "description": "The oldest Orca release the mod runs on. The app and site compare it with the installed Orca's version; the engine checks only its form.",
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "maxLength": 20
+        }
+      }
+    },
+    "title": {
+      "description": "The window title's name for the game. Empty: the disc's own.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 48,
+      "pattern": "^[\\x20-\\x7e]+$"
+    },
+    "disc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Z0-9]{6}$" },
+        "revision": { "type": "integer", "minimum": 0, "maximum": 255 }
+      }
+    },
+    "launcher": {
+      "description": "A loader program at the bundle's root that boots the disc from the drive (Project+'s Netplay Launcher). Must be in the tree.",
+      "allOf": [{ "$ref": "#/$defs/path" }],
+      "pattern": "^[^/]+\\.([dD][oO][lL]|[eE][lL][fF])$",
+      "not": { "enum": ["mod.json", "tree.json"] }
+    },
+    "sd": {
+      "description": "The SD card: built from exactly the tree's sd/ files into an SDSC image of this size.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bytes"],
+      "properties": {
+        "bytes": {
+          "type": "integer",
+          "minimum": 67108864,
+          "maximum": 2147483648,
+          "multipleOf": 32768
+        },
+        "clusterBytes": {
+          "description": "The FAT32 cluster size. Absent: FatFs's choice for the card's size (16 KiB at 2 GB).",
+          "enum": [512, 1024, 2048, 4096, 8192, 16384, 32768]
+        },
+        "fats": { "description": "Copies of the FAT. Absent: 1.", "enum": [1, 2] }
+      }
+    },
+    "frameHook": {
+      "description": "The game's frame boundary: an instruction address in MEM1 and the word expected there.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "word"],
+      "properties": {
+        "address": { "$ref": "#/$defs/mem1Word" },
+        "word": { "$ref": "#/$defs/hexWord" }
+      }
+    },
+    "bootNandFrame": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+    "firstKeyframeFrame": {
+      "description": "No drop-in keyframe of the boot's frames before this one, and no friend plugs in before it. Default 300, also the least: a boot's first frames can run differently on a joiner's JIT.",
+      "type": "integer",
+      "minimum": 300,
+      "maximum": 36000
+    },
+    "jitClearFrame": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+    "keepGameCode": {
+      "description": "[address, the game's word, the mod's word]: an instruction fetch at the address gets the game's word while memory holds the mod's (ORCA.md, \"Code the JIT doesn't see\").",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          { "$ref": "#/$defs/mem1Word" },
+          { "$ref": "#/$defs/hexWord" },
+          { "$ref": "#/$defs/hexWord" }
+        ],
+        "minItems": 3,
+        "maxItems": 3
+      }
+    },
+    "saveTitle": {
+      "description": "The title whose save seeds the session NAND: only the disc's own (0x00010000 and the 4-character game code).",
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{16}$"
+    },
+    "forced": {
+      "description": "Settings the mod pins, from the engine's allowlist only (Mod::ForcedAllowlist). Never dual core, FMA, the RTC switch, SD writes or folder sync, SKIP_EFB_COPY_TO_RAM, cheats or graphics mods. The SD card itself follows \"sd\".",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Dolphin.Core.CustomRTCValue": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      }
+    },
+    "builtin": {
+      "description": "Phase 1: the compiled UX modules the mod runs, each on only while its guard words hold. Only on RSBE01 revision 2.",
+      "enum": ["brawl-rev2", "brawl-rev2-pplus"]
+    },
+    "rulesets": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" }
+    },
+    "offers": {
+      "description": "The caps the mod's logic provides; only with a builtin.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["results", "locks", "queue2"] }
+    }
+  },
+  "$defs": {
+    "flatName": {
+      "description": "Format 2: a file name at the bundle's root, as the YouGame app lays out runtime files: A-Z a-z 0-9 + ( ) _ - space, then also '.', never '..', not ending in a dot or a space, not a Windows device name, not mod.json, mod.sig or tree.json (any case); at most 100 bytes.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^(?!.*\\.\\.)(?!.*[. ]$)(?!([cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][0-9]|[lL][pP][tT][0-9]) *(\\.|$))(?![mM][oO][dD]\\.([jJ][sS][oO][nN]|[sS][iI][gG])$)(?![tT][rR][eE][eE]\\.[jJ][sS][oO][nN]$)[A-Za-z0-9+()_-][A-Za-z0-9+ ()._-]*$"
+    },
+    "hexWord": { "type": "string", "pattern": "^0[xX][0-9a-fA-F]{1,8}$" },
+    "mem1Word": {
+      "description": "A word address in MEM1 (0x80000000-0x817FFFFC, a multiple of 4).",
+      "type": "string",
+      "pattern": "^0[xX]8(0[0-9a-fA-F]|1[0-7])[0-9a-fA-F]{4}[048cC]$"
+    },
+    "path": {
+      "description": "A bundle path: printable ASCII without <>:\"\\|?*, '/' between components, none empty, '.', '..', starting with a dot, ending in a dot or a space, or a Windows device name; at most 100 bytes.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^(?!.*(^|/)\\.)(?!.*[. ](/|$))(?!.*(^|/)([cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][0-9]|[lL][pP][tT][0-9]) *(\\.|/|$))[\\x20-\\x7e]+$",
+      "not": { "pattern": "[<>:\"\\\\|?*]|//|^/|/$" }
+    },
+    "tree": {
+      "description": "tree.json, written by the app: every file of the version except tree.json itself, sorted by path (byte order). tree = lowercase hex sha256 of \"<path>\\t<sha256>\\t<bytes>\\n\" for every file but orca/jitwarm and orca/test/... (Tools/orca/mods/tree-hash-vector.json).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tree", "files"],
+      "properties": {
+        "tree": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "files": {
+          "type": "array",
+          "maxItems": 20000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256", "bytes"],
+            "properties": {
+              "path": { "$ref": "#/$defs/path" },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-orca-limits": {
+    "engineApi": 1,
+    "sdBuilder": "fat2",
+    "sdTreeHash": "sha256 of \"bytes=<bytes> cluster=<clusterBytes or 0> fats=<fats or 1>\\n\" followed by the tree lines of every file under sd/",
+    "maxPathBytes": 100,
+    "maxFiles": 20000,
+    "forcedAllowlist": ["Dolphin.Core.CustomRTCValue"],
+    "offerableCaps": ["results", "locks", "queue2"],
+    "builtins": ["brawl-rev2", "brawl-rev2-pplus"],
+    "flatMaxFiles": 8,
+    "flatMaxPatches": 4,
+    "minFlatSerial": 1,
+    "sdHashChunkBytes": 67108864,
+    "sdHash": "sha256 of \"orca-chunked-sha256 1\\n\", \"<bytes> 67108864\\n\" and the lowercase hex sha256 of each 64 MiB piece of the image in order, one per line (Tools/orca/mods/sdhash.py, sd-hash-vector.json)"
+  },
+  "x-orca-rules": [
+    "mod.json and tree.json are one JSON value each, nothing after it; duplicate keys are last-wins in the engine as in JavaScript, and the site refuses them.",
+    "sd.clusterBytes, when set, leaves FAT32 more than 65,525 clusters: with S = bytes/512 sectors and C = clusterBytes/512, (S - 32 - ceil((floor(S/C)*4 + 8)/512) * fats) / C > 65525.",
+    "saveTitle equals the disc's own title ID: 0x00010000 followed by the hex of disc.id's first 4 characters (RSBE01: 0x0001000052534245).",
+    "builtin is only for disc RSBE01 revision 2.",
+    "offers is empty unless builtin is set.",
+    "keepGameCode: no address twice; the game's word differs from the mod's.",
+    "launcher, when set, names a file in the tree.",
+    "Every orca/patches/<name>.patches file parses (Source/Core/Core/Orca/UX/GamePatches.h); they apply in path order.",
+    "tree.json: paths sorted by bytes and unique, also ignoring ASCII case; no path is both a file and a folder (ignoring case); tree.json is not listed; tree equals the hash of the list; every file exists at its listed size.",
+    "Paths are ASCII only, so the Unicode-normalisation collision rule of docs/ORCA_MODS.md 2.3 can't arise.",
+    "Format 2: the folder holds mod.json, mod.sig and exactly the files mod.json names (launcher, sdImage.file, patches, jitwarm), each once ignoring case, at most flatMaxFiles in all. mod.sig is \"ed25519 <public key> <signature>\\n\" by a key the Orca build pins, over \"orca-flat-bundle 1\\n\" and \"<name>\\t<sha256>\\t<bytes>\\n\" for mod.json and every named file but the SD image, sorted by name (Tools/orca/mods/sign-bundle.py, flat-sig-vector.json).",
+    "Format 2: a launcher boot runs exactly the bundle's launcher; a bundle without one is for a disc boot."
+  ]
+}

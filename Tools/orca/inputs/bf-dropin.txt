@@ -1,0 +1,32 @@
+# Super Smash Bros. Brawl (RSBE01) drop-in runs (Tools/orca/dropin-commands.py, cross-machine
+# soaks): both players pick and start only after the friend has plugged in. The boot reaches the
+# main menu at frame ~1430 and character select at ~1590, and a friend plugs in up to ~75 s after
+# the host's boot, so the first picks wait until 6,000 frames (100 s) into character select. Mario
+# (P1) and Link (P2) on Battlefield, as bf-mario-link-results.txt; a later visit (after a match)
+# keeps both picks, and P1's Start, pressed every 2 s there, goes straight to the next match.
+# Matches are fuzzed for both players; results go back to character select.
+# Rules count frames from entry into each scene (@scene).
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain mash 30 99999 1 40 A
+@scSelctCharacter 6053 6056 1 A
+@scSelctCharacter 6083 6086 2 A
+@scSelctCharacter 6113 6153 1 SY=255
+@scSelctCharacter 6113 6153 2 SY=255
+@scSelctCharacter 6173 6176 1 A
+@scSelctCharacter 6193 6196 2 A
+@scSelctCharacter mash 660 99999 1 120 START
+# The stage select takes the stick only once its pictures are in, 110-130 frames after the scene
+# starts (a joiner's rebuilt game reaches it at the host's frames, often under load), so the cursor
+# moves from 150 on; A again from 400 in case Battlefield's pick didn't take (any stage will do).
+@scSelStage 150 188 1 SY=255
+@scSelStage 190 193 1 SX=0
+@scSelStage 210 213 1 A
+@scSelStage mash 400 99999 1 40 A
+@scMelee fuzz 400 99999 1 11
+@scMelee fuzz 400 99999 2 22
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START

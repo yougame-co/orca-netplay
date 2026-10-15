@@ -4,6 +4,7 @@
 #include "VideoCommon/VertexLoaderManager.h"
 
 #include <algorithm>
+#include <bit>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -28,6 +29,10 @@
 #include "VideoCommon/NativeVertexFormat.h"
 #include "VideoCommon/Statistics.h"
 #include "VideoCommon/VertexLoaderBase.h"
+#include "VideoCommon/VertexLoader_Color.h"
+#include "VideoCommon/VertexLoader_Normal.h"
+#include "VideoCommon/VertexLoader_Position.h"
+#include "VideoCommon/VertexLoader_TextCoord.h"
 #include "VideoCommon/VertexManagerBase.h"
 #include "VideoCommon/VertexShaderManager.h"
 #include "VideoCommon/VideoConfig.h"
@@ -53,6 +58,10 @@ static VertexLoaderMap s_vertex_loader_map;
 // TODO - change into array of pointers. Keep a map of all seen so far.
 
 Common::EnumMap<u8*, CPArray::TexCoord7> cached_arraybases;
+// Orca: for each cached base, the bytes readable from it and the bytes of RAM before it
+// (IndexedReadsFit).
+static Common::EnumMap<u32, CPArray::TexCoord7> s_array_room;
+static Common::EnumMap<u32, CPArray::TexCoord7> s_array_before;
 
 BitSet8 g_main_vat_dirty;
 BitSet8 g_preprocess_vat_dirty;
@@ -76,6 +85,21 @@ void Clear()
   s_native_vertex_map.clear();
 }
 
+// Orca: what a base at `address` (known valid) may read: to the end of its RAM, plus as much of the
+// loaders' word over-read past it as the host mapping covers (MEM1 is mapped to the next power of
+// two, MEM2 exactly), so an element is checked against RAM's end exactly and the over-read never
+// leaves the mapping.
+static void SetArrayRoom(Memory::MemoryManager& memory, CPArray array, u32 address)
+{
+  const std::span<u8> span = memory.GetSpanForAddress(address);
+  const bool mem1 = (address & 0x3FFFFFFF) < memory.GetRamSizeReal();
+  const u32 mapped_tail = mem1 ? memory.GetRamSize() - memory.GetRamSizeReal() :
+                                 memory.GetExRamSize() - memory.GetExRamSizeReal();
+  s_array_room[array] = static_cast<u32>(span.size()) + std::min(mapped_tail, INDEXED_OVERREAD);
+  // Both regions start at a multiple of 256 MiB (MEM1 at 0, MEM2 at 0x10000000).
+  s_array_before[array] = address & 0x0FFFFFFF;
+}
+
 void UpdateVertexArrayPointers()
 {
   // Anything to update?
@@ -91,45 +115,171 @@ void UpdateVertexArrayPointers()
   // Note: Only array bases 0 through 11 are used by the Vertex loaders.
   //       12 through 15 are used for loading data into xfmem.
   // We also only update the array base if the vertex description states we are going to use it.
-  if (IsIndexed(g_main_cp_state.vtx_desc.low.Position))
-  {
-    u8* const base_pointer =
-        memory.GetPointerForRange(g_main_cp_state.array_bases[CPArray::Position], sizeof(u32));
+  const auto update = [&memory](CPArray array) {
+    const u32 address = g_main_cp_state.array_bases[array];
+    u8* const base_pointer = memory.GetPointerForRange(address, sizeof(u32));
     if (base_pointer != nullptr)
-      cached_arraybases[CPArray::Position] = base_pointer;
-  }
+    {
+      cached_arraybases[array] = base_pointer;
+      SetArrayRoom(memory, array, address);
+    }
+  };
+
+  if (IsIndexed(g_main_cp_state.vtx_desc.low.Position))
+    update(CPArray::Position);
 
   if (IsIndexed(g_main_cp_state.vtx_desc.low.Normal))
-  {
-    u8* const base_pointer =
-        memory.GetPointerForRange(g_main_cp_state.array_bases[CPArray::Normal], sizeof(u32));
-    if (base_pointer != nullptr)
-      cached_arraybases[CPArray::Normal] = base_pointer;
-  }
+    update(CPArray::Normal);
 
   for (u8 i = 0; i < g_main_cp_state.vtx_desc.low.Color.Size(); i++)
   {
     if (IsIndexed(g_main_cp_state.vtx_desc.low.Color[i]))
-    {
-      u8* const base_pointer =
-          memory.GetPointerForRange(g_main_cp_state.array_bases[CPArray::Color0 + i], sizeof(u32));
-      if (base_pointer != nullptr)
-        cached_arraybases[CPArray::Color0 + i] = base_pointer;
-    }
+      update(CPArray::Color0 + i);
   }
 
   for (u8 i = 0; i < g_main_cp_state.vtx_desc.high.TexCoord.Size(); i++)
   {
     if (IsIndexed(g_main_cp_state.vtx_desc.high.TexCoord[i]))
-    {
-      u8* const base_pointer = memory.GetPointerForRange(
-          g_main_cp_state.array_bases[CPArray::TexCoord0 + i], sizeof(u32));
-      if (base_pointer != nullptr)
-        cached_arraybases[CPArray::TexCoord0 + i] = base_pointer;
-    }
+      update(CPArray::TexCoord0 + i);
   }
 
   g_bases_dirty = false;
+}
+
+std::optional<std::size_t> GetIndexedReads(const TVtxDesc& vtx_desc, const VAT& vtx_attr,
+                                           std::array<IndexedRead, MAX_INDEXED_READS>* reads,
+                                           u32* vertex_bytes)
+{
+  std::size_t count = 0;
+  // Matrix indices come first, a byte each.
+  u32 offset = std::popcount(vtx_desc.low.Hex & 0x1FF);
+  const auto add = [&](CPArray array, VertexComponentFormat format, u32 extent, bool skip_max,
+                       bool reads_before) {
+    IndexedRead& read = (*reads)[count++];
+    read.array = array;
+    read.index_bytes = format == VertexComponentFormat::Index8 ? 1 : 2;
+    read.src_offset = static_cast<u8>(offset);
+    read.extent = static_cast<u8>(extent);
+    read.skip_max = skip_max;
+    read.reads_before = reads_before;
+  };
+
+  const VertexComponentFormat position = vtx_desc.low.Position;
+  if (IsIndexed(position))
+  {
+    const u32 elements = vtx_attr.g0.PosElements == CoordComponentCount::XYZ ? 3 : 2;
+    add(CPArray::Position, position, elements * GetElementSize(vtx_attr.g0.PosFormat), true,
+        false);
+  }
+  offset += VertexLoader_Position::GetSize(position, vtx_attr.g0.PosFormat,
+                                           vtx_attr.g0.PosElements);
+
+  const VertexComponentFormat normal = vtx_desc.low.Normal;
+  if (IsIndexed(normal))
+  {
+    const u32 vector = 3 * GetElementSize(vtx_attr.g0.NormalFormat);
+    if (vtx_attr.g0.NormalElements == NormalComponentCount::NTB && vtx_attr.g0.NormalIndex3)
+    {
+      // An index each for the normal, tangent and binormal, read at their own offsets.
+      const u32 index_bytes = normal == VertexComponentFormat::Index8 ? 1 : 2;
+      for (u32 k = 0; k < 3; ++k)
+      {
+        add(CPArray::Normal, normal, (k + 1) * vector, false, false);
+        offset += index_bytes;
+      }
+      offset -= 3 * index_bytes;
+    }
+    else
+    {
+      const u32 vectors = vtx_attr.g0.NormalElements == NormalComponentCount::NTB ? 3 : 1;
+      add(CPArray::Normal, normal, vectors * vector, false, false);
+    }
+  }
+  offset += VertexLoader_Normal::GetSize(normal, vtx_attr.g0.NormalFormat,
+                                         vtx_attr.g0.NormalElements, vtx_attr.g0.NormalIndex3);
+
+  for (u32 i = 0; i < vtx_desc.low.Color.Size(); i++)
+  {
+    const VertexComponentFormat color = vtx_desc.low.Color[i];
+    const ColorFormat format = vtx_attr.GetColorFormat(i);
+    // An invalid format: the raw vertex size counts no bytes for it, while the JIT loaders consume
+    // its index (and read nothing direct), so no offset here would match what they read.
+    if (color != VertexComponentFormat::NotPresent && format > ColorFormat::RGBA8888)
+      return std::nullopt;
+    if (IsIndexed(color))
+    {
+      u32 extent = 4;
+      switch (format)
+      {
+      case ColorFormat::RGB565:
+      case ColorFormat::RGBA4444:
+        extent = 2;
+        break;
+      case ColorFormat::RGB888:
+      case ColorFormat::RGBA6666:
+        extent = 3;
+        break;
+      default:
+        break;
+      }
+      add(CPArray::Color0 + i, color, extent, false, format == ColorFormat::RGBA6666);
+    }
+    if (color != VertexComponentFormat::NotPresent)
+      offset += VertexLoader_Color::GetSize(color, format);
+  }
+
+  for (u32 i = 0; i < vtx_desc.high.TexCoord.Size(); i++)
+  {
+    const VertexComponentFormat coord = vtx_desc.high.TexCoord[i];
+    const ComponentFormat format = vtx_attr.GetTexFormat(i);
+    const TexComponentCount elements = vtx_attr.GetTexElements(i);
+    if (IsIndexed(coord))
+    {
+      add(CPArray::TexCoord0 + i, coord,
+          (elements == TexComponentCount::ST ? 2 : 1) * GetElementSize(format), false, false);
+    }
+    offset += VertexLoader_TextCoord::GetSize(coord, format, elements);
+  }
+  if (vertex_bytes)
+    *vertex_bytes = offset;
+  return count;
+}
+
+bool IndexedReadsFit(std::span<const IndexedRead> reads, const u8* src, u32 count, u32 vertex_size,
+                     const Common::EnumMap<u32, CPArray::XF_D>& strides,
+                     const Common::EnumMap<u32, CPArray::TexCoord7>& room,
+                     const Common::EnumMap<u32, CPArray::TexCoord7>& before)
+{
+  for (const IndexedRead& read : reads)
+  {
+    const u64 stride = strides[read.array];
+    const u64 limit = room[read.array];
+    const u64 tail = u64{read.extent} + INDEXED_OVERREAD;
+    if (read.reads_before && before[read.array] == 0)
+    {
+      // Index 0 would read the byte before RAM.
+      for (u32 v = 0; v < count; ++v)
+      {
+        const u8* p = src + std::size_t{v} * vertex_size + read.src_offset;
+        const u32 index = read.index_bytes == 1 ? p[0] : (u32{p[0]} << 8 | p[1]);
+        if (index * stride == 0)
+          return false;
+      }
+    }
+    const u32 max_index = read.index_bytes == 1 ? 0xFF : 0xFFFF;
+    if (max_index * stride + tail <= limit) [[likely]]
+      continue;  // every index fits
+    for (u32 v = 0; v < count; ++v)
+    {
+      const u8* p = src + std::size_t{v} * vertex_size + read.src_offset;
+      const u32 index = read.index_bytes == 1 ? p[0] : (u32{p[0]} << 8 | p[1]);
+      if (read.skip_max && index == max_index)
+        continue;
+      if (index * stride + tail > limit)
+        return false;
+    }
+  }
+  return true;
 }
 
 void MarkAllDirty()
@@ -410,6 +560,20 @@ int RunVertices(int vtx_attr_group, OpcodeDecoder::Primitive primitive, int coun
   {
     // Doing early return for the opposite case would be cleaner
     // but triggers a false unreachable code warning in MSVC debug builds.
+
+    // Orca: a draw with an element outside guest RAM is dropped (UpdateVertexArrayPointers).
+    if (!loader->m_indexed_reads_known ||
+        (loader->m_num_indexed_reads != 0 &&
+         !IndexedReadsFit(std::span(loader->m_indexed_reads.data(), loader->m_num_indexed_reads),
+                         src, static_cast<u32>(count),
+                         loader->m_vertex_size, g_main_cp_state.array_strides, s_array_room,
+                         s_array_before))) [[unlikely]]
+    {
+      static bool s_logged = false;
+      if (!std::exchange(s_logged, true))
+        NOTICE_LOG_FMT(VIDEO, "Dropped a draw whose vertex arrays reach past guest RAM");
+      return size;
+    }
 
     if (g_needs_cp_xf_consistency_check) [[unlikely]]
     {

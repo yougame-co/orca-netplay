@@ -870,6 +870,51 @@ static ControllerType IdentifyControllerType(u8 data)
   return ControllerType::None;
 }
 
+// One port's 9 bytes of the 0x21 report (status, two button bytes, sticks, triggers) as a pad, for
+// a port with a controller in it. Orca's YouGame controller source decodes the desktop app's raw
+// adapter bytes through this too, so both paths give the game the same pad for the same bytes.
+GCPadStatus DecodeChannel(const u8* channel_data)
+{
+  GCPadStatus pad = {};
+  const u8 b1 = channel_data[1];
+  const u8 b2 = channel_data[2];
+
+  if (Common::ExtractBit<0>(b1))
+    pad.button |= PAD_BUTTON_A;
+  if (Common::ExtractBit<1>(b1))
+    pad.button |= PAD_BUTTON_B;
+  if (Common::ExtractBit<2>(b1))
+    pad.button |= PAD_BUTTON_X;
+  if (Common::ExtractBit<3>(b1))
+    pad.button |= PAD_BUTTON_Y;
+
+  if (Common::ExtractBit<4>(b1))
+    pad.button |= PAD_BUTTON_LEFT;
+  if (Common::ExtractBit<5>(b1))
+    pad.button |= PAD_BUTTON_RIGHT;
+  if (Common::ExtractBit<6>(b1))
+    pad.button |= PAD_BUTTON_DOWN;
+  if (Common::ExtractBit<7>(b1))
+    pad.button |= PAD_BUTTON_UP;
+
+  if (Common::ExtractBit<0>(b2))
+    pad.button |= PAD_BUTTON_START;
+  if (Common::ExtractBit<1>(b2))
+    pad.button |= PAD_TRIGGER_Z;
+  if (Common::ExtractBit<2>(b2))
+    pad.button |= PAD_TRIGGER_R;
+  if (Common::ExtractBit<3>(b2))
+    pad.button |= PAD_TRIGGER_L;
+
+  pad.stickX = channel_data[3];
+  pad.stickY = channel_data[4];
+  pad.substickX = channel_data[5];
+  pad.substickY = channel_data[6];
+  pad.triggerLeft = channel_data[7];
+  pad.triggerRight = channel_data[8];
+  return pad;
+}
+
 void ProcessInputPayload(const u8* data, std::size_t size)
 {
   if (size != CONTROLLER_INPUT_PAYLOAD_EXPECTED_SIZE
@@ -897,44 +942,7 @@ void ProcessInputPayload(const u8* data, std::size_t size)
       GCPadStatus pad = {};
 
       if (type != ControllerType::None)
-      {
-        const u8 b1 = channel_data[1];
-        const u8 b2 = channel_data[2];
-
-        if (Common::ExtractBit<0>(b1))
-          pad.button |= PAD_BUTTON_A;
-        if (Common::ExtractBit<1>(b1))
-          pad.button |= PAD_BUTTON_B;
-        if (Common::ExtractBit<2>(b1))
-          pad.button |= PAD_BUTTON_X;
-        if (Common::ExtractBit<3>(b1))
-          pad.button |= PAD_BUTTON_Y;
-
-        if (Common::ExtractBit<4>(b1))
-          pad.button |= PAD_BUTTON_LEFT;
-        if (Common::ExtractBit<5>(b1))
-          pad.button |= PAD_BUTTON_RIGHT;
-        if (Common::ExtractBit<6>(b1))
-          pad.button |= PAD_BUTTON_DOWN;
-        if (Common::ExtractBit<7>(b1))
-          pad.button |= PAD_BUTTON_UP;
-
-        if (Common::ExtractBit<0>(b2))
-          pad.button |= PAD_BUTTON_START;
-        if (Common::ExtractBit<1>(b2))
-          pad.button |= PAD_TRIGGER_Z;
-        if (Common::ExtractBit<2>(b2))
-          pad.button |= PAD_TRIGGER_R;
-        if (Common::ExtractBit<3>(b2))
-          pad.button |= PAD_TRIGGER_L;
-
-        pad.stickX = channel_data[3];
-        pad.stickY = channel_data[4];
-        pad.substickX = channel_data[5];
-        pad.substickY = channel_data[6];
-        pad.triggerLeft = channel_data[7];
-        pad.triggerRight = channel_data[8];
-      }
+        pad = DecodeChannel(channel_data);
       else if (!Core::WantsDeterminism())
       {
         // This is a hack to prevent a desync due to SI devices

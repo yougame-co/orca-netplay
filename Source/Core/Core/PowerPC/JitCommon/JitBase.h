@@ -163,6 +163,12 @@ protected:
   bool m_fastmem_enabled = false;
   bool m_page_table_fastmem_enabled = false;
   bool m_accurate_cpu_cache_enabled = false;
+  // Orca: true in an Orca session (ORCA_SESSION=1), where JIT output must match on every host CPU,
+  // including in cases no setting covers.
+  bool m_orca_session = false;
+  // Orca: inside CompileFromHook, and whether its block was dropped for want of code space.
+  bool m_compiling_from_hook = false;
+  bool m_hook_compile_dropped = false;
 
   bool m_enable_blr_optimization = false;
   bool m_cleanup_after_stackfault = false;
@@ -218,6 +224,18 @@ public:
   // Memory region name, free size, and fragmentation ratio
   using MemoryStats = std::pair<std::string_view, std::pair<std::size_t, double>>;
   virtual std::vector<MemoryStats> GetMemoryStats() const = 0;
+
+  // Orca (Core/Orca/JitWarm.cpp): compiling from the frame boundary's HLE hook runs inside a block,
+  // so it must not free code that runs again when the hook returns. CanCompileFromHook: Jit() would
+  // not clear the cache now. CompileFromHook: Jit(), but code of blocks destroyed since the last
+  // compile stays untouched until the next compile from the dispatcher, and a block that doesn't
+  // fit in the free code space is dropped (false) where Jit() would clear the cache and retry: the
+  // game compiles it itself when it runs it, from the dispatcher, where a clear is safe.
+  virtual bool CanCompileFromHook() const { return false; }
+  bool CompileFromHook(u32 em_address);
+  // Orca: reserve bookkeeping for `count` more blocks so compiling them never stalls on a rehash.
+  // Called at a match's first frame, behind the loading image (JitWarm.cpp).
+  virtual void ReserveForBlocks(std::size_t /*count*/) {}
 
   virtual std::size_t DisassembleNearCode(const JitBlock& block, std::ostream& stream) const = 0;
   virtual std::size_t DisassembleFarCode(const JitBlock& block, std::ostream& stream) const = 0;

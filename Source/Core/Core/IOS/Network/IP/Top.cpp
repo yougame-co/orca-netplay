@@ -479,6 +479,9 @@ std::optional<IPCReply> NetIPTopDevice::IOCtl(const IOCtlRequest& request)
 {
   if (Core::WantsDeterminism())
   {
+    // Orca: said in the log, so a trace shows every refusal (an Orca session never networks).
+    INFO_LOG_FMT(IOS_NET, "IOS_NET: {} ioctl {:#x} refused (determinism wanted)",
+                 GetDeviceName(), request.request);
     return IPCReply(IPC_EACCES);
   }
 
@@ -534,6 +537,15 @@ std::optional<IPCReply> NetIPTopDevice::IOCtl(const IOCtlRequest& request)
 
 std::optional<IPCReply> NetIPTopDevice::IOCtlV(const IOCtlVRequest& request)
 {
+  // As IOCtl: no guest networking while determinism is wanted (an Orca session never lets the game
+  // reach any server, Nintendo's included: name lookups, sendto and recvfrom are refused too).
+  if (Core::WantsDeterminism())
+  {
+    INFO_LOG_FMT(IOS_NET, "IOS_NET: {} ioctlv {:#x} refused (determinism wanted)",
+                 GetDeviceName(), request.request);
+    return IPCReply(IPC_EACCES);
+  }
+
   switch (request.request)
   {
   case IOCTLV_SO_GETINTERFACEOPT:

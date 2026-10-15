@@ -20,10 +20,16 @@ enum class SeekOrigin
   End,
 };
 
+// How other opens of the file may share it while it's open. Windows only: elsewhere every open
+// is shared. Default (_tfopen_s) shares nothing once the file is opened for writing.
 enum class SharedAccess
 {
   Default,
+  // Others may read it.
   Read,
+  // Others may read and write it (another process appending to the same file). A reader of a file
+  // that something else has open for writing needs this too: its own sharing must allow the write.
+  ReadWrite,
 };
 
 // simple wrapper for cstdlib file functions to
