@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Players see YG Dolphin (YG Baiji in 0.3.40 and 0.3.41, Orca before). The executable,
+         the bundle id and the icon keep the name Orca: installed YouGame apps let only <app>/Contents/MacOS/Orca run in their
+         sandbox, and macOS ties the Local Network permission to the bundle id. -->
+    <key>CFBundleName</key>
+    <string>YG Dolphin</string>
+    <key>CFBundleDisplayName</key>
+    <string>YG Dolphin</string>
+    <key>CFBundleExecutable</key>
+    <string>Orca</string>
+    <key>CFBundleIdentifier</key>
+    <string>co.yougame.orca</string>
+    <key>CFBundleIconFile</key>
+    <string>Orca</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${ORCA_VERSION}</string>
+    <key>CFBundleVersion</key>
+    <string>${ORCA_VERSION}</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Free software under the GNU General Public License. See COPYING.</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.games</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>${CMAKE_OSX_DEPLOYMENT_TARGET}</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- Keep full speed while another app is in front; App Nap would throttle it. -->
+    <key>NSAppSleepDisabled</key>
+    <true/>
+    <key>CSResourcesFileMapped</key>
+    <true/>
+</dict>
+</plist>

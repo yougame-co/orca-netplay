@@ -19,6 +19,8 @@ void SetAdapterCallback(std::function<void(void)> func);
 // Buttons have PAD_GET_ORIGIN set on new connection
 // Netplay and CSIDevice_GCAdapter make use of this.
 GCPadStatus Input(int chan);
+// One port's 9 payload bytes (a connected controller's) as a pad: the decoding Input() uses.
+GCPadStatus DecodeChannel(const u8* channel_data);
 
 void Output(int chan, u8 rumble_command);
 bool IsDetected(const char** error_message);

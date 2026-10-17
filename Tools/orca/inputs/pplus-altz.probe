@@ -1,0 +1,7 @@
+# ORCA_UX_PROBE for Project+'s AltZ costume (queue-e2e.mjs --scenario altz --pplus --probe <this>,
+# or a harness run of the queue2 flow with Z held by both through the go). Project+'s
+# [Legacy TE] Hold Z for AltZ (Source/LegacyTE/AltCostume.asm) writes the costume byte at each
+# port's base + 0x9D (port 1 0x90180F20, port 2 0x90180F7C) as the select ends: the second byte of
+# these words turns 3e (costume 62) with Z held, and stays the pick's own costume without it.
+@* 0 watch 90180FBC p1-9C
+@* 0 watch 90181018 p2-9C

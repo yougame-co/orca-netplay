@@ -242,6 +242,19 @@ struct TCacheEntry
 
 using RcTcacheEntry = std::shared_ptr<TCacheEntry>;
 
+// The bytes of guest RAM an EFB/XFB copy (or its placeholder) may write from its destination:
+// num_blocks_y rows of bytes_per_row, `stride` apart. The guest picks the stride, and one smaller
+// than a row makes the last row end past num_blocks_y * stride; the range checked is the larger of
+// the two, so a copy whose rows fit in RAM is checked exactly as before.
+constexpr u64 EFBCopyCheckedRange(u32 bytes_per_row, u32 num_blocks_y, u32 stride)
+{
+  const u64 covered = u64{num_blocks_y} * stride;
+  if (num_blocks_y == 0)
+    return covered;
+  const u64 written = u64{num_blocks_y - 1} * stride + bytes_per_row;
+  return written > covered ? written : covered;
+}
+
 class TextureCacheBase
 {
 public:

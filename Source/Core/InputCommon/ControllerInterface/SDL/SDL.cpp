@@ -161,21 +161,6 @@ InputBackend::InputBackend(ControllerInterface* controller_interface)
   if (Config::Get(Config::MAIN_SDL_HINT_JOYSTICK_HIDAPI_VERTICAL_JOY_CONS) == "")
     Config::SetBase(Config::MAIN_SDL_HINT_JOYSTICK_HIDAPI_VERTICAL_JOY_CONS, "0");
 
-  // Disable SDL's GC Adapter handling when we want to handle it ourselves.
-  bool is_gc_adapter_configured = false;
-  for (int i = 0; i != SerialInterface::MAX_SI_CHANNELS; ++i)
-  {
-    if (Config::Get(Config::GetInfoForSIDevice(i)) == SerialInterface::SIDEVICE_WIIU_ADAPTER)
-    {
-      is_gc_adapter_configured = true;
-      break;
-    }
-  }
-  // TODO: This hint should be adjusted when the config changes,
-  //  but SDL requires it be set before joystick initialization,
-  //  and ControllerInterface isn't prepared for SDL to spontaneously re-initialize itself.
-  SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_GAMECUBE, is_gc_adapter_configured ? "0" : "1");
-
   // Load all the hints from the config file
   std::shared_ptr<Config::Layer> layer = Config::GetLayer(Config::LayerType::Base);
   const Config::Section& section = layer->GetSection(Config::System::Main, "SDL_Hints");
@@ -187,6 +172,15 @@ InputBackend::InputBackend(ControllerInterface* controller_interface)
     if (value)
       SDL_SetHint(location.key.c_str(), value->c_str());
   }
+
+  // Orca: SDL never opens the GameCube adapter (Wii U adapter, 057e:0337), whatever the config
+  // says. The YouGame app owns it and Orca reads it through the app's stream
+  // (Orca/UX/ControllerSource.cpp); every port is a GameCube controller (Orca/Profile.cpp), so
+  // Dolphin's own adapter check would always hand it to SDL. On Windows SDL then holds it through
+  // libusb/WinUSB, which lets one program hold a device, and the app's helper gets "Permission ...
+  // denied" (running as administrator doesn't help). Set before the joystick init below.
+  SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_GAMECUBE, "0");
+  SDL_SetHint(SDL_HINT_HIDAPI_LIBUSB_GAMECUBE, "0");
 
   m_hotplug_thread = std::thread([this] {
     Common::SetCurrentThreadName("SDL Hotplug Thread");

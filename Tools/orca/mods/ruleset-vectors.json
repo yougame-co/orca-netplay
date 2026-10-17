@@ -1,0 +1,1232 @@
+{
+  "description": "Shared test vectors for ruleset files (Tools/orca/mods/ruleset.schema.json): Orca's OrcaRuleset.Vectors and the site's test/orca-ruleset-validate.test.mjs run every case and must agree on ok. A case with no text operation takes `base`, applies `remove` (delete keys or array items by JSON pointer) then `set` (set them; the parent must exist), and writes it out as JSON in any layout. A case with a text operation starts from `baseText` (the same ruleset, byte for byte Games/Brawl/Rulesets/brawl-supernova-2025.json): `text` replaces it, `text_replace` [old, new] replaces the first occurrence, `text_append` adds text, `text_prepend_hex` adds raw bytes (hex) in front, `text_hex_replace` [old, new] replaces raw bytes (hex), and `text_pad` adds spaces before the last } until the text is that many bytes. The site decodes raw bytes with a fatal UTF-8 decoder first, so bytes it can't decode count as refused.",
+  "baseText": "{\n  \"format\": 1,\n  \"id\": \"brawl-supernova-2025\",\n  \"block\": 1,\n  \"name\": \"Brawl Supernova 2025\",\n  \"stages\": [\n    { \"name\": \"Battlefield\", \"kind\": 1, \"role\": \"starter\" },\n    { \"name\": \"Pokémon Stadium\", \"kind\": 46, \"role\": \"starter\" },\n    { \"name\": \"Lylat Cruise\", \"kind\": 19, \"role\": \"starter\" },\n    { \"name\": \"Smashville\", \"kind\": 33, \"role\": \"starter\" },\n    { \"name\": \"Yoshi's Island\", \"kind\": 13, \"role\": \"starter\" },\n    { \"name\": \"Final Destination\", \"kind\": 2, \"role\": \"counterpick\" },\n    { \"name\": \"Delfino Plaza\", \"kind\": 3, \"role\": \"counterpick\" }\n  ],\n  \"steps\": {\n    \"game1Seconds\": [30, 30, 10],\n    \"later\": { \"kind\": \"ban\", \"count\": 1, \"optional\": true, \"seconds\": 30 },\n    \"pickSeconds\": 30,\n    \"graceFrames\": 180,\n    \"casualSeconds\": 15,\n    \"casualGraceFrames\": 30\n  },\n  \"dsr\": true,\n  \"clauses\": {\n    \"iceClimbers\": { \"character\": 16, \"bannedStage\": 5 },\n    \"metaKnight\": { \"character\": 24 }\n  },\n  \"set\": {\n    \"wins\": 2,\n    \"stocks\": 3,\n    \"minutes\": 8,\n    \"timeOut\": \"judged\",\n    \"ledgeGrabLimit\": {\n      \"limit\": 35,\n      \"tiebreakLimit\": 11,\n      \"characters\": [{ \"character\": 24, \"limit\": 20, \"tiebreakLimit\": 6 }]\n    },\n    \"tiebreak\": { \"stocks\": 1, \"minutes\": 3 },\n    \"voidAfterTies\": 5\n  },\n  \"queue\": { \"readySeconds\": 30, \"skipFrames\": 90 },\n  \"characterOrder\": { \"pickSeconds\": 45 },\n  \"css\": { \"readySeconds\": 60 }\n}\n",
+  "base": {
+    "format": 1,
+    "id": "brawl-supernova-2025",
+    "block": 1,
+    "name": "Brawl Supernova 2025",
+    "stages": [
+      {
+        "name": "Battlefield",
+        "kind": 1,
+        "role": "starter"
+      },
+      {
+        "name": "Pokémon Stadium",
+        "kind": 46,
+        "role": "starter"
+      },
+      {
+        "name": "Lylat Cruise",
+        "kind": 19,
+        "role": "starter"
+      },
+      {
+        "name": "Smashville",
+        "kind": 33,
+        "role": "starter"
+      },
+      {
+        "name": "Yoshi's Island",
+        "kind": 13,
+        "role": "starter"
+      },
+      {
+        "name": "Final Destination",
+        "kind": 2,
+        "role": "counterpick"
+      },
+      {
+        "name": "Delfino Plaza",
+        "kind": 3,
+        "role": "counterpick"
+      }
+    ],
+    "steps": {
+      "game1Seconds": [
+        30,
+        30,
+        10
+      ],
+      "later": {
+        "kind": "ban",
+        "count": 1,
+        "optional": true,
+        "seconds": 30
+      },
+      "pickSeconds": 30,
+      "graceFrames": 180,
+      "casualSeconds": 15,
+      "casualGraceFrames": 30
+    },
+    "dsr": true,
+    "clauses": {
+      "iceClimbers": {
+        "character": 16,
+        "bannedStage": 5
+      },
+      "metaKnight": {
+        "character": 24
+      }
+    },
+    "set": {
+      "wins": 2,
+      "stocks": 3,
+      "minutes": 8,
+      "timeOut": "judged",
+      "ledgeGrabLimit": {
+        "limit": 35,
+        "tiebreakLimit": 11,
+        "characters": [
+          {
+            "character": 24,
+            "limit": 20,
+            "tiebreakLimit": 6
+          }
+        ]
+      },
+      "tiebreak": {
+        "stocks": 1,
+        "minutes": 3
+      },
+      "voidAfterTies": 5
+    },
+    "queue": {
+      "readySeconds": 30,
+      "skipFrames": 90
+    },
+    "characterOrder": {
+      "pickSeconds": 45
+    },
+    "css": {
+      "readySeconds": 60
+    }
+  },
+  "cases": [
+    {
+      "name": "the base (Brawl Supernova 2025) is valid",
+      "ok": true
+    },
+    {
+      "name": "no clauses",
+      "ok": true,
+      "remove": [
+        "/clauses/iceClimbers",
+        "/clauses/metaKnight"
+      ]
+    },
+    {
+      "name": "no tiebreak game",
+      "ok": true,
+      "remove": [
+        "/set/tiebreak"
+      ]
+    },
+    {
+      "name": "time-outs by the results screen",
+      "ok": true,
+      "set": {
+        "/set/timeOut": "results"
+      },
+      "remove": [
+        "/set/ledgeGrabLimit"
+      ]
+    },
+    {
+      "name": "a strike as the later step",
+      "ok": true,
+      "set": {
+        "/steps/later/kind": "strike",
+        "/steps/later/optional": false
+      }
+    },
+    {
+      "name": "one stage, a starter",
+      "ok": true,
+      "set": {
+        "/stages": [
+          {
+            "name": "Battlefield",
+            "kind": 1,
+            "role": "starter"
+          }
+        ]
+      },
+      "remove": [
+        "/clauses/iceClimbers"
+      ]
+    },
+    {
+      "name": "16 stages",
+      "ok": true,
+      "set": {
+        "/stages": [
+          {
+            "name": "Stage 0",
+            "kind": 0,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 1",
+            "kind": 1,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 2",
+            "kind": 2,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 3",
+            "kind": 3,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 4",
+            "kind": 4,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 5",
+            "kind": 5,
+            "role": "counterpick"
+          },
+          {
+            "name": "Stage 6",
+            "kind": 6,
+            "role": "counterpick"
+          },
+          {
+            "name": "Stage 7",
+            "kind": 7,
+            "role": "counterpick"
+          },
+          {
+            "name": "Stage 8",
+            "kind": 8,
+            "role": "counterpick"
+          },
+          {
+            "name": "Stage 9",
+            "kind": 9,
+            "role": "counterpick"
+          },
+          {
+            "name": "Stage 10",
+            "kind": 10,
+            "role": "counterpick"
+          },
+          {
+            "name": "Stage 11",
+            "kind": 11,
+            "role": "counterpick"
+          },
+          {
+            "name": "Stage 12",
+            "kind": 12,
+            "role": "counterpick"
+          },
+          {
+            "name": "Stage 13",
+            "kind": 13,
+            "role": "counterpick"
+          },
+          {
+            "name": "Stage 14",
+            "kind": 14,
+            "role": "counterpick"
+          },
+          {
+            "name": "Stage 15",
+            "kind": 15,
+            "role": "counterpick"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bounds: the largest values",
+      "ok": true,
+      "set": {
+        "/block": 255,
+        "/steps/game1Seconds": [
+          600,
+          600,
+          600
+        ],
+        "/steps/graceFrames": 600,
+        "/set/stocks": 99,
+        "/set/minutes": 99,
+        "/css/readySeconds": 600,
+        "/set/voidAfterTies": 8,
+        "/set/ledgeGrabLimit/limit": 254
+      }
+    },
+    {
+      "name": "bounds: the smallest values",
+      "ok": true,
+      "set": {
+        "/block": 1,
+        "/steps/game1Seconds": [
+          1,
+          1,
+          1
+        ],
+        "/steps/graceFrames": 0,
+        "/set/stocks": 1,
+        "/set/minutes": 1,
+        "/css/readySeconds": 1,
+        "/set/voidAfterTies": 1,
+        "/set/wins": 1,
+        "/set/ledgeGrabLimit/limit": 0
+      }
+    },
+    {
+      "name": "an integer written 30.0 is 30",
+      "ok": true,
+      "text_replace": [
+        "\"pickSeconds\": 30",
+        "\"pickSeconds\": 30.0"
+      ]
+    },
+    {
+      "name": "an integer written 3e1 is 30",
+      "ok": true,
+      "text_replace": [
+        "\"pickSeconds\": 30",
+        "\"pickSeconds\": 3e1"
+      ]
+    },
+    {
+      "name": "UTF-8 names (escaped)",
+      "ok": true,
+      "set": {
+        "/name": "Pokémon 🎮 cup"
+      }
+    },
+    {
+      "name": "an id of digits and dashes",
+      "ok": true,
+      "set": {
+        "/id": "2025-cup-1"
+      }
+    },
+    {
+      "name": "four ledge characters",
+      "ok": true,
+      "set": {
+        "/set/ledgeGrabLimit/characters": [
+          {
+            "character": 1,
+            "limit": 20,
+            "tiebreakLimit": 6
+          },
+          {
+            "character": 2,
+            "limit": 20,
+            "tiebreakLimit": 6
+          },
+          {
+            "character": 3,
+            "limit": 20,
+            "tiebreakLimit": 6
+          },
+          {
+            "character": 4,
+            "limit": 20,
+            "tiebreakLimit": 6
+          }
+        ]
+      }
+    },
+    {
+      "name": "format 2",
+      "ok": false,
+      "set": {
+        "/format": 2
+      }
+    },
+    {
+      "name": "format missing",
+      "ok": false,
+      "remove": [
+        "/format"
+      ]
+    },
+    {
+      "name": "an unknown top-level key",
+      "ok": false,
+      "set": {
+        "/theme": "dark"
+      }
+    },
+    {
+      "name": "an unknown key in a stage",
+      "ok": false,
+      "set": {
+        "/stages/0/music": 3
+      }
+    },
+    {
+      "name": "an unknown key in clauses",
+      "ok": false,
+      "set": {
+        "/clauses/wobbling": {
+          "character": 16
+        }
+      }
+    },
+    {
+      "name": "block 0",
+      "ok": false,
+      "set": {
+        "/block": 0
+      }
+    },
+    {
+      "name": "block 256",
+      "ok": false,
+      "set": {
+        "/block": 256
+      }
+    },
+    {
+      "name": "block as a string",
+      "ok": false,
+      "set": {
+        "/block": "1"
+      }
+    },
+    {
+      "name": "a fractional integer",
+      "ok": false,
+      "set": {
+        "/steps/pickSeconds": 30.5
+      }
+    },
+    {
+      "name": "a negative timer",
+      "ok": false,
+      "set": {
+        "/steps/pickSeconds": -1
+      }
+    },
+    {
+      "name": "a zero timer",
+      "ok": false,
+      "set": {
+        "/steps/pickSeconds": 0
+      }
+    },
+    {
+      "name": "a timer over 600 s",
+      "ok": false,
+      "set": {
+        "/steps/pickSeconds": 601
+      }
+    },
+    {
+      "name": "grace over 600 frames",
+      "ok": false,
+      "set": {
+        "/steps/casualGraceFrames": 601
+      }
+    },
+    {
+      "name": "game1Seconds with two entries",
+      "ok": false,
+      "set": {
+        "/steps/game1Seconds": [
+          30,
+          30
+        ]
+      }
+    },
+    {
+      "name": "game1Seconds with four entries",
+      "ok": false,
+      "set": {
+        "/steps/game1Seconds": [
+          30,
+          30,
+          10,
+          5
+        ]
+      }
+    },
+    {
+      "name": "a later step kind not strike or ban",
+      "ok": false,
+      "set": {
+        "/steps/later/kind": "pick"
+      }
+    },
+    {
+      "name": "an optional strike",
+      "ok": false,
+      "set": {
+        "/steps/later/kind": "strike",
+        "/steps/later/optional": true
+      }
+    },
+    {
+      "name": "later count 0",
+      "ok": false,
+      "set": {
+        "/steps/later/count": 0
+      }
+    },
+    {
+      "name": "later count 16",
+      "ok": false,
+      "set": {
+        "/steps/later/count": 16
+      }
+    },
+    {
+      "name": "no stages",
+      "ok": false,
+      "set": {
+        "/stages": []
+      }
+    },
+    {
+      "name": "17 stages",
+      "ok": false,
+      "set": {
+        "/stages": [
+          {
+            "name": "Stage 0",
+            "kind": 0,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 1",
+            "kind": 1,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 2",
+            "kind": 2,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 3",
+            "kind": 3,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 4",
+            "kind": 4,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 5",
+            "kind": 5,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 6",
+            "kind": 6,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 7",
+            "kind": 7,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 8",
+            "kind": 8,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 9",
+            "kind": 9,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 10",
+            "kind": 10,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 11",
+            "kind": 11,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 12",
+            "kind": 12,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 13",
+            "kind": 13,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 14",
+            "kind": 14,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 15",
+            "kind": 15,
+            "role": "starter"
+          },
+          {
+            "name": "Stage 16",
+            "kind": 16,
+            "role": "starter"
+          }
+        ]
+      }
+    },
+    {
+      "name": "no starter",
+      "ok": false,
+      "set": {
+        "/stages": [
+          {
+            "name": "Battlefield",
+            "kind": 1,
+            "role": "counterpick"
+          }
+        ]
+      },
+      "remove": [
+        "/clauses/iceClimbers"
+      ]
+    },
+    {
+      "name": "a stage role neither starter nor counterpick",
+      "ok": false,
+      "set": {
+        "/stages/0/role": "banned"
+      }
+    },
+    {
+      "name": "a stage kind over 255",
+      "ok": false,
+      "set": {
+        "/stages/0/kind": 256
+      }
+    },
+    {
+      "name": "a stage without a name",
+      "ok": false,
+      "remove": [
+        "/stages/0/name"
+      ]
+    },
+    {
+      "name": "an empty stage name",
+      "ok": false,
+      "set": {
+        "/stages/0/name": ""
+      }
+    },
+    {
+      "name": "a stage name over 48 bytes",
+      "ok": false,
+      "set": {
+        "/stages/0/name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "name": "a stage name of 48 bytes in 24 two-byte characters",
+      "ok": true,
+      "set": {
+        "/stages/0/name": "éééééééééééééééééééééééé"
+      }
+    },
+    {
+      "name": "a stage name of 48 bytes in 24 two-byte characters plus one",
+      "ok": false,
+      "set": {
+        "/stages/0/name": "ééééééééééééééééééééééééx"
+      }
+    },
+    {
+      "name": "a control character in a name",
+      "ok": false,
+      "set": {
+        "/name": "Brawl\u0007"
+      }
+    },
+    {
+      "name": "a C1 control character in a name",
+      "ok": false,
+      "set": {
+        "/name": "Brawl"
+      }
+    },
+    {
+      "name": "DEL in a name",
+      "ok": false,
+      "set": {
+        "/name": "Brawl"
+      }
+    },
+    {
+      "name": "an id with capitals",
+      "ok": false,
+      "set": {
+        "/id": "Brawl"
+      }
+    },
+    {
+      "name": "an id starting with a dash",
+      "ok": false,
+      "set": {
+        "/id": "-brawl"
+      }
+    },
+    {
+      "name": "an id with an underscore",
+      "ok": false,
+      "set": {
+        "/id": "brawl_2025"
+      }
+    },
+    {
+      "name": "an id over 32 bytes",
+      "ok": false,
+      "set": {
+        "/id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "the Ice Climbers' stage past the list",
+      "ok": false,
+      "set": {
+        "/clauses/iceClimbers/bannedStage": 7
+      }
+    },
+    {
+      "name": "the Ice Climbers' stage negative",
+      "ok": false,
+      "set": {
+        "/clauses/iceClimbers/bannedStage": -1
+      }
+    },
+    {
+      "name": "a character over 255",
+      "ok": false,
+      "set": {
+        "/clauses/metaKnight/character": 256
+      }
+    },
+    {
+      "name": "wins 3 (dots show a best of 3)",
+      "ok": false,
+      "set": {
+        "/set/wins": 3
+      }
+    },
+    {
+      "name": "wins 0",
+      "ok": false,
+      "set": {
+        "/set/wins": 0
+      }
+    },
+    {
+      "name": "stocks 0",
+      "ok": false,
+      "set": {
+        "/set/stocks": 0
+      }
+    },
+    {
+      "name": "minutes 100",
+      "ok": false,
+      "set": {
+        "/set/minutes": 100
+      }
+    },
+    {
+      "name": "a ledge limit of 255",
+      "ok": false,
+      "set": {
+        "/set/ledgeGrabLimit/limit": 255
+      }
+    },
+    {
+      "name": "judged time-outs without ledge limits",
+      "ok": false,
+      "remove": [
+        "/set/ledgeGrabLimit"
+      ]
+    },
+    {
+      "name": "ledge limits without judged time-outs",
+      "ok": false,
+      "set": {
+        "/set/timeOut": "results"
+      }
+    },
+    {
+      "name": "an unknown time-out rule",
+      "ok": false,
+      "set": {
+        "/set/timeOut": "coin"
+      }
+    },
+    {
+      "name": "a ledge character twice",
+      "ok": false,
+      "set": {
+        "/set/ledgeGrabLimit/characters": [
+          {
+            "character": 24,
+            "limit": 20,
+            "tiebreakLimit": 6
+          },
+          {
+            "character": 24,
+            "limit": 10,
+            "tiebreakLimit": 3
+          }
+        ]
+      }
+    },
+    {
+      "name": "five ledge characters",
+      "ok": false,
+      "set": {
+        "/set/ledgeGrabLimit/characters": [
+          {
+            "character": 1,
+            "limit": 20,
+            "tiebreakLimit": 6
+          },
+          {
+            "character": 2,
+            "limit": 20,
+            "tiebreakLimit": 6
+          },
+          {
+            "character": 3,
+            "limit": 20,
+            "tiebreakLimit": 6
+          },
+          {
+            "character": 4,
+            "limit": 20,
+            "tiebreakLimit": 6
+          },
+          {
+            "character": 5,
+            "limit": 20,
+            "tiebreakLimit": 6
+          }
+        ]
+      }
+    },
+    {
+      "name": "voidAfterTies 9",
+      "ok": false,
+      "set": {
+        "/set/voidAfterTies": 9
+      }
+    },
+    {
+      "name": "tiebreak without minutes",
+      "ok": false,
+      "remove": [
+        "/set/tiebreak/minutes"
+      ]
+    },
+    {
+      "name": "css missing",
+      "ok": false,
+      "remove": [
+        "/css"
+      ]
+    },
+    {
+      "name": "readySeconds 0",
+      "ok": false,
+      "set": {
+        "/css/readySeconds": 0
+      }
+    },
+    {
+      "name": "queue missing",
+      "ok": false,
+      "remove": [
+        "/queue"
+      ]
+    },
+    {
+      "name": "characterOrder missing",
+      "ok": false,
+      "remove": [
+        "/characterOrder"
+      ]
+    },
+    {
+      "name": "skipFrames 0",
+      "ok": false,
+      "set": {
+        "/queue/skipFrames": 0
+      }
+    },
+    {
+      "name": "skipFrames 601",
+      "ok": false,
+      "set": {
+        "/queue/skipFrames": 601
+      }
+    },
+    {
+      "name": "a queue timer over 600 s",
+      "ok": false,
+      "set": {
+        "/queue/readySeconds": 601
+      }
+    },
+    {
+      "name": "a character order turn of 0 s",
+      "ok": false,
+      "set": {
+        "/characterOrder/pickSeconds": 0
+      }
+    },
+    {
+      "name": "an unknown key in queue",
+      "ok": false,
+      "set": {
+        "/queue/autoReady": true
+      }
+    },
+    {
+      "name": "the queue and order timers at their largest",
+      "ok": true,
+      "set": {
+        "/queue/readySeconds": 600,
+        "/queue/skipFrames": 600,
+        "/characterOrder/pickSeconds": 600
+      }
+    },
+    {
+      "name": "dsr as a number",
+      "ok": false,
+      "set": {
+        "/dsr": 1
+      }
+    },
+    {
+      "name": "dsr null",
+      "ok": false,
+      "set": {
+        "/dsr": null
+      }
+    },
+    {
+      "name": "the root an array",
+      "ok": false,
+      "text": "[]"
+    },
+    {
+      "name": "the root a number",
+      "ok": false,
+      "text": "1"
+    },
+    {
+      "name": "empty text",
+      "ok": false,
+      "text": ""
+    },
+    {
+      "name": "a duplicate key",
+      "ok": false,
+      "text_replace": [
+        "\"format\": 1,",
+        "\"format\": 1, \"format\": 1,"
+      ]
+    },
+    {
+      "name": "text after the value",
+      "ok": false,
+      "text_append": "\n{}"
+    },
+    {
+      "name": "a trailing comma",
+      "ok": false,
+      "text_replace": [
+        "\"css\": { \"readySeconds\": 60 }",
+        "\"css\": { \"readySeconds\": 60, }"
+      ]
+    },
+    {
+      "name": "a leading zero",
+      "ok": false,
+      "text_replace": [
+        "\"pickSeconds\": 30",
+        "\"pickSeconds\": 030"
+      ]
+    },
+    {
+      "name": "a bare decimal point",
+      "ok": false,
+      "text_replace": [
+        "\"pickSeconds\": 30",
+        "\"pickSeconds\": 30."
+      ]
+    },
+    {
+      "name": "a plus sign",
+      "ok": false,
+      "text_replace": [
+        "\"pickSeconds\": 30",
+        "\"pickSeconds\": +30"
+      ]
+    },
+    {
+      "name": "a hex number",
+      "ok": false,
+      "text_replace": [
+        "\"pickSeconds\": 30",
+        "\"pickSeconds\": 0x1e"
+      ]
+    },
+    {
+      "name": "a number out of range",
+      "ok": false,
+      "text_replace": [
+        "\"pickSeconds\": 30",
+        "\"pickSeconds\": 1e400"
+      ]
+    },
+    {
+      "name": "a single-quoted string",
+      "ok": false,
+      "text_replace": [
+        "\"timeOut\": \"judged\"",
+        "\"timeOut\": 'judged'"
+      ]
+    },
+    {
+      "name": "a comment",
+      "ok": false,
+      "text_replace": [
+        "\"format\": 1,",
+        "\"format\": 1, // one"
+      ]
+    },
+    {
+      "name": "a raw tab in a string",
+      "ok": false,
+      "text_replace": [
+        "\"Battlefield\"",
+        "\"Battle\tfield\""
+      ]
+    },
+    {
+      "name": "an unpaired high surrogate",
+      "ok": false,
+      "text_replace": [
+        "\"Battlefield\"",
+        "\"Battle\\ud83cfield\""
+      ]
+    },
+    {
+      "name": "an unpaired low surrogate",
+      "ok": false,
+      "text_replace": [
+        "\"Battlefield\"",
+        "\"Battle\\udfaefield\""
+      ]
+    },
+    {
+      "name": "a bad escape",
+      "ok": false,
+      "text_replace": [
+        "\"Battlefield\"",
+        "\"Battle\\qfield\""
+      ]
+    },
+    {
+      "name": "invalid UTF-8 (a lone continuation byte)",
+      "ok": false,
+      "text_hex_replace": [
+        "426174746c656669656c64",
+        "426174746c6580656c64"
+      ]
+    },
+    {
+      "name": "invalid UTF-8 (an overlong slash)",
+      "ok": false,
+      "text_hex_replace": [
+        "426174746c656669656c64",
+        "426174746c65c0af656c64"
+      ]
+    },
+    {
+      "name": "invalid UTF-8 (an encoded surrogate)",
+      "ok": false,
+      "text_hex_replace": [
+        "426174746c656669656c64",
+        "426174746c65eda080656c64"
+      ]
+    },
+    {
+      "name": "a duplicate key spelled with an escape",
+      "ok": false,
+      "text_replace": [
+        "\"format\": 1,",
+        "\"format\": 1, \"form\\u0061t\": 1,"
+      ]
+    },
+    {
+      "name": "a lone surrogate in a key",
+      "ok": false,
+      "text_replace": [
+        "\"format\": 1,",
+        "\"format\": 1, \"\\ud800\": 1,"
+      ]
+    },
+    {
+      "name": "U+2028 and U+10FFFF in a name",
+      "ok": true,
+      "set": {
+        "/name": "Brawl 􏿿"
+      }
+    },
+    {
+      "name": "invalid UTF-8 (past U+10FFFF)",
+      "ok": false,
+      "text_hex_replace": [
+        "426174746c656669656c64",
+        "426174746c65f4908080656c64"
+      ]
+    },
+    {
+      "name": "an empty ledge characters list",
+      "ok": true,
+      "set": {
+        "/set/ledgeGrabLimit/characters": []
+      }
+    },
+    {
+      "name": "CR LF between tokens",
+      "ok": true,
+      "text_replace": [
+        "\"format\": 1,",
+        "\"format\": 1,\r\n"
+      ]
+    },
+    {
+      "name": "-0 is 0",
+      "ok": true,
+      "text_replace": [
+        "\"graceFrames\": 180",
+        "\"graceFrames\": -0"
+      ]
+    },
+    {
+      "name": "3E+1 is 30",
+      "ok": true,
+      "text_replace": [
+        "\"pickSeconds\": 30",
+        "\"pickSeconds\": 3E+1"
+      ]
+    },
+    {
+      "name": "0e-400 is 0",
+      "ok": true,
+      "text_replace": [
+        "\"graceFrames\": 180",
+        "\"graceFrames\": 0e-400"
+      ]
+    },
+    {
+      "name": "an underflowing number (not an exact integer)",
+      "ok": false,
+      "text_replace": [
+        "\"graceFrames\": 180",
+        "\"graceFrames\": 1e-400"
+      ]
+    },
+    {
+      "name": "a number that rounds to an integer as a double (not exact)",
+      "ok": false,
+      "text_replace": [
+        "\"pickSeconds\": 30",
+        "\"pickSeconds\": 30.000000000000001"
+      ]
+    },
+    {
+      "name": "a number just under an integer (not exact)",
+      "ok": false,
+      "text_replace": [
+        "\"pickSeconds\": 30",
+        "\"pickSeconds\": 29.99999999999999999"
+      ]
+    },
+    {
+      "name": "a 32-byte number",
+      "ok": true,
+      "text_replace": [
+        "\"pickSeconds\": 30",
+        "\"pickSeconds\": 30.00000000000000000000000000000"
+      ]
+    },
+    {
+      "name": "a 33-byte number",
+      "ok": false,
+      "text_replace": [
+        "\"pickSeconds\": 30",
+        "\"pickSeconds\": 30.000000000000000000000000000000"
+      ]
+    },
+    {
+      "name": "a 400-byte number",
+      "ok": false,
+      "text_replace": [
+        "\"pickSeconds\": 30",
+        "\"pickSeconds\": 30.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      ]
+    },
+    {
+      "name": "a byte-order mark",
+      "ok": false,
+      "text_prepend_hex": "efbbbf"
+    },
+    {
+      "name": "nested deeper than 8 levels",
+      "ok": false,
+      "set": {
+        "/clauses/metaKnight/character": [
+          [
+            [
+              [
+                [
+                  [
+                    [
+                      1
+                    ]
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "name": "exactly 16384 bytes",
+      "ok": true,
+      "text_pad": 16384
+    },
+    {
+      "name": "over 16384 bytes",
+      "ok": false,
+      "text_pad": 16385
+    }
+  ]
+}

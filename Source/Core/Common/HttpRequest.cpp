@@ -9,6 +9,8 @@
 
 #include <curl/curl.h>
 
+#include "Common/CurlTLS.h"
+
 #include "Common/Logging/Log.h"
 #include "Common/ScopeGuard.h"
 #include "Common/StringUtil.h"
@@ -125,6 +127,7 @@ HttpRequest::Impl::Impl(std::chrono::milliseconds timeout_ms, ProgressCallback c
   m_curl.reset(curl_easy_init());
   if (!m_curl)
     return;
+  ConfigureCurlTLS(m_curl.get());
 
   curl_easy_setopt(m_curl.get(), CURLOPT_NOPROGRESS, m_callback == nullptr);
 

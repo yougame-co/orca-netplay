@@ -229,7 +229,10 @@ void AsyncShaderCompiler::WorkerThreadRun()
   std::unique_lock pending_lock(m_pending_work_lock);
   while (!m_exit_flag.IsSet())
   {
-    m_worker_thread_wake.wait(pending_lock);
+    // Orca: don't sleep while work is queued. Work left over when the thread count changed
+    // would otherwise wait until something new is queued.
+    m_worker_thread_wake.wait(pending_lock,
+                              [this] { return !m_pending_work.empty() || m_exit_flag.IsSet(); });
 
     while (!m_pending_work.empty() && !m_exit_flag.IsSet())
     {

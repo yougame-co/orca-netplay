@@ -1,0 +1,30 @@
+# A local Versus CPU must not follow the player online (ORCA.md "No CPUs online"), Project+
+# (ORCA_PROFILE=PPLUS32), no test knob: Group > Brawl, a CPU on panel 3, a pick, Start (the
+# character select saves its panels into its record). B on the stage select: the character select
+# again, the CPU rebuilt on panel 3. B held out to Group, B to the top page, PLAY ONLINE > With
+# Anyone > Ranked: the third character select. There port 1 presses A on panel 4's player-type
+# button, then goes up and picks. Expect port 1's panel alone (the record cleared between the
+# scenes, panels 2-4 hidden) and A on panel 4 doing nothing. Watch with
+# pplus-cpu-record-probe.txt's watches; YG_EXIT_AFTER=1700.
+@scBoot mash 30 99999 1 40 A
+@muMenuMain:1 120 123 1 A
+@muMenuMain:1 170 173 1 A
+@scSelctCharacter:1 60 89 1 SX=255
+@scSelctCharacter:1 120 123 1 A
+@scSelctCharacter:1 136 160 1 SY=255
+@scSelctCharacter:1 190 193 1 A
+@scSelctCharacter:1 250 253 1 START
+@scSelStage:1 60 63 1 B
+@scSelctCharacter:2 60 260 1 B
+@muMenuMain:2 200 203 1 B
+@muMenuMain:2 250 253 1 DOWN
+@muMenuMain:2 300 303 1 A
+@muMenuMain:2 350 353 1 RIGHT
+@muMenuMain:2 400 403 1 A
+@muMenuMain:2 450 453 1 DOWN
+@muMenuMain:2 500 503 1 A
+@scSelctCharacter:3 60 104 1 SX=255
+@scSelctCharacter:3 125 128 1 A
+@scSelctCharacter:3 140 164 1 SY=255
+@scSelctCharacter:3 200 203 1 A
+@scSelctCharacter:3 260 263 1 START

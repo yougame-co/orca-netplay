@@ -3,14 +3,26 @@
 
 #include "InputCommon/ControllerInterface/Quartz/Quartz.h"
 
+#include <atomic>
+
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 #include "InputCommon/ControllerInterface/Quartz/QuartzKeyboardAndMouse.h"
 
 namespace ciface::Quartz
 {
+namespace
+{
+std::atomic<bool> s_keyboard_enabled{true};
+}
+
 std::string GetSourceName()
 {
   return "Quartz";
+}
+
+void SetKeyboardEnabled(bool enabled)
+{
+  s_keyboard_enabled = enabled;
 }
 
 class InputBackend final : public ciface::InputBackend
@@ -38,7 +50,7 @@ void InputBackend::HandleWindowChange()
 void InputBackend::PopulateDevices()
 {
   const WindowSystemInfo wsi = GetControllerInterface().GetWindowSystemInfo();
-  if (wsi.type != WindowSystemType::MacOS)
+  if (wsi.type != WindowSystemType::MacOS || !s_keyboard_enabled)
     return;
 
   GetControllerInterface().AddDevice(std::make_shared<KeyboardAndMouse>(wsi.render_window));

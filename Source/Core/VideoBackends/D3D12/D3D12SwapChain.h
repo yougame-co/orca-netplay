@@ -29,6 +29,8 @@ public:
 
   bool Present() override;
 
+  // Orca: false after a resize the driver refused (D3DCommon::SwapChain::ResizeSwapChain).
+  bool HasBuffers() const { return m_buffers.size() == SWAP_CHAIN_BUFFER_COUNT; }
   DXTexture* GetCurrentTexture() const { return m_buffers[m_current_buffer].texture.get(); }
   DXFramebuffer* GetCurrentFramebuffer() const
   {
