@@ -29,11 +29,13 @@
 #include "Core/Core.h"
 #include "Core/Config/SessionSettings.h"
 #include "Core/Orca/Bridge.h"
+#include "Core/Orca/Engine/Module.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Status.h"
 #include "Core/HW/SI/SI_Device.h"
 #include "Core/Orca/Session/Events.h"
 #include "Core/Orca/Session/YouGameRoom.h"
+#include "Core/Rollback/ReplayStream.h"
 
 namespace Orca::Online
 {
@@ -63,12 +65,102 @@ bool Enabled()
 {
   if (!SessionActive())
     return false;
+  // Replay boots use the same four-port profile and boundary dispatcher as online matches,
+  // while StartLocked refuses to create a room for them.
+  if (Rollback::ReplayStream::ProductMode())
+    return true;
   return Bridge::Ready() || (!Env("YOUGAME_BRIDGE").empty() && !Env("YOUGAME_TOKEN").empty()) ||
          !Env("ORCA_TEST_DEV_GAME").empty();
 }
 
-std::string CompatibilityKey()
+namespace
 {
+// The UX version for the running game: the engine's, and the game module's own revision.
+std::string RunningUxKeyPart()
+{
+  Engine::Module* module = Engine::ActiveModule();
+  return UxKeyPart(Events::UXCompatVersion(), module ? module->Describe().compat : 0);
+}
+
+// The universal forced settings that change what the game computes, the seeded save and whether test
+// overrides are on: the tail of both key versions.
+std::string UniversalKeyParts()
+{
+  return fmt::format(
+      "thread={}|fma={}|rtc={}:{}|si={},{},{},{}|efb={}|xfb={}|access={}|bbox={}|save={:016x}|test={}"
+      "|sdcard={}:{}",
+      Config::Get(Config::MAIN_CPU_THREAD), Config::Get(Config::SESSION_USE_FMA),
+      Config::Get(Config::MAIN_CUSTOM_RTC_ENABLE), Config::Get(Config::MAIN_CUSTOM_RTC_VALUE),
+      static_cast<int>(Config::Get(Config::GetInfoForSIDevice(0))),
+      static_cast<int>(Config::Get(Config::GetInfoForSIDevice(1))),
+      static_cast<int>(Config::Get(Config::GetInfoForSIDevice(2))),
+      static_cast<int>(Config::Get(Config::GetInfoForSIDevice(3))),
+      Config::Get(Config::GFX_HACK_SKIP_EFB_COPY_TO_RAM),
+      Config::Get(Config::GFX_HACK_SKIP_XFB_COPY_TO_RAM),
+      Config::Get(Config::GFX_HACK_EFB_ACCESS_ENABLE), Config::Get(Config::GFX_HACK_BBOX_ENABLE),
+      GetSeedSaveHash(), TestOverridesActive(), Config::Get(Config::MAIN_WII_SD_CARD),
+      Config::Get(Config::MAIN_ALLOW_SD_WRITES));
+}
+
+// Mod mode (Core/Orca/Mod.h, YouGame docs/ORCA_MODS.md "The key in mod mode"): the engine's commit
+// and API version, the bundle's tree hash (mod.json, the patches, textures, launcher and SD files:
+// everything but orca/jitwarm and orca/test/), the SD image's hash, the disc, the Sys/GameSettings
+// INIs Dolphin loads for the game (as the legacy key hashes them: an install whose copy was edited
+// meets nobody rather than desyncing), then the forced settings as the legacy key adds them. The
+// player's own User/GameSettings INIs are ignored in a mod session
+// (ConfigLoaders/GameConfigLoader.cpp), so they are not in it.
+std::string ModKeyParts(const Profile& profile)
+{
+  const Mod::ModInfo& mod = *profile.mod;
+  const std::string disc = Env("ORCA_DISC_SHA1");
+  std::string parts = fmt::format("orca2|{}|api={}|tree={}|sd={}|disc={}|sys=",
+                                  Common::GetScmRevGitStr(), Mod::ENGINE_API, mod.tree.hash,
+                                  mod.sd_image_hash.empty() ? "-" : mod.sd_image_hash,
+                                  disc.empty() ? "-" : disc);
+  // A launcher profile runs under two game IDs, its loader's and the disc's (as below).
+  std::vector<std::pair<std::string, u16>> ini_games{{profile.game_id, profile.revision}};
+  if (profile.IsLauncher())
+  {
+    const SConfig& running = SConfig::GetInstance();
+    ini_games = {{profile.boot_game_id, 0},
+                 {profile.disc, profile.revision},
+                 {running.GetGameID(), running.GetRevision()}};
+  }
+  for (const auto& [ini_game, ini_revision] : ini_games)
+  {
+    for (const std::string& name : ConfigLoaders::GetGameIniFilenames(ini_game, ini_revision))
+    {
+      std::string contents;
+      if (File::ReadFileToString(File::GetSysDirectory() + GAMESETTINGS_DIR DIR_SEP + name,
+                                 contents))
+      {
+        parts += fmt::format("{:016x},", XXH3_64bits(contents.data(), contents.size()));
+      }
+      else
+      {
+        parts += "-,";
+      }
+    }
+  }
+  parts += '|';
+  for (const auto& [location, value] : profile.forced)
+    parts += fmt::format("{}.{}.{}={}|", static_cast<int>(location.system), location.section,
+                         location.key, value);
+  parts += UniversalKeyParts();
+  parts += RunningUxKeyPart();
+  return parts;
+}
+}  // namespace
+
+std::string UxKeyPart(int engine, int game)
+{
+  return game > 0 ? fmt::format("|ux={}.{}", engine, game) : fmt::format("|ux={}", engine);
+}
+
+std::string CompatibilityKeyParts()
+{
+  if (const Profile* profile = ActiveProfile(); profile && profile->mod)
+    return ModKeyParts(*profile);
   std::string parts = fmt::format("orca|{}|", Common::GetScmRevGitStr());
   if (const Profile* profile = ActiveProfile())
   {
@@ -126,27 +218,22 @@ std::string CompatibilityKey()
   // simulates an M1 to M3 on a newer Mac.
   //
   // The universal forced settings that change what the game computes.
-  parts += fmt::format(
-      "thread={}|fma={}|rtc={}:{}|si={},{},{},{}|efb={}|xfb={}|access={}|bbox={}|save={:016x}|test={}"
-      "|sdcard={}:{}",
-      Config::Get(Config::MAIN_CPU_THREAD), Config::Get(Config::SESSION_USE_FMA),
-      Config::Get(Config::MAIN_CUSTOM_RTC_ENABLE), Config::Get(Config::MAIN_CUSTOM_RTC_VALUE),
-      static_cast<int>(Config::Get(Config::GetInfoForSIDevice(0))),
-      static_cast<int>(Config::Get(Config::GetInfoForSIDevice(1))),
-      static_cast<int>(Config::Get(Config::GetInfoForSIDevice(2))),
-      static_cast<int>(Config::Get(Config::GetInfoForSIDevice(3))),
-      Config::Get(Config::GFX_HACK_SKIP_EFB_COPY_TO_RAM),
-      Config::Get(Config::GFX_HACK_SKIP_XFB_COPY_TO_RAM),
-      Config::Get(Config::GFX_HACK_EFB_ACCESS_ENABLE), Config::Get(Config::GFX_HACK_BBOX_ENABLE),
-      GetSeedSaveHash(), TestOverridesActive(), Config::Get(Config::MAIN_WII_SD_CARD),
-      Config::Get(Config::MAIN_ALLOW_SD_WRITES));
+  parts += UniversalKeyParts();
   // The disc image's hash, when the app computed it: a modified disc with the right ID and revision
   // would otherwise desync instead of being refused. For a dump AliasRevision plays as another
   // (Brawl Rev 1), the app passes the hash of the dump it plays as, or its players meet no one.
   parts += "|disc=" + Env("ORCA_DISC_SHA1");
   // Version of what the in-game UX writes to emulated memory (name tags, mode locks).
-  parts += fmt::format("|ux={}", Events::UXCompatVersion());
-  // The room allows 1-64 characters of [a-zA-Z0-9._:-].
+  parts += RunningUxKeyPart();
+  return parts;
+}
+
+std::string CompatibilityKey()
+{
+  const std::string parts = CompatibilityKeyParts();
+  // "orca2:" is the room protocol's prefix, in legacy and mod mode alike; the two modes never share
+  // a hash: legacy parts start "orca|", mod parts "orca2|" (ModKeyParts). The room allows 1-64
+  // characters of [a-zA-Z0-9._:-].
   const std::string key = fmt::format("orca2:{:016x}", XXH3_64bits(parts.data(), parts.size()));
   // What went into it, when that changes: a player alone in a queue shows which input split them.
   {
@@ -166,6 +253,8 @@ namespace
 {
 void StartLocked(Net::RoomOptions options)
 {
+  if (Rollback::ReplayStream::ProductMode())
+    return;
   options.compatibility = CompatibilityKey();
   if (const Profile* profile = ActiveProfile())
   {
@@ -200,7 +289,7 @@ void Start()
   StartLocked(std::move(options));
 }
 
-void StartRoom(const std::string& code, bool joining)
+void StartRoom(const std::string& code, bool joining, bool friends_room)
 {
   std::lock_guard lock(s_mutex);
   if (s_room)
@@ -208,6 +297,7 @@ void StartRoom(const std::string& code, bool joining)
   Net::RoomOptions options;
   options.room_code = code;
   options.joining = joining;
+  options.friends_room = friends_room;
   options.ask_app_for_room = false;
   StartLocked(std::move(options));
 }
@@ -244,6 +334,7 @@ std::optional<std::string> s_host_request;
 bool s_leave_request = false;
 std::optional<int> s_chosen_delay;
 std::atomic<bool> s_direct_wanted{true};
+std::atomic<RecordChoice> s_record_choice{RecordChoice::Auto};
 }  // namespace
 
 void RequestJoin(const std::string& code)
@@ -274,6 +365,12 @@ std::string RoomQueue()
 {
   const auto room = Room();
   return room ? room->Queue() : "private";
+}
+
+bool RoomDoubles()
+{
+  const auto room = Room();
+  return room && room->Doubles();
 }
 
 bool MatchLive()
@@ -324,6 +421,24 @@ void KeepAlive()
     room->KeepAlive();
 }
 
+void SendReplayStream(const std::vector<u8>& bytes)
+{
+  if (const auto room = Room())
+    room->SendReplayStream(bytes);
+}
+
+void SendReplayPacked(const std::vector<std::vector<u8>>& pieces, int frames, u64 generation)
+{
+  if (const auto room = Room(); room && room->Generation() == generation)
+    room->SendReplayPacked(pieces, frames);
+}
+
+u64 RoomGeneration()
+{
+  const auto room = Room();
+  return room ? room->Generation() : 0;
+}
+
 void ReportDesync()
 {
   if (const auto room = Room())
@@ -356,6 +471,22 @@ void SetDirectWanted(bool on)
 bool DirectWanted()
 {
   return s_direct_wanted;
+}
+
+void SetRecordChoice(RecordChoice choice)
+{
+  s_record_choice = choice;
+}
+
+bool RecordWanted()
+{
+  const RecordChoice choice = s_record_choice;
+  if (choice == RecordChoice::Off || !Status::Cap(Status::RECORD_CAP))
+    return false;
+  const auto room = Room();
+  if (!room)
+    return false;
+  return choice == RecordChoice::On || room->Queue() == "ranked";
 }
 
 void SetChosenDelay(std::optional<int> frames)
@@ -404,6 +535,32 @@ std::vector<int> LeftSeatsPending()
 {
   const auto room = Room();
   return room ? room->LeftSeatsPending() : std::vector<int>{};
+}
+
+std::optional<std::chrono::steady_clock::time_point> HostAwayDeadline()
+{
+  const auto room = Room();
+  return room ? room->HostAwayDeadline() : std::nullopt;
+}
+
+void RetryPeer(int seat)
+{
+  if (const auto room = Room())
+    room->RetryPeer(seat);
+}
+
+bool HoldInputSilence(std::chrono::steady_clock::time_point since,
+                       std::chrono::steady_clock::time_point now,
+                       std::optional<std::vector<int>> missing)
+{
+  const auto room = Room();
+  return room && room->HoldInputSilence(since, now, std::move(missing));
+}
+
+bool RoomRecovering(std::chrono::steady_clock::time_point now)
+{
+  const auto room = Room();
+  return room && room->RoomRecovering(now);
 }
 
 bool RoomEnded()
@@ -500,9 +657,9 @@ void ShutdownInBackground()
     std::lock_guard lock(teardowns.mutex);
     ++teardowns.running;
   }
-  std::thread([room = std::move(room), &teardowns]() mutable {
-    room->Leave();
-    room.reset();
+  std::thread([leaving_room = std::move(room), &teardowns]() mutable {
+    leaving_room->Leave();
+    leaving_room.reset();
     std::lock_guard lock(teardowns.mutex);
     --teardowns.running;
     teardowns.done.notify_all();
@@ -666,9 +823,7 @@ void TestDropRoom()
 {
   if (const auto room = Room())
   {
-    // ORCA_TEST_DROP_SILENT=1: the dropped room is kept, so its connection stays open
-    // (YouGameRoom's test drop) until the server replaces it with the player's next one.
-    if (Env("ORCA_TEST_DROP_SILENT") == "1")
+    if (!room->FriendsRecovery() && Env("ORCA_TEST_DROP_SILENT") == "1")
     {
       static std::vector<std::shared_ptr<Net::YouGameRoom>> s_kept;
       s_kept.push_back(room);

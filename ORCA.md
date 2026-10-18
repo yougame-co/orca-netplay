@@ -1,5 +1,21 @@
 # Orca
 
+> **2026-10-13: YG Baiji is now YG Dolphin.** Players see YG Dolphin from 0.3.42 on. The code,
+> files and contracts keep the codename Orca. Packages are `YG Dolphin.app`, `yg-dolphin.exe`
+> and `yg-dolphin/yg-dolphin`; the Mac program stays `Contents/MacOS/Orca`. Tags are
+> `yg-dolphin-<version>` from 0.3.42; older `yg-baiji-` and `orca-` tags keep their names.
+> Earlier notes are left as they were.
+
+> **2026-10-12: players see the name YG Baiji** from 0.3.40 on (Orca up to 0.3.39; the baiji is the
+> Yangtze river dolphin). The builds still use neither Dolphin's name nor its logo. This document,
+> the code and every contract keep the codename Orca: `namespace Orca`, `Core/Orca`, `Sys/Orca/`,
+> the `orca <verb>` lines and caps, `orca2:` keys, `orca-<game>` modes, the `ORCA_*` variables,
+> `Config/Orca.ini`, `OrcaControls-<GAMEID>.txt`, the log prefixes and the bundle id
+> `co.yougame.orca`. What ships is `YG Baiji.app` (its program still `Contents/MacOS/Orca`),
+> `YG Baiji/yg-baiji.exe` and `yg-baiji/yg-baiji` where this document says Orca.app,
+> `Orca/Orca.exe` and `Orca/orca`. Public tags are `yg-baiji-<version>` from 0.3.40. Text written
+> before this note is left as it was.
+
 Orca is YouGame's GameCube and Wii rollback netcode core: a fork of the
 [Dolphin](https://github.com/dolphin-emu/dolphin) emulator. Every Orca source file carries an SPDX
 `GPL-2.0-or-later` tag, as Dolphin's own do; in aggregate the repository is GPLv3-compatible (see
@@ -28,6 +44,7 @@ and why. Paths are relative to `Source/Core/Core/` unless they start with `Sourc
 
 - [Building](#building)
 - [Running a session](#running-a-session)
+- [Mods (phase 1)](#mods-phase-1)
 - [Testing](#testing)
 - [Rollback and snapshots](#rollback-and-snapshots)
 - [Determinism across hosts](#determinism-across-hosts)
@@ -58,9 +75,9 @@ and why. Paths are relative to `Source/Core/Core/` unless they start with `Sourc
 
 Orca builds like Dolphin (CMake). The targets that matter are `dolphin-emu-nogui` (what the YouGame
 desktop app runs) and `tests`. On macOS, `Tools/orca-package-macos.sh` makes **Orca.app**, the
-bundle the desktop app starts. On Linux (x86-64), `Tools/orca-package-linux.sh` makes the
-`Orca/` folder the app's `linux-x64` build unpacks: `Orca/orca` (the NoGUI program), `Sys/`
-and the licences. It builds with no Qt, Vulkan, ALSA, PulseAudio (Cubeb opens the system's sound
+bundle the desktop app starts, and zips it as `YG Baiji.app` (from 0.3.40). On Linux (x86-64),
+`Tools/orca-package-linux.sh` makes the `yg-baiji/` folder (`Orca/` up to 0.3.39) the app's
+`linux-x64` build unpacks: `yg-baiji/yg-baiji` (the NoGUI program), `Sys/` and the licences. It builds with no Qt, Vulkan, ALSA, PulseAudio (Cubeb opens the system's sound
 server itself, so its PulseAudio headers must be there at build time), BlueZ, evdev or libudev,
 links libstdc++ statically, and refuses a program that needs a library beyond glibc, X11 and
 EGL/OpenGL, one that lacks X11, Xi or EGL, or a glibc newer than `ORCA_GLIBC_MAX` (2.35, Ubuntu
@@ -216,6 +233,264 @@ clock per span (the helper's, then Orca's); the hop between processes is left ou
 clocks drift and step, and its jitter is logged separately. `Tools/orca/controller-latency.mjs`
 measures the whole transport (0.1-0.3 ms on loopback); `Tools/orca/fake_bridge.py` with
 `FAKE_PAD_HZ` stands in for an adapter.
+
+## Mods (phase 1)
+
+Side branches `mods-0334` (`mods-p1` on `release-0.3.34`) and `bundle-flat` (flat bundles, below,
+on top of it), not on main: nothing ships until YouGame switches to this architecture. Design:
+YouGame `docs/ORCA_MODS.md` ("Phase 1 contract" and its adjustments). A session reads its game from a
+mod bundle instead of `Data/Sys/Orca/<profile>.*`: a tree bundle laid out as a run folder, chosen by
+`ORCA_MOD_DIR`, or a signed flat bundle that Orca finds by itself ("Flat bundles"). Without either
+every legacy code path runs exactly as on the release (each mod branch keys on `Profile::mod`, set
+only by `LoadModProfile` and `LoadFlatProfile`, or on `Mod::Requested()`).
+
+| Variable | Meaning |
+|---|---|
+| `ORCA_MOD_DIR` | The run folder: `mod.json`, `tree.json`, the launcher, `sd/...`, `orca/patches/*.patches`, `orca/textures/`, `orca/jitwarm`. Mod mode. `ORCA_PROFILE` is ignored. |
+| `ORCA_SD_CACHE` | Where a mod's SD image is built (required when `mod.json` has `sd`). |
+| `ORCA_DISC_SHA1` | The dump's canonical SHA-1, in the key (`-` when unset in mod mode; legacy's key mixes it in too). |
+
+- **`mod.json`** (`Core/Orca/Mod.cpp` `ParseManifest`, `Tools/orca/mods/mod.schema.json` for the
+  site): every field of the design's example, unknown keys and malformed values refuse the session,
+  so do trailing text after the JSON value. `forced` takes only `Dolphin.Core.CustomRTCValue`
+  (what PPLUS32.ini forces besides the card); the card itself follows `sd`. `saveTitle` only the
+  disc's own. `firstKeyframeFrame` (default and least 300) replaces `FIRST_KEYFRAME_FRAME` and
+  `FriendsMove::FIRST_FRIEND_FRAME`. `engine.api` above `Mod::ENGINE_API` (1) refuses. `minOrca`
+  above the running YG Dolphin (`Mod::EngineVersion`, CMake's `ORCA_VERSION`, set in
+  `Source/Core/CMakeLists.txt`; X.Y.Z compared number by number) refuses before any other check,
+  with the player's message "This pack needs YG Dolphin <minOrca> or newer. Update the YouGame app
+  and try again." as the session's error (`OrcaMod.MinOrcaAboveThisBuildRefuses`).
+- **`tree.json`** (written by the app): sorted, unique also without case, no file that is also a
+  folder, paths of at most 100 bytes of printable ASCII with no `..`, leading dots, trailing dots or
+  spaces, Windows device names or `<>:"\|?*`. `tree` must be the contract's hash of the list
+  (`Tools/orca/mods/tree-hash-vector.json`, the vector the app and site share). Every file must be
+  there at its size; `mod.json`, the launcher and `orca/patches/*` also at their sha256.
+- **The SD card** is built from exactly the tree's `sd/` files (`Common::BuildSDImageFromFiles`:
+  FatFsUtil's FAT32 format, the tree sorted, FAT times zero) at `sd.bytes` (a multiple of 32 KiB, 64
+  MiB to 2 GiB, so SDSC), into `ORCA_SD_CACHE/<sdTreeHash>-fat2.raw` (sha256 of `bytes=<n> cluster=<c> fats=<f>` and the
+  `sd/` lines) under a temporary name, then renamed, with its XXH3-128 in a `.xxh3` note. It is
+  reused while it hashes as its note says (a damaged one is rebuilt), the newest two are kept, and
+  it is mounted exactly like a legacy `sd.raw` (read-only, writes and folder sync forced off). Its
+  hash is `sd=` in the key.
+- **The key**: `orca2:<xxh3>` over `orca2|<commit>|api=1|tree=<treeHash>|sd=<image or ->|disc=<sha1 or
+  ->|`, the forced settings (the card's switch, then `forced`), the universal settings, `|ux=`. The
+  player's `User/GameSettings` INIs never load in mod mode (`GameConfigLoader`). `orca2:` is the
+  room protocol's prefix; legacy hashes start `orca|`, mod hashes `orca2|`, so the two modes never
+  share a key.
+- **Builtins** replace the game-id checks (`ProfileRuleset`, `ResultsVerified`, `BrawlExecutable`,
+  NameTags, MenuText, `VanillaBrawl`, `RequestQueueRules`; JitWarm's `KnownGame` and the harness's
+  scene reader take the declared builtin, host-only). `brawl-rev2`, `brawl-rev2-pplus` and
+  `brawl-rev2-results` run only while their guard words hold (`Mod::BuiltinGuards`: the frame loop's word, r13's base, the scene
+  manager / g_GameGlobal / pad system loads, the message buffer's vtable; for `brawl-rev2` Brawl's
+  word at 0x8001CD24, which Project+'s codes rewrite (not the v-sync call any more: since 0.3.33
+  RSBE01.patches moves it as Project+ does; `OrcaMod.GuardsAreNotOrcasOwnPatches`); Project+'s stage select routines at 0x80553594, 0x80554320, 0x805518D0 for
+  `brawl-rev2-pplus`, or where its `pplusGuards` puts them), checked against memory at every entry into the UX (frame callback, input gate
+  source and latch). The modules run exactly while the words hold in memory, a pure function of
+  memory on first runs and re-runs alike: Project+'s codes land in frame 1, so its guards hold from
+  frame 2, and a joiner re-executing frame 1 from its own origin runs it with the modules off, as
+  the host did (`OrcaMod.GuardsFollowMemoryOnReRuns`). Only the caps keep history: they wait until
+  the guards held once, and not holding at or after `firstKeyframeFrame` is a failure for the rest of
+  the boot (a warning, the gated caps withdrawn). Caps: `mod.json` `offers` ∩ the builtin, unless failed; the
+  pick caps (`pick-casual pick-ranked`) go with `locks`, and `music` follows the same rule as legacy
+  (`Music::Supported`: the disc is RSBE01; host-only, so no guards). Whether a game's main menu is
+  read for a fresh start's origin ("Fresh starts", `FreshMove::Supported`) is asked once, as the
+  match is set up and before any guard is read: in mod mode it is the declared builtin, so a mod
+  boots to the same origin as legacy; the menu itself is still read only while the guards hold, so
+  a mod that moved what its builtin relies on gets no origin and takes no players, on every machine
+  alike.
+- **Results without a ruleset (`brawl-rev2-results`)**, for Brawl-engine mods without Project+'s
+  code (PM 3.6, Brawl Minus, Legacy): RSBE01 revision 2 only, profile game id `RSBE01`, its own game
+  compat 1 (the key's `ux=<engine>.1`; Brawl and Project+ also use game revision 1 from 0.3.48).
+  Its guards are the eight Brawl words alone. `offers` may name only `results`, and only with `rankedRules`: the
+  parser refuses `locks` and `queue2`, and `results` without declared rules (Brawl's own defaults, a
+  2-minute timed match with items, would count), and `Mod::Offers` offers nothing else for it, so no
+  pick caps either. Without `rankedRules` it reads no results (`Describe().results` is false) and
+  plays no Ranked, so friends rooms only. It is the legacy
+  `brawl-rev2-launcher` game in mod mode: results (`ResultsVerified`: the vanilla scene manager and
+  `g_GameGlobal`'s result info, never the match block), the Online menu's Casual/Ranked picks, fresh
+  starts, name tags, menu text and music. Its ruleset is `None`, so nothing that needs one runs: no
+  header, rule or stage writes (`Rules::OnFrame`), no queue character select or latch (`Queue`), no
+  stage flows (`BrawlStages`, `RankedPPlus`), ranked set (`RankedSet`), character order
+  (`CharOrder`), CPU and seat rules (`OnlineSeats`), stage cursors, CSS title, relabels or native
+  text, and no input masks (`BrawlModule::Masks`). It never writes sora_scene's free space
+  (`BrawlGame::UsesFreeSpace`): there the match block and code caves may be the mod's own code, so
+  the friends' drop-in move (`FriendsMove`) is off too and the host picks With Friends itself. Ranked
+  admits it (`RoomRefusal` asks only for `results`), unlocked: nothing in the game enforces stages
+  or rules, and each game is reported as its results screen shows it. The legacy launcher game is
+  unchanged. `OrcaMod.ResultsOnlyAdmitsRankedWithoutRulesetGates`.
+- **`rankedRules`** (`brawl-rev2-results` only, either bundle format, owner-only like `builtin`;
+  required to offer `results`): `"rankedRules": {"stocks": 3, "timeMinutes": 8, "items": "off"}`,
+  all three required, `stocks` and `timeMinutes` integers 1-99, `items` only `"off"`. On the results
+  screen the reader compares the rules the fight started with, which only the Rules menu changes:
+  `g_GameGlobal +0x1C` (gmSetRule, the block the online rules lock: `+0x02` low 3 bits 1 for a stock
+  match, `+0x04` stocks, `+0x08` the stock match's time limit in minutes) and the item frequency at
+  `0x9017BE50` (gmGlobalRecord's menu data, RSBE01.patches' items group; 0 None), then two rules the
+  engine fixes for every such game, not pack fields: `+0x05` handicap off (0) and `+0x06` damage
+  ratio 1.0 (10), as the locks set them. The first rule that differs, or can't be read, makes the
+  game void `rules-stocks`, `rules-timeMinutes`, `rules-items`, `rules-handicap` or
+  `rules-damageRatio` (the room gets `void`, as for `nocontest`), never a win or a loss, with one
+  line `Orca result: frame <n>: not rated, its <rule> is not the ranked rules'`. Casual and ranked
+  rooms alike; nothing is written or locked. Both layouts are Brawl rev 2's; a mod that moved them
+  voids every game, and one real 1v1 on the mod proves them. `OrcaResults.RankedRules*`.
+- **P+ fork guards** (flat format 2 only): the listing owner may add
+  `"pplusGuards": {"rssExdata": "0x80551DD4", "pageIndex": "0x80552B70", "currentPage": "0x80552F90"}`
+  with `builtin: "brawl-rev2-pplus"` (Project+Ex 1.7's NETBOOST.GCT holds Project+ v3.2's three
+  lis/ori pairs there). Each address is the first word of its 8-byte pair, 4-byte aligned, in
+  `[0x80550010, 0x805A0000)` (`Mod::PPLUS_CODESET_REGION`: the codeset is read to 0x80550010 and
+  nothing in the repo bounds its end, so the window stops below Brawl's globals), and the pairs
+  don't overlap. The engine reads exactly those six words, no search; the words stay its own
+  constants. Without the key the v3.2 addresses apply, so Project+ v3.2's key and boot are
+  unchanged. The boot's `Orca mod: builtin ... on` / `failed` lines name the declared addresses,
+  and with the key a second line names the known limits below. The key moves the guards only:
+  - Code addresses in Project+ v3.2's own files: a pack's `.patches` replace PPLUS32.patches in mod
+    mode, and v3.2's BootToCSS group (`PPLUS32.patches:41-44`, `0x80559C20`-`0x80559C2C`, reached from
+    the hook at `0x806DD5F8`) and menu groups (`:62-168`, from `0x81179ED8`: P+'s menu module at
+    `0x81164C00`, Brawl's addresses + `0x1480`) are v3.2's; a fork's pack adapts its own copy (the
+    guarded groups simply don't land on other code). PPLUS32.jitwarm names v3.2's blocks, codeset
+    ones included (hash-checked, so a fork's pack ships its own seed or a stale one only warms less). No other engine code names a codeset address
+    (`PanicDiag.h`'s `0x80558678` is a crash example in a comment).
+  - Data stays v3.2's: RankedPPlus and the online rules read and write RSS_EXDATA (`0x8042C4E8`), its
+    page index (`0x8042C821`), the strike table, the current page (`0x80496000`) and the Code Menu
+    (`0x804E0000`-`0x804E2520`) at v3.2's layout. Known limits on a fork: the online rules write
+    v3.2's 2024 stage preset (`PPLUS_2024_RSS`) over the fork's RSS_EXDATA on a locked header's
+    character select, and lock the Code Menu only where v3.2's layout is found (`CodeMenuPresent`):
+    a fork with another Code Menu is not locked.
+- **Bundles**: `Tools/orca/mods/make-bundle.py RSBE01|PPLUS32 <out> [--pplus-user <release user/>]
+  [--tree]` (no `tree.json` in a bundle; `--tree` makes a local run folder, `--tree <folder>` alone
+  rewrites one). Brawl's run folder is 153 files, Project+'s 4,033 (3,878 on the card).
+- **Limits** (`Mod.h`): what the engine reads whole is refused above its size before it is read:
+  `mod.json` 64 KiB, `tree.json` 16 MiB, each `orca/patches/` file 1 MiB, a `.dol` or `.elf` at the
+  root (any case; all hash-checked) 64 MiB, `orca/jitwarm` 16 MiB. JSON nests at most 16 levels
+  (picojson recurses per level, so a deep document would overflow the stack).
+
+Launch (what the desktop app does with `YOUGAME_ORCA_DEV_MOD=<folder>`):
+
+```bash
+ORCA_SESSION=1 ORCA_MOD_DIR=<run folder> ORCA_SD_CACHE=<cache> [ORCA_DISC_SHA1=<sha1>] \
+  dolphin-emu-nogui -p headless -u <user> -v Null -e <disc>                       # no launcher
+  ... -C Dolphin.Core.DefaultISO=<disc> -e <run folder>/launcher.dol                # mod.json "launcher"
+```
+
+**Follow-ups, 2026-10-05:**
+- **Caps wait for the guards.** In mod mode "ready" and the `orca caps` line before it wait until
+  the builtin's guards are decided (held, or failed by `firstKeyframeFrame`; at most 20 s, then the
+  line goes out without them), so a builtin cap is never offered before its guards hold; Project+'s
+  "ready" moves from the launcher's first frame to the game's frame 2. A failure after they held
+  withdraws them with a second `orca caps` line: the app already takes a later line as the new offer
+  (desktop `orca.ts` recomputes offered and agreed; the page answers it again), so no app change.
+  What is on follows each offer at once (`Status::UpdateCaps`). Legacy never waits.
+  `OrcaMod.ModeGates`, `OrcaMod.CapsWaitForTheGuards`. Checked headless: the one `orca caps` line
+  of both bundles and of legacy Project+ is `… results locks queue2`.
+- **SD geometry.** `sd.clusterBytes` and `sd.fats` pin the card's FAT32 geometry; make-bundle.py gives
+  Project+ its official image's (boot sector: 2 KiB clusters, two FATs, 32 reserved sectors), and the
+  builder (`fat2`) lays each folder out files first, by upper-cased name, as the official image does
+  195 of its 204 folders. Card `0615853dd38b01c51a3608d0199fa966` (tree `830384ca…34af4`), built
+  twice byte-identical.
+
+### Reaching Casual/Ranked from a non-P+ Brawl build
+
+For a `brawl-rev2-results` pack (PM 3.6, Brawl Minus, Legacy), whose mod has no Project+ codeset,
+offering `results` with its `rankedRules` (without them it plays friends rooms only). What Orca
+reads needs a builtin whose guards hold, never a ruleset ([Online menu](#online-menu)):
+
+- **The pick.** The Online menu reader (`OnlineMenu.cpp` `ReadMenuState`,
+  `OnlineMenuReader::Boundary`) follows the scene manager (`[0x805A0060]`: `+0x4` the scene, whose
+  name is at `+0`) from the scene named `muMenuMain` into the one named `scMemoryChange`, and reads
+  the main menu's exit code at `[0x805A0060] +0x284`: **30** is Casual, **31** Ranked (24-27 With
+  Friends). The menu writes the code itself as it leaves (then its step, 2, at `+0x288`); 30 and 31
+  are Brawl's own With Anyone codes (Basic Brawl, Team Battle), so a menu that keeps those buttons
+  needs no patch for them. Picked with the game alone and the app's `host`, the search starts at
+  the pick (no `queue2`: `UX/MenuEvents.cpp` `AnnounceOnlinePick`). With friends in the game the
+  pick is kept, unarmed (no pick caps without `locks`).
+- **What the pack's `.patches` must do**, after Project+'s groups in `Data/Sys/Orca/PPLUS32.patches`
+  (RSBE01.patches has the same groups for Brawl's own menu; Project+'s menu module is Brawl's
+  `+0x1480`). Read every original word from the mod's own RAM on its main menu and guard each group
+  with them, so a group never lands on other code:
+  1. Reach the ONLINE page without the connection window (its save check and network task):
+     `:60-68`, the top page's two Play Online press checks (`bne` -> `b`).
+  2. Leave the ONLINE page without the disconnect window and keep With Friends local (exit 25):
+     `:70-155`; never enable Options or Spectator: `:157-168`.
+  3. Send exit codes 30 and 31 to the local Versus sequence instead of the network ones, leaving
+     the code where the reader saw it: `:170-181`, `sqMenuMain::setNext`'s table (in sora_scene,
+     which Project+ keeps as Brawl's: codes 24-27 and 29-31 to the block at `0x806DC8C8`), and
+     `:183-211`, that block (`sqVsMelee` as VERSUS, the code kept at `sqVsMelee +0x18`), with the
+     back out at `:213-217`. A mod that keeps Brawl's sora_scene can take these groups as they are.
+  4. Boot to the main menu: a build that boots straight to its character select needs its own
+     group like `:31-44` (Project+'s BootToCSS), and `:46-50` skips the title.
+- **Not for this pack:** the toggled group at `:219-234` acts on the match block's header
+  (`0x806F2380`), which a results-only pack never has, and nothing else here needs the match
+  block, a header or the Code Menu.
+- Proof is the pack author's: on the mod's disc, Play Online > With Anyone > Casual must print
+  `orca menu online casual` and land on the local character select (`Tools/orca/online-menu.py`
+  is the legacy flow's check), and one real 1v1 in a matchmade room must log `Matchmaking: a game
+  ended at frame ...` with its winner.
+
+### Flat bundles
+
+A flat bundle is a game's data as at most eight files in one folder, signed, so it can ride as a
+YouGame listing's runtime files: the app lays those out in `userData/orca/run/<slug>/` beside
+`userData/orca/user/` (the `-u` folder), and a Project+ or Brawl change becomes a file update instead
+of an Orca release (`Core/Orca/Bundle.h`).
+
+| File | What |
+|---|---|
+| `mod.json` | format 2: as format 1, plus `listing` (the slug it is for) and `serial`, optional `pplusGuards` for P+ forks and `rankedRules` for results-only builds, with `sdImage` `{file, bytes, sha256}` (the card used as it is), `patches` (file names, applied in order), `jitwarm`, `textures: "engine"` instead of `sd`. |
+| `mod.sig` | `ed25519 <public key> <signature>`, lowercase hex, one line. |
+| the rest | exactly the files `mod.json` names: a launcher, the SD image, up to four `.patches`, a JIT seed. |
+
+- **Where Orca looks**, once per process at boot, before any game setting is read
+  (`Mod::ResolveBundle`): `ORCA_MOD_DIR` when set (with a `tree.json` it is a tree bundle, as
+  above); else a launcher boot's own folder, where Project+'s `sd.raw` already lies; else, for a disc
+  boot, `<-u folder>/../run/<YOUGAME_GAME>/`. No `mod.json` there: legacy, exactly as before. A
+  launcher boot must run the bundle's launcher, and a disc boot needs a bundle without one.
+- **The signature** is over `orca-flat-bundle 1\n` and one `<name>\t<sha256>\t<bytes>\n` line for
+  `mod.json` and every file it names but the SD image, sorted by name; `mod.json` pins the card by
+  size and chunked SHA-256 (SHA-256 over the SHA-256 of each 64 MiB piece, which hash on every core:
+  about 0.15 s for Project+'s 2 GB card on an M-series Mac; `sdhash.py`). The launcher's line is
+  checked on the bytes the boot read, and the patches and JIT seed are used as they were verified,
+  so nothing is read again after the check. Verified with `Externals/ed25519`.
+- **Keys.** Only a key the build pins may sign: CMake `-DORCA_BUNDLE_PUBLIC_KEY=<64 hex digits>`. A
+  build without one trusts no key, and every flat bundle is refused. `-DORCA_BUNDLE_TRUST_TEST_KEY=ON`
+  adds the bundle-flat TEST key for tests and gates only; `orca-package-macos.sh` turns it off and
+  fails if the executable holds it. `OrcaBundle.PinnedKey` checks the build trusts exactly what
+  CMake was given.
+- **Listing and serial.** Under the app (`YOUGAME_GAME` set), a bundle for another listing is
+  refused. `MIN_FLAT_SERIAL` (`Bundle.h`) refuses older bundles: a release raises it to retire a
+  signed bundle, which can't otherwise be taken back.
+- **Hostile input.** The folder must hold exactly the named files (hidden files such as the app's
+  `.copies.json` aside), at most eight, no folders or links; names are the app's runtime file names
+  (no `/`, no `..`, no device names); `mod.sig` is read first and must be by a trusted key before
+  `mod.json` is parsed; every read is bounded as in a tree bundle (`mod.sig` 512 bytes); the small
+  files are hashed and the signature checked before the card is hashed. Anything wrong refuses the
+  whole bundle with an `Orca bundle: <folder> refused: <why>. The session is refused.` line, and the
+  session ends with `orca error profile YG Baiji refused this game's pack: <why>` (no folder path),
+  whether Orca found the bundle by itself or `ORCA_MOD_DIR` named it: a refused pack never plays the
+  built-in game in its place.
+- **Mod mode** then runs as for a tree bundle (builtins, guards, caps). Textures stay the engine's.
+  The key is `orca2|...|tree=<hash of the signed lines but the JIT seed's>|sd=<the card's pin>|...
+  |sys=<the Sys game INIs>|...`: a bundle player never meets a legacy one, a JIT seed change keeps
+  the pool, anything that reaches the game moves it.
+- **Signing.** Sign only a bundle that played on two Orcas: a builtin whose guards never hold gets no
+  origin, so its players meet nobody. `sign-bundle.py sign` checks the folder as Orca does, the
+  card's pin included, before it signs.
+- **Tools**: `make-bundle.py RSBE01|PPLUS32 <out> --flat --serial <n> [--listing <slug>]
+  [--pplus-user <user/> | --pplus-run <folder>] [--key <private key>]` (Project+'s launcher and card
+  must be v3.2's, by full SHA-256); `sign-bundle.py keygen|sign|verify|message`
+  (standard library Ed25519, `ed25519ref.py`); `sdhash.py` (the card's pin); `flat-sig-vector.json`
+  and `sd-hash-vector.json` tie the Python tools to the engine (`OrcaBundle.SignatureVector`,
+  `OrcaBundle.ChunkedSha256`); `mod.schema.json` states format 2. Brawl's bundle is 4 files,
+  Project+'s 6.
+- **Limits**: a listing change moves ranked at once (no pinned versions). The run-folder layout is a
+  contract with the app (`orca.ts`: `userData/orca/{user,run/<slug>}`); if it moves, Brawl plays
+  legacy (Project+ follows its launcher). `minOrca` and `engine.api` are enforced. A refused bundle
+  ends the session with its reason (above).
+
+Open: a P+ fork whose codeset moves the stage select routines loses `brawl-rev2-pplus` until phase
+3's labels; a bundle's own patches are not yet checked against the guard words (the validator's
+job); duplicate JSON keys are last-wins (as in JavaScript; the site refuses them).
+
+What was checked (2026-10-05, then on 0.3.33 and in flat form on 0.3.34 on 2026-10-08, with the
+runs): ORCA_NOTES.md, "Mods (phase 1)" and "Flat bundles".
 
 ## Testing
 
@@ -506,6 +781,11 @@ same move from its own origin. So is a new seed for the game's random numbers
   is `DecideFreshStart`, a pure function. Never in a session.
 - **Where to.** A queue room: its Casual or Ranked select. A friend: the Casual or Ranked select the
   host is on, so Play again re-arms there once the friend leaves; otherwise With Friends.
+- **Declared origins.** These packs restore the declared start point without a menu exit or seed.
+  Friends join in place through three minutes of emulated play; after that the solo host resets
+  before the join. This bounds the replay while avoiding frequent restarts in games without a
+  menu shortcut. The threshold uses emulated seconds, so it works at any frame rate and does not
+  count paused time. A queue host resets once per room and sees a restart toast too.
 - **The tail.** From the origin until the character select has been up 30 frames (600 at most),
   the host runs unthrottled, unseen and muted, like a rebuild of the same frames: the hook re-runs
   and plays the replay's typed events, and nothing is announced. Then the game shows as usual; the
@@ -1332,7 +1612,9 @@ loader relocates against `sora_melee`, and `0x806F3DA4`, which Project+'s codese
 visits, twice: once watching the block and caves (they keep the game's own bytes, and nothing writes
 them), once with them filled with illegal instructions (none ever runs, the fill survives, and every
 RAM dump is byte-identical to the first run's outside the block and caves). Sync tests and keyframe
-tests pass with the fill.
+tests pass with the fill. The tool reads the ranges from the header: until S5, FreeSpace.h's
+`kMatchBlock` was only the block's first 512 bytes (`kMatchBlockHead` now), so the last 152
+(`0x806F2580`-`0x806F2618`: character order, ranked set, friend drop-in) were not in the proof.
 
 **Using it.** Before Orca writes it, the block holds code (its first word is `li r17, 0`), so
 readers check the magic. Only Orca's frame hook writes the block, never a patch group. A cave is a
@@ -1356,12 +1638,23 @@ away.
 | `+0x210`-`+0x28F` | The ranked set (`SetBlock`, authoritative) |
 | `+0x290`-`+0x297` | A friend's move from the menus |
 
-Any new header (another mode, ruleset, coin or room) starts every track's state fresh. Compatibility:
-anything that changes what the game computes bumps `UX::kCompatVersion` (currently `ux=28`: a
-friend's move from the menus waits while Options > Controls is open; `ux=27`: how a turn ends in
-the [Character order](#character-order), and who turns Brawl's stage select page; `ux=26` since
-0.3.37: the history's seed, [Random numbers](#random-numbers), and tags typed in the game, [Port
-values](#port-values-each-players-name-and-controls)), which is in the compatibility key.
+Any new header (another mode, ruleset, coin or room) starts every track's state fresh.
+Compatibility: a change to one game's module that changes only what that game computes bumps that
+game's own revision (`Games/Brawl/BrawlGame.h`, the key's `ux=<n>.<game>`; a game revision of 0
+omits the suffix). Engine compatibility (`UX::kCompatVersion`) is currently **31**. From 0.3.48,
+Brawl and Project+ use game revision **1** for returning a held token to the player's own panel
+to sit out, so their keys say `ux=31.1`. Results-only and GenericModule also use revision **1**;
+the legacy Brawl launcher stays at **0** (`ux=31`). Anything else that changes what the game
+computes bumps the engine compatibility. Engine 31 keeps player-selected tag controls, including
+the C-stick. Earlier engine changes: `ux=29`: a casual stage select's Random, the two cursors start on
+nothing, and a button held into the stage select counts once it is let go, so an A held into a
+ranked stage select no longer proposes until released, and Project+'s auto-pick waits for the hover
+to leave Random; also leaving is a held B and Z reaches the game on the queue's selects (hold B to
+leave); `ux=28`: a friend's move from the menus waits while Options > Controls is open; `ux=27`: how
+a turn ends in the [Character order](#character-order), and who turns Brawl's stage select page;
+`ux=26` since 0.3.37: the history's seed, [Random numbers](#random-numbers), and tags typed in the
+game, [Port values](#port-values-each-players-name-and-controls). These revisions are in the
+compatibility key.
 
 ## Input gate
 
@@ -1580,7 +1873,7 @@ contest"; from it on, "This set counts as a loss" and "They forfeit in". Tests:
 
 | stdout | |
 |---|---|
-| `orca caps ... host results locks queue2 pick-casual pick-ranked` | `results` where the result reader is verified; `locks`, `queue2` and the pick caps where the profile has a ruleset (Brawl rev 2 and Project+). The app answers a pick cap only for a queue it can search now. With `music` that is 16 caps, the most an app before the Music switch's release passes (that release takes 24); more needs it as the minimum app (`OrcaOnlineMenuLobby.EveryCapFitsTheAppsCapsLine`). |
+| `orca caps ... host results locks queue2 pick-casual pick-ranked` | `results` where the result reader is verified; `locks`, `queue2` and the pick caps where the profile has a ruleset (Brawl rev 2 and Project+). The app answers a pick cap only for a queue it can search now. With `music` that is 16 caps, the most an app before the Music switch's release passes (that release takes 24); more needs it as the minimum app (`OrcaOnlineMenuLobby.EveryCapFitsTheAppsCapsLine`). `talk`, `rumble`, `record` and then `hostui` come after them, so such an app drops only those. |
 | `orca result <json>` | The room's verdict, when it arrives. At most 300 bytes. |
 | `orca state friend-left match-over` / `host-left match-over` | A ranked room closed after its set. |
 
@@ -1795,6 +2088,34 @@ Two wins end the set; 8 games without that void it. Other tracks read the score,
 
 Tests: `OrcaSetBlock*`, `OrcaRankedSet*`, `OrcaResults*`. Not checked live: a real ledge-grab count.
 
+### Rulesets are data
+
+A ruleset's numbers and lists are a data file, not C++ (Orca split S5): the legal stages (name, the
+game's stage id, starter or counterpick), the stage steps' timers and the winner's later step, DSR,
+the Ice Climbers and Meta Knight clauses, the set (wins, stocks and minutes, who decides a time-out,
+the ledge-grab limits, the tiebreak game, how many ties void the set), the queue's character
+select (its ready timer, the B hold that skips), the ranked character order's turn time and the
+ranked character select's no-show timer. The builtin ones are `Orca/Games/Brawl/Rulesets/brawl-supernova-2025.json`
+(the match block's ruleset 1) and `pplus-2024.json` (2), compiled in byte for byte
+(`Games/Brawl/Rulesets.*`).
+
+Every ruleset is read the same way (`Orca/Engine/Ruleset.*`): a strict JSON reader
+(`Engine/StrictJson.*`: one value, valid UTF-8, JSON's own number grammar with only exact integers
+as written, no duplicate keys, at most 16 KiB and 8 levels), then the one schema, `Tools/orca/mods/ruleset.schema.json`, compiled in
+and interpreted by `Engine/Schema.*`, then the few rules a schema can't state (its `x-orca-rules`).
+Anything unknown, out of range or of the wrong type refuses the file; nothing is defaulted or
+clamped. The schema uses a small subset of JSON Schema in which every value is typed and bounded,
+and the interpreter refuses a schema outside it, so the site's validator (YouGame
+`web/src/lib/orca-data-schema.ts`, `orca-ruleset-validate.ts`, with a byte copy of the schema) and
+Orca can't drift: `Tools/orca/mods/ruleset-vectors.json` holds the cases both must agree on
+(`OrcaRuleset.Vectors` and the site's `orca-ruleset-validate.test.mjs`). A libFuzzer target for
+the reader is `Tools/orca/fuzz/build-ruleset-fuzz.sh`.
+
+Changing a builtin file changes what both games write, like a code change: it needs the hashlogs
+and, for a ruleset already played online, a compat bump. A build whose builtin files don't load
+plays no ruleset at all (no locks, no queue or ranked caps), and logs why. A pack can't carry a ruleset file yet (the
+pack format names none).
+
 ## Stage select
 
 ### Ranked steps
@@ -1840,6 +2161,22 @@ second player names theirs; a player who named nothing gets a random legal stage
 stages come from `CasualSeed(room hash, coin, game number)` through murmur3's finalizer, so every
 machine and re-run computes the same. Tests: `OrcaRankedSteps.*Casual*`, `OrcaBrawlCasual.*`,
 `OrcaRankedPPlus.Casual*`.
+
+**Random.** A on the game's own Random button names Random (`Ranked::PREF_RANDOM`, Project+'s block
+`0xFE`): that player's random legal stage, the one a silent player gets at the timer
+(`CasualDefault`, never FD with an Ice Climbers), but at once. Random against a stage, the coin
+takes one of the two; Random against Random, the stage is picked at once. The block keeps the
+marker, not the stage it draws, so the other player only sees "bo wants Random"; the result says
+"Smashville (random)". The flow then takes that stage's own tile; the game's Random and its random
+number generator are never used: Project+'s A waits until the game's hover has left its Random
+button (the hover follows the cursor a frame late), as Brawl's waits for the hover to read the
+stage. The cursors start just above the Random button, on nothing (no tile, Random or page button),
+so an A mashed into the stage select names nothing, as before Random; every button starts as held,
+so one held through the screen change counts once it is let go. Ranked has no Random (neither
+ruleset has a random counterpick): A there does nothing, and the hint line says "Random is casual
+only". The Random buttons' rectangles (`StageCursors::Layout::random_button`) were measured from
+screenshots, not swept like the tiles. Friends rooms keep the game's own stage select, Random
+included.
 
 ### Two cursors
 
@@ -1929,14 +2266,23 @@ presses Start; only then does the page search (`Orca/UX/Queue.*`, the session's 
 |---|---|
 | `orca queue ready <casual\|ranked> <char> <costume>` | A character down and Start pressed: search with this pick. Printed again with a new pick or when back after a room. `<char>` is the select's id (`0x28` none, `0x29` Random). |
 | `orca queue unready` | B, the token taken up, or `queue-cancel` while ready. |
-| `orca menu cancel` | Backed out to the menus (B or A on BACK while not ready). |
-| `orca queue skip` | Casual only: Z held 1.5 s on the room's select. The page leaves and searches again. |
+| `orca menu cancel` | Backed out to the menus (held B, or A on BACK; while ready, the B that un-readies backs out once held about 1 s). |
+| `orca queue skip` | Casual only: B held 1.5 s on the room's select (its first frame does what B does there). The page leaves and searches again. |
 | `orca queue timeout me\|them` | Casual's first game: the 30 s ready timer ran out. |
 
 The page owns the room: Orca never leaves on a skip or a timeout by itself.
 
 - **The own select.** The header carries `FLAG_SOLO`. Ports 2-4 are masked; Start never reaches the
-  game (it readies through the latch); while ready, B only un-readies.
+  game (it readies through the latch); while ready, a B tap only un-readies, and the same B held
+  `SOLO_LEAVE_FRAMES` (30) reaches the game, which backs out as for any held B (`TIMER_START` holds
+  when that B began, its solo meaning). So hold B leaves the own select, searching or not.
+- **Hold B to leave** (2026-10-11, `ux=29`). Leaving moved from Z to B: casual's skip, set over's
+  leave and the own select's back-out are all a held B. Z is the game's on every queue character
+  select, so Project+'s AltZ costume works (hold Z as the select ends: in a room, through Orca's
+  Start at the go). Ranked's results screen keeps B from the game (`GateMasks`). The first time a
+  player reaches the own select, the control guide shows "New · Hold B to leave" for 6 s (gone on
+  Start or a held B); once on screen 2 s, or once B is held, `hold-b-leave` goes into
+  `<User>/Config/OrcaSeen.txt`, beside the kept controls, so it never shows again on that machine.
 - **The pick's identity.** At ready, Orca keeps the pick (character, costume, where the hand placed
   it) and the page's `queue rating`, as a 13-byte queue identity that rides the session's value
   channel, so every machine has the joiner's at its plug frame. The place is learned from a hand
@@ -2008,7 +2354,7 @@ forfeit in" with a draining ring that follows the room's 15 s grace (or the 10 s
 left · This set counts as a loss". Before the set's first game began (its fighters in) the room voids
 a leave instead: "No contest in" and "This set doesn't count". After a ranked verdict the room stays
 open (**set over**): both games keep the session on the results screen with the page's chat; each
-Orca leaves the room when its results screen ends, when the player holds Z for 1.5 s, or, with the
+Orca leaves the room when its results screen ends, when the player holds B for 1.5 s, or, with the
 opponent gone, on Start. A
 ranked set's player comes back to their own character select not ready, so the page doesn't search
 by itself; a Start still held from the results screen readies nobody until it is let go.
@@ -2033,6 +2379,55 @@ Orca --embed --parent <handle> --rect X Y W H [--embed-adopted] [-u <user>] -e <
 
 `--embed-adopted` is the sandbox's way to embed on Windows ([Adopted window](#adopted-window)).
 
+Self-embedding (`--embed --parent`, macOS, X11 and unjailed Windows) prints one decisive stdout
+line: `orca embed ok` after the first applied rectangle is visibly in place, or
+`orca embed failed <reason>` when embedding fails and it falls back to its own window. The reason
+is exactly one token: `parent-gone`, `setparent`, `no-parent`, or `track-failed`. Only the first
+result is sent. A result decided before `ready` is held and printed immediately after `ready`;
+a later result is sent on the next main-loop pass. `--embed-adopted` never sends these lines:
+the jailed Windows launcher reports adoption itself. Parent loss after successful embedding
+still stops the run as described below.
+
+**Replay playback.** Use the same game, disc/profile, session (`ORCA_SESSION=1`) and embed launch,
+with `ORCA_REPLAY_SOURCE=<local file path or ws(s) watch URL with ticket>`. YG Dolphin boots to its
+local canonical origin and plays the stream instead of joining or creating a room. A saved regular
+file (at most 1 MiB) plays at real speed. For watch playback the app also sets
+`ORCA_REPLAY_ROOMS_ORIGIN=https://<rooms host>[:port]` for its selected environment. Replay has no
+room-ticket reply from which to learn that origin. Watch URLs use `wss://`, have no userinfo, and
+match that host (case-insensitively) with either the default port or the origin's port. No origin
+means no watch connection. Test-knob builds may also use `ws://` for `localhost` or `127.0.0.1`
+with a matching explicit origin. Pending watch bytes and reset offsets share an 8 MiB limit.
+A watch URL follows live, 12 frames behind the newest final
+frame, catches up after joining late, and drains the tail when the stream ends. The
+`ORCA_TEST_REPLAY_*` knobs still work when no product source is set and test knobs are allowed;
+they do not alter product playback.
+
+`ORCA_REPLAY_NAMES` is the complete view-time name map: alternating zero-based GameCube port and
+`encodeURIComponent` UTF-8 name, e.g. `0 Alice%20Smith 2 Ren%C3%A9`. At most four entries (ports
+0..3, no duplicates), each 1..24 code points, with chat's ban on controls and line separators.
+An empty map is valid. Every loaded port's name is replaced; a missing port shows `Player N`
+(one-based N). The reader keeps its original metadata for reconnect overlap checks. Brawl's
+in-game tags retain their existing five-character ASCII conversion; unsupported glyphs use its
+port label. Worn tags are renamed on the character select when the view map changes. Controls
+and queue metadata remain those of the recording. Names change guest RAM, so recorded full-RAM
+checksum comparisons are retained in test playback and in a player's own product replay without
+a view-time name map. Playback with a view-time map still validates stream hashes, compatibility,
+the local origin, and reconnect overlap.
+
+The desktop bridge is `window.yougameDesktop.orca.watchReplay({ bytes?, url?, names, launch? })`.
+Supply exactly one source: the page fetches a saved replay with its own session and passes an
+`ArrayBuffer` of at most 1 MiB, or supplies the live ticketed watch URL. Main creates a private,
+unique file in the app's temporary replay folder, grants that one file read-only in the sandbox,
+and removes it after exit or failure. `launch` supplies the usual play metadata (game slug, disc
+key, rectangle and optional graphics); without it, the last Play's metadata is reused. Every
+replay has a fresh session. The promise resolves on exit, as `play` does. Main automatically
+answers `caps replay` for this API; a page may answer the caps again through `send`.
+`on("replay-time", cb)` and `on("replay-done", cb)` return unsubscribe functions. Time events carry
+`{ frame, ms, slug, session }`; done events carry `{ ok, frames, why, slug, session }`.
+`pauseReplay()`, `resumeReplay()`, `seekReplay(frame)` and `replayNames(names)` use the same filtered
+stdin as `send(slug, session, line)`. The page-side `fetchReplayBytes(url, init)` helper preserves
+session request headers/cookies and bounds the streamed response before passing bytes to main.
+
 - `--parent`: on Windows the HWND as a decimal number; on macOS the window's **CGWindowID** (in
   Electron, the middle field of `win.getMediaSourceId()`), since an `NSView*` means nothing to
   another process; on Linux the X11 window id (Electron's `getNativeWindowHandle()` when the app
@@ -2056,6 +2451,13 @@ relative to the parent X window (the app adds its menu bar's height to Y) and Or
 child, so it moves, clips and hides with it as on Windows. The app sends `rect` only when the box
 moves inside the window.
 
+`ORCA_EMBED_TRACE=1` is a diagnostic switch: each applied `rect` or `view` command logs
+`embed-trace t=<steady-clock ms> req=<x,y,w,h> real=<x,y,w,h> scale=<s>` to the normal log.
+`req` is the received rectangle (`view off` uses the current window rectangle); `real` is our own
+window's actual screen bounds immediately afterward: macOS screen points (Cocoa origin), Windows
+physical pixels, X11 pixels. `scale` is the window's backing scale (1 on X11). Small `rect` commands
+log their raw request and the unchanged bounds after hiding the window. Unset, the switch adds no queries or logs.
+
 ### stdin
 
 | Command | Effect |
@@ -2075,24 +2477,67 @@ moves inside the window.
 | `join <code>` / `leave` | Into or out of a friend's game. |
 | `host <code>` / `queue-cancel` / `queue rating <n\|->` | Matchmaking ([Matchmaking](#matchmaking-and-results)). |
 | `direct on\|off` | The player's switch for direct links. |
+| `record on\|off\|auto` | Whether this player's match streams to the room for watchers and the saved replay in the players' accounts, cap `record`. `auto` (the default) records ranked rooms only; a tournament or friends room records after `record on`. See `Rollback/ReplayStream.h`. |
+| `replay pause` / `replay resume` | Product playback only, cap `replay`: hold the displayed replay position or continue. Prints `state paused` / `state running`. The window heartbeat and replay clock keep reporting while paused. |
+| `replay seek <frame>` | Cap `replay`: absolute recorded frame in the history received so far, including its first frame and excluding the end. Restores the local origin and replays unseen to that frame, which is rendered. Keeps the pause choice. Out-of-range targets answer `unsupported replay`. |
+| `replay names [<port> <name> ...]` | Cap `replay`: replace the complete view-time map, in the same format as `ORCA_REPLAY_NAMES`. No pairs clears it to the `Player N` defaults. |
 | `delay auto` / `delay N` | Orca's default input delay (a fixed 3), or a fixed 1-6 frames. |
 | `chat <name> <text>` | A line from the page's chat, shown while Orca fills the screen. Fields are `encodeURIComponent` of UTF-8 (name at most 24 code points, text 140). Never logged. |
 | `controls <hex>` | The player's own controls ([Each player's own controls](#each-players-own-controls)); the tag gets them at the next character select. A bad profile answers `unsupported controls`. |
 | `orb <x> <y> <size> <lit> <away> <badge>` / `orb blink` / `orb off` | YouGame's overlay button, drawn where the page's own stands under Orca's window. |
 | `notice <kind> <name> <text> [<key> <verb>]` | One of the YouGame overlay's lines (join, leave, invite, ...). Never logged. |
+| `talk listen\|send\|sent\|error <name> <text>` / `talk off` | Hold-to-talk's row, cap `talk`: one row after the notices, replaced by each line. Fields as in `chat`. Never logged. |
+| `feedback` / `host-menu` | Cap `hostui`: request feedback with a game screenshot, or toggle the native host menu. Ignored without the agreed cap. The app relays these shortcuts only from its focused view. |
 | `quit` | Stop at once and exit. |
 
 Most commands are gated by capabilities (`caps`) that Orca and the app agree on; a later `caps` line
 replaces the whole answer. A command without its cap, or a malformed one, answers
-`unsupported <command>`. Any other line goes to stderr. Drawing
-commands (`view`, `dim`, `perf`, `chat`, `orb`, `notice`) are host-only: never in game memory or
-the compatibility key.
+`unsupported <command>` (except unagreed `feedback` and `host-menu`, which are ignored). Any other line goes to stderr. Drawing
+commands (`view`, `dim`, `perf`, `chat`, `orb`, `notice`, `talk`) are host-only: never in game
+memory or the compatibility key.
+
+`replay` is offered only with `ORCA_REPLAY_SOURCE`, after `talk` and `rumble` and before `record`
+and `hostui`. The newest word, `hostui`, stays last so apps that read fewer words drop it first.
+A ruleset profile normally offers 21 words (22 with `replay`), within the app's 24-word limit. Replay
+mode withdraws `join`, `host` and `direct`; it never opens a seated room.
+
+**Native host menu** (cap `hostui`). The app may handle `orca host ...` and `orca feedback ...`
+and wants YG Dolphin's native host menu only when both sides list `hostui`. Desktop 0.13.0 / V2 web
+will add this agreement; desktop 0.12.100, 0.12.43/44 and V1 web keep the 0.3.49 orb and overlay
+behavior without it. With the cap, Δ appears beside the orb; an orb click or Up+Start opens
+Feedback, Volume up/down, Mute, Exit fullscreen, Leave and Controls. Feedback captures at most
+one screenshot per five seconds after completion. A later `caps` answer can enable or withdraw
+the menu immediately; withdrawal closes an open menu and suppresses pending feedback output.
+
+Without `hostui`, overlay and talk input follow these paths:
 
 **Opening YouGame's overlay** prints `orca orb`: a left press on the button (Windows), Shift+Tab
 while Orca has the keyboard, or, on a controller, holding the D-pad's Up and pressing Start
 (`Orca/UX/OrbCombo.h`). From that Start until Start and the D-pad are let go the game gets neither,
 and the masked pad is what is recorded and sent, so every machine plays it. Opening the overlay
 never pauses Orca: the page sends `blur`, the player's pad goes neutral, and the match goes on.
+
+**Hold-to-talk** (cap `talk`, offered before `rumble`, `record` and `hostui`). Without `hostui`, those two presses print their press and
+release instead of `orca orb` (`Orca/UX/OverlayKey.h`): `orca overlay down keys|pad`, then exactly
+one `orca overlay up keys|pad` (let go: Tab or Shift; Start, even with Up still held) or
+`orca overlay cancel keys|pad` (no longer read: Orca's window lost the keyboard or was hidden; the
+game lost focus, paused or is stopping). The page times them: let go within 250 ms is a tap (the
+overlay), longer is a hold (it talks). A click on the button stays `orca orb`. The pad is read once
+a frame, and while a frame waits on a friend (a stall, up to the 10 s silence limit) no frame reads
+it, so each stall tick reads it again for the press alone (`UX::LocalPadWaiting`): Start let go
+prints `up` within a tick. That read is not recorded, sent or timed, and the combo's mask advances
+on frames only, so the bytes every machine plays are unchanged. Focus lost during a stall is handled
+when frames resume (the input gate moves with the frames' pad poll), and the page's own blur
+already ends its side. A release found more than 100 ms after the last read that saw Start down,
+once the press is past 250 ms, prints `cancel`, not `up`: Orca cannot say when the player let go, so
+a tap could read as a hold or a talk run on. On macOS and
+Linux Orca's window never has the keyboard, so the page sees Shift+Tab itself. The masking is the
+same as without the cap, so the compatibility key does not change. While the player talks the page
+sends `talk listen <name> <text>` (to whom, then the live words, at most 4 a second), `talk send`,
+`talk sent` or `talk error`, and `talk off`. Orca draws one row after the three notice rows,
+replaced in place: listen and send keep the end of the words and stay until the next line (60 s at
+most), sent fades after 3 s and error after 4 s, and while listening the button sends out a green
+ring every 1.2 s.
 
 ### stdout
 
@@ -2103,12 +2548,18 @@ never pauses Orca: the page sends `blur`, the player's pad goes neutral, and the
 | `unsupported <command> [N]` | A refused command. Not an error. |
 | `key escape` / `key fullscreen` | Windows only, if Orca's window somehow has the keyboard. |
 | `orca click` | Windows only: a mouse press on Orca's window, which the page never sees; the app focuses its page and sends `focus`. On macOS and Linux the press reaches the page. |
+| `orca orb` / `orca overlay down\|up\|cancel keys\|pad` | The overlay key, as a toggle, or (cap `talk`) its press and release: see Hold-to-talk above. |
+| `orca host volume-up\|volume-down\|mute\|exit-fullscreen\|leave` | Cap `hostui`: the native host menu's requested app action. Controls uses `orca orb`. |
+| `orca feedback <filename>.png` | Cap `hostui`: a completed screenshot in the run's user directory, ready for the app's feedback UI. |
 | `error <sentence>` | Something failed. Each `orca error` also gets an `error` twin. |
 | `orca state <state>` / `orca error <code> <sentence>` | Session status (`Orca/Status.h`). Forward every line that starts with `orca `. |
 | `orca menu ...`, `orca result ...`, `orca queue ...` | See [Online menu](#online-menu) and [Matchmaking](#matchmaking-and-results). |
 | `orca controls <hex>` | The player's own controls: changed in the game, or loaded from Orca's file at boot. The page keeps them. |
 | `orca active <interval_s> <active_s> <inputs> <mode> <pads>` | How much the player played: every 60 s while the game runs, and once more when it stops ([Activity lines](#activity-lines)). |
 | `orca perf <json>` | This machine's speed: `info` once after `ready`, `win` every 15 s of running time, `auto` when the run switched its graphics to Performance ([This machine's speed](#this-machines-speed)). |
+| `orca rumble <port> <0\|1> <adapter\|pad\|none> <index>` | The game's motor for the local player's controller, on change and every 30 frames while on, cap `rumble` ([Rumble](#rumble)). |
+| `orca replay time <frame> <ms>` | Product playback position, about four times a second, including paused/live waits, plus initial and final positions. Absolute replay frame and whole milliseconds from its first frame, `max(0, frame - first) * 1000 / 60` rounded down. A seek may move both backward. For chat synchronization, not wall-clock time. |
+| `orca replay done ok\|fail frames=<n> ... why=<text>` | Replay completion or failure; the existing diagnostic fields stay intact. `frames` counts executed replay frames, including seeks; `why=-` means normal saved-file completion. Main forwards this as `replay-done`. |
 | `exit <code>` | Always last: 0 normal, 1 a reported error, 2 bad arguments. |
 
 ### Activity lines
@@ -2149,6 +2600,30 @@ own port 1, a harness script), read at the boundary of each frame that runs for 
 real time and only while the game has the input. Never a peer's input, a rollback re-run, a
 joiner's rebuild or catch-up, a fresh start's tail or replayed pads. Observation only: nothing it
 reads or keeps reaches emulation, the replay, checksums or the compatibility key.
+
+### Rumble
+
+Orca drives no motor: the app's controller helper owns the devices. With cap `rumble`, Orca tells
+the page when the game turns the local player's motor on or off, and the page sends the helper its
+`rumble` commands (`Orca/UX/Rumble.h`).
+
+- **What it reads:** the local port's SI channel output, the command each poll sends, where
+  PADControlMotor leaves `0x0040_03_0m` (m = 1 is on). Read at frame boundaries that are not re-runs
+  or a joiner's catch-up. The register is in every snapshot, so a rollback's correction shows at the
+  next live boundary and a re-run never buzzes the pad again. Nothing is written to emulated memory
+  and no input changes: no `ux` or `kCompat` bump. Dolphin's own motor output (`Pad::Rumble`) is off
+  in a session: it would follow the in-game port, not this machine's, and fire on every re-run.
+- **Line:** `orca rumble <port 1-4> <0|1> <adapter|pad|none> <index>`. The device is the one Orca
+  read the local pad from at the last first-run frame: the adapter's physical port (0-3) or the
+  standard pad's index in the app's snapshot (as the app arranged it). `none` (Dolphin's own input, a
+  test script) is never on.
+- **Timing:** on at once, off after 3 live frames off, so the game's on/off patterns read as one
+  buzz. The off goes out as soon as it is due; on lines are at least 6 frames apart, so at most 10
+  on and 10 off lines a second. While the game holds the motor on, the same `1` line is said again
+  every 30 live frames: the page holds the motor about a second after any `1`, so a long rumble
+  lasts and a frozen Orca stops buzzing soon. Off at once when the game has stalled 100 ms on a
+  friend and at the exit; off after the same 3 frames when Orca loses the focus.
+- The player's switch is the game's own: each name tag's Rumble in Options > Controls.
 
 ### Focus
 
@@ -2247,6 +2722,7 @@ manifest entry, so a build without the mode can never be marked as having it. Co
 | `sandbox_disc` | Inside the sandbox, the disc can't be opened for lack of permission: the app didn't grant it (a network share, a file an admin tool made). "Orca can't read this disc where it is. Copy it into a folder of yours, such as Documents, and choose the copy." (the app's words for the same refusal) |
 | `sandbox_embed` | `--embed-adopted`: nothing adopted the window within 10 s. "Orca couldn't open in the YouGame window. Try again." |
 | `sandbox_denied` | Inside the sandbox, Orca may not write its user folder. "Orca isn't allowed into its own folder, so it didn't start. Reset Orca's files from YouGame's Help menu, then press Play again." |
+| `gpu_lost` | Direct3D: the graphics device was lost (a GPU hang the driver reset, a driver update or crash; `Orca/GpuLost.h`). stderr says `Orca: [VIDEO] the graphics device is lost (D3D11: device hung, 0x887A0006) at <what failed>; Orca stops`, nothing more is drawn, and the run stops like any other stop (the room is left: an online opponent sees this player leave, not a desync), exit 1. "Your graphics driver stopped responding. Try the Performance preset or a lower resolution in Graphics, and update your GPU driver." |
 
 **Windows zip layout.** A release zip for the sandbox carries, beside `Orca/Orca.exe`, the pinned
 `d3dcompiler_47.dll` (10.0.20348 from the Windows SDK's `Redist/D3D/x64`, SHA-256
@@ -2322,6 +2798,97 @@ STUN and TURN are internet traffic and work in every mode.
 ## Changes by release
 
 What each release changed for players, in plain words.
+
+### 0.3.53
+
+- If your PC runs out of memory while a game starts, YG Dolphin now says so plainly instead of closing.
+- The YouGame menu's feedback and volume buttons over the game appear only with a YouGame app that
+  supports them; on older apps the YouGame button works as before.
+- Behind the scenes: diagnostics for the game window inside the page.
+
+### 0.3.52
+
+- Everything in 0.3.50, under a new number. 0.3.51 was a networking fix for Windows on the previous
+  release line; 0.3.52 includes it.
+
+### 0.3.50
+
+- In full screen, the YouGame menu over the game can now send feedback with a screenshot of the
+  game, change the volume, mute, leave full screen and leave the match (with YouGame 0.12.52).
+- A networking fix for Windows.
+- Behind the scenes: test copies mark their results as tests, and safer checks on the game's own menus.
+
+### 0.3.49
+
+- Saved replays play back completely offline: watching one never connects to anything.
+- Behind the scenes: safer test copies (they never touch a player's controllers) and more tests for dropped connections.
+
+### 0.3.48
+
+- In a friends room with three or four people, you can now sit out after a fight: pick up your
+  token with B, then press A on your own player button. Whoever doesn't pick a character sits out;
+  they can pick at the next character select.
+- A clearer message tells you when a friend's YG Dolphin is older or newer. Ask them to press Play
+  to update.
+- Fewer "room is full" retries after a dropped connection.
+- A clear message tells you when a friend's game is too far behind to send you the match.
+- Packs that need a newer YG Dolphin now give a clear message telling you to update the YouGame app.
+- Known limit: a friend who is sitting out is still connected. Their bad connection can briefly
+  stall the fight.
+
+### 0.3.47
+
+- Recorded matches reach the site again: 0.3.46 never uploaded them. Fixes a rare crash at start on
+  Windows when the time zone can't be read.
+
+### 0.3.46
+
+- Play doubles with friends: up to four in a friends room. Tournament matches report their own results.
+
+### 0.3.45
+
+- Watch your recorded matches again from the site.
+
+### 0.3.44
+
+- **Friends rooms ride through short connection drops.** If your connection drops for a moment, the room
+  keeps going and keeps the same room code, so nobody has to make a new room or share a new code.
+
+### 0.3.43
+
+- **Saved replays.** Matches in ranked and tournament rooms can be saved as replays.
+- **A warning before restarting.** If a friend's join needs to restart your pack's game, you get
+  a three-second warning that unsaved progress will be lost.
+
+### 0.3.42
+
+- **YG Baiji is now YG Dolphin.** The window, the Mac menu and the messages use the new name.
+  Your controls and settings carry over.
+- **Name tags keep the buttons you saved.**
+- **More community packs.** Community mods of other GameCube games can run (casual).
+
+### 0.3.41
+
+- **Clearer "couldn't open the disc" reports.** When Project+ (or a pack's launcher) can't open your
+  game disc, the report now says why: the file won't open or read, is cut short, or isn't a disc
+  image. A disc whose folder or file name contains `=` now opens.
+- **A refused pack no longer starts the plain game.** If a game's pack fails its checks, the game
+  doesn't start, instead of the plain game starting in its place; the reason is in the report.
+- **Better crash reports** for crashes inside the game.
+- **Stability fixes.**
+
+### 0.3.40
+
+- **Orca is now YG Baiji.** The name was picked in a YouGame community poll; the baiji is the
+  Yangtze river dolphin. The window, the Mac menu and the messages say YG Baiji. Your controls,
+  settings and ranked ratings carry over. On Windows the firewall may ask once more, because the
+  program has a new name.
+- **Hold to talk.** Hold YouGame's overlay key (or the controller shortcut) to talk to friends in a
+  match; a tap still opens the menu.
+- **Rumble.** Your controller can rumble when the game rumbles, with the app's switch on.
+- **Random stage in casual.** Both players can pick Random on a casual stage select.
+- **Hold B to leave.** Skipping a casual opponent, leaving after a ranked set and backing out of the
+  character select are now a held B. Z goes to the game, so Project+'s Z costumes work.
 
 ### 0.3.39
 

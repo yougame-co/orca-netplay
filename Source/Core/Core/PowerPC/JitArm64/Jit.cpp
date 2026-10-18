@@ -1048,7 +1048,25 @@ void JitArm64::Jit(u32 em_address, bool clear_cache_and_retry_on_failure)
     u8* far_start = m_far_code.GetWritableCodePtr();
 
     JitBlock* b = blocks.AllocateBlock(em_address);
-    if (DoJit(em_address, b, nextPC))
+    const bool compiled = DoJit(em_address, b, nextPC);
+    if (!compiled && m_compiling_from_hook)
+    {
+      // Orca: never clear the cache under the hook's caller (JitBase::CompileFromHook). Drop the
+      // unfinished block and the fastmem entries its partial code registered; that code is in free
+      // space.
+      blocks.DiscardUnfinalizedBlock(*b);
+      for (const auto& [from, to] : {std::pair<const u8*, const u8*>(near_start, GetCodeEnd()),
+                                     std::pair<const u8*, const u8*>(
+                                         far_start, m_far_code.GetCodeEnd())})
+      {
+        // Keyed by where each access ends, as FreeRanges erases them: (from, to].
+        m_fault_to_handler.erase(m_fault_to_handler.upper_bound(from),
+                                 m_fault_to_handler.upper_bound(to));
+      }
+      m_hook_compile_dropped = true;
+      return;
+    }
+    if (compiled)
     {
       // Code generation succeeded.
 
@@ -1080,6 +1098,11 @@ void JitArm64::Jit(u32 em_address, bool clear_cache_and_retry_on_failure)
 #endif
       return;
     }
+  }
+  else if (m_compiling_from_hook)
+  {
+    m_hook_compile_dropped = true;  // no free code region: as above, never clear here
+    return;
   }
 
   if (clear_cache_and_retry_on_failure)

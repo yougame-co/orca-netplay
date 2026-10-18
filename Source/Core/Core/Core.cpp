@@ -65,6 +65,7 @@
 #include "Core/Movie.h"
 #include "Core/NetPlayClient.h"
 #include "Core/NetPlayProto.h"
+#include "Core/Orca/BootMemory.h"
 #include "Core/Orca/Branding.h"
 #include "Core/Orca/Profile.h"
 #include "Core/PatchEngine.h"
@@ -514,21 +515,9 @@ static void FifoPlayerThread(Core::System& system, const std::optional<std::stri
 // Initialize and create emulation thread
 // Call browser: Init():s_emu_thread().
 // See the BootManager.cpp file description for a complete call schedule.
-static void EmuThread(Core::System& system, std::unique_ptr<BootParameters> boot,
-                      WindowSystemInfo wsi)
+static void EmuThreadBoot(Core::System& system, std::unique_ptr<BootParameters> boot,
+                          WindowSystemInfo wsi)
 {
-  NotifyStateChanged(State::Starting);
-  Common::ScopeGuard flag_guard{[] {
-    {
-      std::lock_guard lock(s_core_mutex);
-      s_state.store(State::Uninitialized);
-    }
-
-    NotifyStateChanged(State::Uninitialized);
-
-    INFO_LOG_FMT(CONSOLE, "Stop\t\t---- Shutdown complete ----");
-  }};
-
   Common::SetCurrentThreadName("Emuthread - Starting");
 
   // This will become the CPU thread.
@@ -682,6 +671,24 @@ static void EmuThread(Core::System& system, std::unique_ptr<BootParameters> boot
 
   // Become the CPU thread.
   cpu_thread_func(system, savestate_path, delete_savestate);
+}
+
+static void EmuThread(Core::System& system, std::unique_ptr<BootParameters> boot,
+                      WindowSystemInfo wsi)
+{
+  NotifyStateChanged(State::Starting);
+  Common::ScopeGuard flag_guard{[] {
+    {
+      std::lock_guard lock(s_core_mutex);
+      s_state.store(State::Uninitialized);
+    }
+
+    NotifyStateChanged(State::Uninitialized);
+
+    INFO_LOG_FMT(CONSOLE, "Stop\t\t---- Shutdown complete ----");
+  }};
+
+  Orca::BootMemory::Run([&] { EmuThreadBoot(system, std::move(boot), wsi); });
 }
 
 // Set or get the running state
@@ -868,6 +875,7 @@ void RunOnCPUThread(Core::System& system, Common::MoveOnlyFunction<void()> funct
 // Called from Renderer::Swap (GPU thread) when a frame is presented to the host screen.
 void Callback_FramePresented(const PresentInfo& present_info)
 {
+  Orca::BootMemory::FirstFrame();
   auto& perf_metrics = Core::System::GetInstance().GetPerfMetrics();
   perf_metrics.CountFrame();
 

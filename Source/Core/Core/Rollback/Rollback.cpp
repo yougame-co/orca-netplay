@@ -38,6 +38,7 @@
 #include "Core/Orca/Session/PadCodec.h"
 #include "Core/Orca/Status.h"
 #include "Core/Orca/UX/OrbCombo.h"
+#include "Core/Orca/UX/OverlayKey.h"
 #include "Core/PowerPC/JitCommon/JitBase.h"
 #include "Core/PowerPC/JitInterface.h"
 #include "Core/PowerPC/PowerPC.h"
@@ -443,7 +444,7 @@ bool SnapshotRing::Capture(Core::System& system, MachineImage* image, bool stop_
   return true;
 }
 
-bool SnapshotRing::LoadImage(Core::System& system, MachineImage image, s64 frame)
+bool SnapshotRing::LoadMachineImage(Core::System& system, MachineImage image, s64 frame)
 {
   auto& memory = system.GetMemory();
   if (image.state.empty() || image.mem1.size() != memory.GetRamSize() ||
@@ -640,11 +641,32 @@ void OnFrameBoundary(const Core::CPUThreadGuard& guard)
         Orca::Activity::NoteLocalPad(Orca::Activity::PAD_DOLPHIN, pad);
       return Orca::Net::EncodePad(Orca::UX::FilterLocalPad(pad, first_run, live));
     };
+    // While the session holds this frame on a friend's input, the same pad read again, only so a
+    // talk press ends when Start is let go (UX/OrbCombo.h LocalPadWaiting). Host only: nothing
+    // read here is recorded, sent, timed or noted, and it runs only while a talk press is down.
+    const auto local_pad_waiting = [](int local_seat) {
+      if (!Orca::UX::OverlayKey::Pad().IsDown())
+        return;
+      // A test script's pad changes only with frames.
+      if (Harness::InputOverride(local_seat))
+        return;
+      // No focus check: the input gate is this thread's and moves only at the SI poll, so it is
+      // the last frame's here. Focus lost mid-stall is handled when frames resume.
+      if (const auto from_app = Orca::Events::LocalPad(false))
+      {
+        Orca::UX::LocalPadWaiting(from_app->button);
+        return;
+      }
+      g_controller_interface.SetCurrentInputChannel(ciface::InputChannel::SerialInterface);
+      g_controller_interface.UpdateInput();
+      Orca::UX::LocalPadWaiting(Pad::GetStatus(0).button);
+    };
     const auto on_frame = [&guard](int frame, bool resimulating,
                                    const std::vector<Orca::Events::PortInfo>& ports, bool alone) {
       Orca::Events::NotifyFrame(guard, frame, resimulating, ports, alone);
     };
-    if (const auto rewound_to = OnlineMatch::OnBoundary(guard.GetSystem(), local_pad, on_frame))
+    if (const auto rewound_to =
+            OnlineMatch::OnBoundary(guard.GetSystem(), local_pad, on_frame, local_pad_waiting))
       Harness::RewindTo(*rewound_to);
   }
 
@@ -662,7 +684,7 @@ void OnFrameBoundary(const Core::CPUThreadGuard& guard)
 
   // JIT warm-up: precompile blocks earlier matches needed and record this match's for next time.
   // Only on first runs, and not while catching up, whose frames run back to back.
-  if (Orca::SessionActive() && !IsResimulating() &&
+  if (Orca::SessionActive() && Orca::JitWarm::ScenesReadable() && !IsResimulating() &&
       !(RingPort::Active() && RingPort::Active()->CatchingUp()))
   {
     Orca::JitWarm::OnBoundary(guard);

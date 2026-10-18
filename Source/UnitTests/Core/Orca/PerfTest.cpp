@@ -611,6 +611,14 @@ TEST(OrcaPerf, TheInfoLineFitsThreeHundredBytes)
       R"("ad":["NVIDIA GeForce RTX 3060","Intel(R) UHD Graphics 770"],"ai":0,)"
       R"("cpu":"12th Gen Intel(R) Core(TM) i5-12400F","th":12,"os":"win","rev":"ccdc8e441a"})");
 
+  // The driver version, where the backend read one, right after the card.
+  info.driver = "32.0.15.6094";
+  EXPECT_EQ(
+      Orca::Perf::InfoJson(info),
+      R"({"v":1,"k":"info","be":"D3D","gpu":"NVIDIA GeForce RTX 3060","drv":"32.0.15.6094",)"
+      R"("ad":["NVIDIA GeForce RTX 3060","Intel(R) UHD Graphics 770"],"ai":0,)"
+      R"("cpu":"12th Gen Intel(R) Core(TM) i5-12400F","th":12,"os":"win","rev":"ccdc8e441a"})");
+
   // Long names: cut to 40, then the CPU goes, then adapters past the first.
   const std::string long_name(80, 'x');
   info.gpu = long_name;

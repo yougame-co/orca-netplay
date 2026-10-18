@@ -141,8 +141,10 @@ bool HostFileSystem::FstEntry::CheckPermission(Uid caller_uid, Gid caller_gid,
   return (u8(requested_mode) & u8(file_mode)) == u8(requested_mode);
 }
 
-HostFileSystem::HostFileSystem(std::string root_path, std::vector<NandRedirect> nand_redirects)
-    : m_root_path{std::move(root_path)}, m_nand_redirects(std::move(nand_redirects))
+HostFileSystem::HostFileSystem(std::string root_path, std::vector<NandRedirect> nand_redirects,
+                               u64 cluster_quota)
+    : m_root_path{std::move(root_path)}, m_nand_redirects(std::move(nand_redirects)),
+      m_cluster_quota(cluster_quota)
 {
   while (m_root_path.ends_with('/'))
     m_root_path.pop_back();
@@ -325,6 +327,9 @@ void HostFileSystem::DoState(PointerWrap& p)
   bool is_full_nand_in_state = is_full_nand_wanted && !rollback_snapshot;
   p.Do(is_full_nand_in_state);
 
+  if (p.IsReadMode())
+    m_usage.reset();
+
   if (rollback_snapshot)
   {
     u64 journal_mark = p.IsWriteMode() ? JournalMark() : m_journal_mark;
@@ -411,6 +416,7 @@ ResultCode HostFileSystem::Format(Uid uid)
   const std::string root = BuildFilename("/").host_path;
   if (m_journal_active)
     ERROR_LOG_FMT(IOS_FS, "NAND format during a rollback session: not journaled");
+  m_usage.reset();
   if (!File::DeleteDirRecursively(root) || !File::CreateDir(root))
     return ResultCode::UnknownError;
   ResetFst();
@@ -444,10 +450,14 @@ ResultCode HostFileSystem::CreateFileOrDirectory(Uid uid, Gid gid, const std::st
   if (File::Exists(host_path))
     return ResultCode::AlreadyExists;
 
+  if (!ReserveInode())
+    return ResultCode::FstFull;
+
   JournalFst();
   const bool ok = is_file ? File::CreateEmptyFile(host_path) : File::CreateDir(host_path);
   if (!ok)
   {
+    m_usage.reset();
     ERROR_LOG_FMT(IOS_FS, "Failed to create file or directory: {}", host_path);
     return ResultCode::UnknownError;
   }
@@ -509,6 +519,7 @@ ResultCode HostFileSystem::Delete(Uid uid, Gid gid, const std::string& path)
   if (!File::Exists(host_path))
     return ResultCode::NotFound;
 
+  m_usage.reset();
   if (File::IsFile(host_path) && !IsFileOpened(path))
   {
     JournalFst();
@@ -578,6 +589,7 @@ ResultCode HostFileSystem::Rename(Uid uid, Gid gid, const std::string& old_path,
   const std::string& host_new_path = host_new_info.host_path;
 
   // If there is already something of the same type at the new path, delete it.
+  m_usage.reset();
   JournalFst();
   if (File::Exists(host_new_path))
   {
@@ -828,5 +840,55 @@ HostFileSystem::GetExtendedDirectoryStats(const std::string& wii_path)
 void HostFileSystem::SetNandRedirects(std::vector<NandRedirect> nand_redirects)
 {
   m_nand_redirects = std::move(nand_redirects);
+  m_usage.reset();
+}
+
+ExtendedDirectoryStats& HostFileSystem::Usage()
+{
+  if (!m_usage)
+  {
+    // Sizes on the host must be the files' own: flush what the open handles have buffered.
+    for (const auto& [path, weak_file] : m_open_files)
+    {
+      if (const std::shared_ptr<File::IOFile> file = weak_file.lock())
+        file->Flush();
+    }
+    const auto stats = GetExtendedDirectoryStats("/");
+    m_usage = stats ? *stats : ExtendedDirectoryStats{};
+  }
+  return *m_usage;
+}
+
+bool HostFileSystem::ReserveClusters(u64 old_size, u64 new_size)
+{
+  if (m_cluster_quota == 0 || new_size <= old_size)
+    return true;
+  const auto clusters = [](u64 size) { return Common::AlignUp(size, CLUSTER_SIZE) / CLUSTER_SIZE; };
+  const u64 growth = clusters(new_size) - clusters(old_size);
+  if (growth == 0)
+    return true;
+  ExtendedDirectoryStats& usage = Usage();
+  if (usage.used_clusters + growth > m_cluster_quota)
+  {
+    WARN_LOG_FMT(IOS_FS, "NAND full: {} clusters used, {} more asked, {} allowed",
+                 usage.used_clusters, growth, m_cluster_quota);
+    return false;
+  }
+  usage.used_clusters += growth;
+  return true;
+}
+
+bool HostFileSystem::ReserveInode()
+{
+  if (m_cluster_quota == 0)
+    return true;
+  ExtendedDirectoryStats& usage = Usage();
+  if (usage.used_inodes >= TOTAL_INODES)
+  {
+    WARN_LOG_FMT(IOS_FS, "NAND full: {} files and directories", usage.used_inodes);
+    return false;
+  }
+  ++usage.used_inodes;
+  return true;
 }
 }  // namespace IOS::HLE::FS

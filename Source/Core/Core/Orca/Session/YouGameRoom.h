@@ -35,6 +35,10 @@ struct RoomOptions
   std::string mode = "orca-test";
   // This Orca joins a friend's running game (ORCA_JOIN=1, or the app opened an invite).
   bool joining = false;
+  // Known queue requests keep their original behavior even before the first welcome.
+  bool friends_room = true;
+  // Transport policy can be disabled for the healthy-session baseline comparison.
+  bool recovery_enabled = true;
   // A joiner's own controls (Orca::Events::OwnControls), sent in its hello so the host puts them in
   // its port (KeyframeInfo::Name::controls). Empty: none.
   std::vector<u8> controls;
@@ -72,6 +76,8 @@ struct KeyframeInfo
   // The host's count of changes to `names` (Session::RequireValues). Players acknowledge the newest
   // they hold, and the host plugs a newcomer in only once every player holds its values.
   int names_version = 0;
+  // A batch capture is deleted by its host after all consumers finish.
+  bool shared = false;
   // The encrypted replay itself, when it is small enough to travel in the offer (`kf` field `b`,
   // INLINE_KEYFRAME_MAX) instead of through YouGame's store; empty otherwise. The joiner checks it
   // exactly as a download: size, hash, then decryption and unpacking.
@@ -107,7 +113,7 @@ struct PeerEvent
   {
     // It said hello with our compatibility key: a player of this game at `seat`.
     Arrived,
-    // It left the room or its connection dropped.
+    // It left, or its held room seat lost direct inputs / expired.
     Left,
     // The host offered its keyframe (to a joiner).
     Keyframe,
@@ -132,6 +138,9 @@ struct PeerEvent
   std::vector<u8> queue;
   // Hold: whether the host holds the join now.
   bool holding = false;
+  // Arrived: a retained friends-room player requests a current-match keyframe.
+  bool recovering = false;
+  bool doubles = false;
 };
 
 // How other players' inputs reach this one (DirectLink.h): the worst of them.
@@ -157,7 +166,7 @@ struct GameReport
   Kind kind = Kind::Void;
   // Win: the winner's seat (its room slot).
   int winner_seat = -1;
-  // Void: why ("nocontest", "ports").
+  // Void: why ("nocontest", "ports", or a game's own, such as Brawl's "rules-<rule>").
   std::string why;
   // Win and Draw: {"f":..,"st":..,"c":[..],"s":[..],"to":..}, ports in order.
   std::string detail;
@@ -178,6 +187,9 @@ enum class RoomState
   Ended,
 };
 
+struct RoomTestStep;
+struct RoomTestSnapshot;
+
 class YouGameRoom final : public Transport
 {
 public:
@@ -195,6 +207,19 @@ public:
   // Whether the untaken events include a friend arriving (Arrived on a seat after the host's, from
   // a player that isn't the game's host).
   bool ArrivalPending() const;
+  // Whether a recovery input hold is alive for this room id (tests).
+  bool InputHoldFor(const std::string& id) const;
+  // The latest host-away hold deadline, including a back that raced the session's timeout.
+  std::optional<std::chrono::steady_clock::time_point> HostAwayDeadline() const;
+  // Restart this seat's hello/keyframe handshake after its session ended during a room blip.
+  void RetryPeer(int seat);
+  // Transport verdict during the existing game stall. No room leave means wait for the hold.
+  bool HoldInputSilence(std::chrono::steady_clock::time_point since,
+                        std::chrono::steady_clock::time_point now,
+                        std::optional<std::vector<int>> missing = std::nullopt);
+  // Friends-room recovery already in progress; observing it never creates an input hold.
+  bool RoomRecovering(std::chrono::steady_clock::time_point now) const;
+
   // Whether the untaken events include the game's host leaving, so a joiner stalled on the host's
   // inputs hears it at once rather than after its silence limit.
   bool HostLeftPending() const;
@@ -215,6 +240,9 @@ public:
   bool FreshTicket(bool fresh, std::string* ticket, std::string* store_url, std::string* error);
   // The room code in use (for showing and sharing), once known.
   std::string Code() const;
+  // Process-wide generation of this room connection. Reopening creates a new room/socket, even
+  // when its code is the same; immutable, so it can be read on any thread.
+  u64 Generation() const;
   // The roster's name for a seat (this player's included); "" when nobody holds it.
   std::string SeatName(int seat) const;
   // A joiner's own controls and queue identity exactly as its hello carries them (none past their
@@ -243,6 +271,9 @@ public:
   // The room's queue from its welcome: "private" (a friends room, and until the welcome), "casual"
   // or "ranked".
   std::string Queue() const;
+  bool Doubles() const;
+  // Whether the transport uses friends recovery, including its pre-welcome queue hint.
+  bool FriendsRecovery() const;
   // A room match is running and its result isn't in yet (for ranked, the whole set).
   bool MatchLive() const;
   // A ranked set's room after its verdict (`set-over`): it stays open, with relay and chat, until
@@ -271,8 +302,18 @@ public:
   // so often that this game still runs (the room counts it as heard). Call from the emulation
   // thread, which is what a stall claim is about.
   void KeepAlive();
+  // A replay stream's next bytes (whole units: a header or chunks, Session/Keyframe.h "Replay
+  // streams"), sent to the room as {"t":"rs","b":<base64>} by the I/O thread, in order. The room
+  // relays them to whoever watches this match; players never get them. Bounded: past 4 MB
+  // waiting, more is dropped.
+  void SendReplayStream(const std::vector<u8>& bytes);
+  // A saved copy of the match (Rollback/ReplayStream.h RepackedPieces), sent one piece every
+  // 200 ms after the live stream's messages: {"t":"rp","b":<base64>,"i":<index>,"n":<count>,
+  // "f":<frames>,"ms":<duration at 60 fps>}. A newer copy replaces the unsent pieces of an older one.
+  void SendReplayPacked(const std::vector<std::vector<u8>>& pieces, int frames);
 
   void Send(const Packet& packet) override;
+  void SendToSeats(const std::map<int, Packet>& packets) override;
   std::vector<Packet> Receive() override;
   bool Connected() const override;
 
@@ -283,9 +324,13 @@ public:
   void SetLeaveReason(std::string reason);
   // Tests only: drop the connection as a network failure would (no goodbye; the server holds the
   // seat). The room ends with "network".
+  // No-op unless ORCA_TEST_ROOM_DROP=1. ORCA_TEST_DROP_SILENT keeps the old socket unread;
+  // ORCA_TEST_ROOM_CLOSE_CODE=1013 exercises that close classification.
   void TestDropConnection();
 
 private:
+  friend std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions&,
+                                                      const std::vector<RoomTestStep>&);
   struct Impl;
   std::unique_ptr<Impl> m_impl;
 };
@@ -372,4 +417,45 @@ std::string RefusalCode(const std::string& connect_error);
 // Queues `packet` in place of one not yet sent, keeping the older one's earlier inputs and
 // checksum.
 void CoalescePacket(std::optional<Packet>* outgoing, const Packet& packet);
+void CoalesceBroadcast(std::optional<Packet>* outgoing,
+                       std::map<int, std::optional<Packet>>* addressed, const Packet& packet);
+void CoalesceToSeats(std::optional<Packet>* outgoing,
+                     std::map<int, std::optional<Packet>>* addressed,
+                     const std::map<int, Packet>& packets);
+// In-memory transport traces for unit tests. No thread, ticket request or socket is opened.
+struct RoomTestStep
+{
+  enum class Kind
+  {
+    Message,
+    DirectInput,
+    Tick,
+    SocketClose,
+    RetryPeer,
+    PollReconnect,
+    ConnectFailure,
+    InitialConnectFailure,
+  };
+  Kind kind;
+  int milliseconds = 0;
+  std::string text;
+  unsigned close_code = 0;
+};
+struct RoomTestSnapshot
+{
+  RoomState state;
+  std::vector<PeerEvent> events;
+  std::vector<Packet> packets;
+  std::optional<std::chrono::steady_clock::time_point> host_away_until;
+  bool reconnecting = false;
+  bool reconnect_started = false;
+  std::vector<std::string> sent;
+  unsigned reconnect_attempts = 0;
+  std::optional<std::chrono::steady_clock::time_point> reconnect_at;
+  std::vector<std::string> notices;
+  std::string status;
+  std::string error_code;
+};
+std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions& options,
+                                             const std::vector<RoomTestStep>& steps);
 }  // namespace Orca::Net

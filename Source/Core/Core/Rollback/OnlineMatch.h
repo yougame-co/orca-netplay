@@ -12,6 +12,7 @@
 
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -25,6 +26,21 @@ namespace Core
 class System;
 }
 
+namespace Orca::Mod
+{
+struct Manifest;
+struct OriginDecl;
+}
+namespace Orca::Net
+{
+struct ReplayArchive;
+class KeyframeStore;
+}
+namespace Orca::UX
+{
+class GuestMemory;
+}
+
 namespace Rollback::OnlineMatch
 {
 // Runs at each frame boundary. The first call joins the room; a joiner blocks here until it has
@@ -33,15 +49,72 @@ namespace Rollback::OnlineMatch
 // then at the start of that frame.
 // `on_frame` runs first at every boundary, before anything is saved: `ports` are the controllers
 // plugged in at that frame, and `alone` is AloneAt for it (false on re-runs).
+// `local_pad_waiting(seat)` runs at each tick while the session holds a frame on the other
+// players (a stall or a time-sync wait). Host only: it must not touch the pad the frame records
+// and sends, or any emulated state.
 using FrameHook = std::function<void(int frame, bool resimulating,
                                      const std::vector<Orca::Events::PortInfo>& ports, bool alone)>;
 std::optional<int> OnBoundary(Core::System& system,
                               const std::function<Orca::Net::Pad(int local_seat)>& local_pad,
-                              const FrameHook& on_frame);
+                              const FrameHook& on_frame,
+                              const std::function<void(int local_seat)>& local_pad_waiting = {});
 
 // A keyframe at most this old (30 s at 60 fps) still serves a new joiner, who replays the frames
 // since.
 constexpr int KEYFRAME_FRESH_FRAMES = 30 * 60;
+
+// Wall clock only: no batching timer enters the replay or session packets.
+class FriendsBatch
+{
+public:
+  bool Ready(bool on_menus, int waiting, int plugging, bool recovering,
+             std::chrono::steady_clock::time_point now);
+  void Clear() { m_until.reset(); }
+private:
+  std::optional<std::chrono::steady_clock::time_point> m_until;
+};
+
+// Boundary's silence policy: an empty selector retains the ordinary recovery/drop behavior.
+std::optional<std::vector<int>> FriendsMissingInputs(const Orca::Net::Session& session, bool doubles);
+int WaitingFriendSeat(int local_seat, const std::vector<int>& missing, bool joining,
+                       int host_seat, const std::vector<int>& seated);
+bool WaitForFriendsRoster(const Orca::Net::Session& session, bool joining, bool doubles);
+std::optional<std::vector<int>> DropMissingFriends(Orca::Net::Session& session, bool doubles);
+
+struct JoinCapture
+{
+  int frame;
+  std::optional<u64> hash;
+};
+// Active multi-peer sessions may have predictions every frame: use a final checkpoint's hash.
+std::optional<JoinCapture> ChooseJoinCapture(const Orca::Net::Session* session, bool doubles,
+                                            int next, int earliest);
+
+// Headless runtime fixture: pumps the same host event/keyframe path with a real room and a
+// supplied game history. The caller initializes Core::System's memory and owns `game`.
+struct HostRecoveryResult
+{
+  bool fresh_start = false;
+  bool seated = false;
+  int current_frame = -1;
+  std::optional<int> keyframe_frame;
+  std::vector<int> seats;
+};
+HostRecoveryResult PumpRecoveryHostForTest(Core::System& system, Orca::Net::YouGameRoom& room,
+                                          Orca::Net::Game& game, Orca::Net::ReplayArchive replay,
+                                          int current_frame, bool session_alive,
+                                          std::unique_ptr<Orca::Net::KeyframeStore> store);
+HostRecoveryResult PumpFriendsHostForTest(Core::System& system, Orca::Net::YouGameRoom& room,
+                                         Orca::Net::Game& game, Orca::Net::ReplayArchive replay,
+                                         int current_frame, const std::vector<int>& seated,
+                                         bool on_menus,
+                                         std::unique_ptr<Orca::Net::KeyframeStore> store);
+
+// Runs Boundary's session loop with a supplied host session and short silence window.
+int PumpFriendsHostBoundaryForTest(std::unique_ptr<Orca::Net::Session>& session, int completed,
+                                   const std::vector<int>& seated,
+                                   const std::function<void()>& poll,
+                                   const std::function<std::vector<int>()>& left_in_play);
 
 // ---- The origin and fresh starts ----
 // Every Orca boots the same way up to its origin: port 1 plugged in with nothing pressed, ports 2-4
@@ -53,6 +126,7 @@ constexpr int KEYFRAME_FRESH_FRAMES = 30 * 60;
 constexpr int ORIGIN_SETTLE_FRAMES = 30;
 // A game whose main menu isn't built by then has no origin: it can't take or join players.
 constexpr int ORIGIN_DEADLINE = 6000;
+constexpr int ORIGIN_WORDS_WINDOW = 6000;
 // The pads of every frame before the origin.
 Orca::Net::Pads CanonicalBootPads();
 enum class OriginStep
@@ -64,6 +138,22 @@ enum class OriginStep
 // At the boundary of `frame`, before its hook: `menu_built_streak` frames in a row (up to the last)
 // showed the built main menu. The origin must come after the profile's JIT clear.
 OriginStep DecideOrigin(int frame, int menu_built_streak, std::optional<u32> jit_clear_frame);
+enum class OriginRule
+{
+  Menu,
+  Declared,
+  Frame0,
+  Failed,
+};
+OriginRule SelectOriginRule(const Orca::Mod::Manifest* manifest, bool menu_supported,
+                          bool guards_failed);
+OriginStep DecideDeclaredOrigin(int frame, int streak, const Orca::Mod::OriginDecl& decl);
+// Legacy menu failures keep their existing log only; packs also explain the failure to the app.
+std::string_view OriginFailureReport(const Orca::Mod::Manifest* manifest);
+// A ranked room needs game results; friends and casual rooms accept engine-only modules.
+std::string_view RoomRefusal(std::string_view queue, bool results);
+int DeclaredOriginStreak(int frame, int streak, const Orca::Mod::OriginDecl& decl,
+                         const Orca::UX::GuestMemory& memory);
 
 // A fresh start: the host restores its own origin, leaves the main menu for the match's character
 // select (With Friends, Casual or Ranked) with a recorded exit, and runs unseen and unthrottled
@@ -75,19 +165,38 @@ OriginStep DecideOrigin(int frame, int menu_built_streak, std::optional<u32> jit
 // start is over FRESH_FRIENDS_AFTER frames; a shorter one joins in place. A host in a single-player
 // mode holds the friend first, as before.
 constexpr int FRESH_FRIENDS_AFTER = 10 * 60;
+// Reset games have no menu shortcut: keep short joins in place and bound longer replays to
+// three minutes of emulated play. Seconds work at any frame rate and exclude host pauses.
+inline constexpr std::chrono::seconds FRESH_RESET_FRIENDS_AFTER{3 * 60};
+// Give a solo host time to read the warning before a friend's join resets unsaved progress.
+inline constexpr std::chrono::seconds FRESH_RESET_JOIN_WARNING{3};
 // The tail ends once the character select has been up this many frames, or after FRESH_TAIL_LIMIT.
 constexpr int FRESH_CSS_SETTLE = 30;
 constexpr int FRESH_TAIL_LIMIT = 600;
+enum class FreshKind
+{
+  Menu,
+  Reset,
+};
+FreshKind FreshKindForOrigin(OriginRule rule);
+bool FreshExitAllowed(FreshKind kind, u8 exit);
+bool FreshTailSettled(FreshKind kind, int css_streak, int length);
+// The new history's metadata and typed events. Reset histories have neither an exit nor a seed.
+Orca::Net::ReplayArchive FreshReplayStart(FreshKind kind, int frame, u64 origin_hash, u8 exit,
+                                        u32 seed);
+// GameCube has no NAND component. Wii still requires the temporary session root and its IOS FS.
+bool LocalNandReady(bool is_wii, bool has_host_nand, bool temporary);
 enum class FreshStep
 {
   None,  // nothing to do: no fresh start (a join, if any, goes on in place)
+  Warn,  // show the reset warning now; hold the join before scheduling its fresh start
   Now,   // fresh-start at the next boundary
   Hold,  // a fresh start is due later: make no keyframe yet
 };
 struct FreshInputs
 {
-  // Fresh starts are on (ORCA_TEST_FRESH=off turns them off) and this game's origin is the built
-  // main menu.
+  FreshKind kind = FreshKind::Menu;
+  // Fresh starts are on (ORCA_TEST_FRESH=off turns them off) and this game's origin is after boot.
   bool enabled = true;
   bool origin_ready = false;
   bool joining = false;
@@ -108,9 +217,17 @@ struct FreshInputs
   bool single_player = false;
   // Frames since the host's last start (its origin or its last fresh start).
   int history_frames = 0;
-  int fresh_after = FRESH_FRIENDS_AFTER;
+  // Emulated time since the origin, restored with the timeline; used by reset games.
+  std::chrono::duration<double> history_time{};
+  // Negative: the kind's default; nonnegative: an explicit test threshold in frames.
+  int fresh_after = -1;
 };
 FreshStep DecideFreshStart(const FreshInputs& in);
+// Host wall time only: warn once, then hold a reset join for three seconds. Other starts and a
+// cancelled or held join clear the warning, so a later join gets its own notice.
+FreshStep WarnBeforeResetJoin(FreshStep step, FreshKind kind, bool queue_armed,
+                             std::optional<std::chrono::steady_clock::time_point>* warned_at,
+                             std::chrono::steady_clock::time_point now);
 // The main menu exit a friends fresh start takes: the Casual or Ranked select the host is on
 // (UX/OnlineMenu.h CssPick), so Play again re-arms there, else With Friends.
 u8 FriendsFreshExit(std::optional<bool> css_pick_ranked);
@@ -205,14 +322,40 @@ public:
   Clock::duration Stalled(Clock::time_point now,
                           std::optional<Clock::time_point> ongoing_since = std::nullopt) const;
   bool Spent(Clock::time_point now,
-             std::optional<Clock::time_point> ongoing_since = std::nullopt) const
+             std::optional<Clock::time_point> ongoing_since = std::nullopt,
+             bool ongoing_held = false) const
   {
-    return Stalled(now, ongoing_since) >= STALL_BUDGET;
+    // A room hold excuses this outage only; completed stalls still consume the budget.
+    return Stalled(now, ongoing_held ? std::nullopt : ongoing_since) >= STALL_BUDGET;
   }
-  void Clear() { m_stalls.clear(); }
+  void Clear()
+  {
+    m_stalls.clear();
+    m_recoveries.clear();
+    m_pending_stalls.clear();
+    m_recovery_seen = false;
+  }
+  // A completed stall room recovery covered (a friend's connection blip the room recovered) is not
+  // the other player starving us: it doesn't count, up to MAX_RECOVERIES in RECOVERY_WINDOW. Past
+  // that a player flapping its connection would hold the game forever, so it counts like any
+  // other. Returns whether this one was excused.
+  static constexpr std::chrono::minutes RECOVERY_WINDOW{10};
+  static constexpr int MAX_RECOVERIES = 3;
+  // Only a stall at least this long is a recovered outage worth an excuse.
+  static constexpr std::chrono::seconds MIN_EXCUSED_STALL{2};
+  bool ExcuseRecovered(Clock::time_point now);
+  // Used by StepSession, including rollback returns that split one input stall across steps.
+  void ObserveRecovery(bool recovering) { m_recovery_seen |= recovering; }
+  bool Poll(Clock::time_point now, Clock::time_point step_start, bool recovering);
+  void FinishStep(std::optional<Clock::time_point> stall_start, Clock::time_point end,
+                  bool still_stalled, bool resumed);
+  int Recoveries() const { return static_cast<int>(m_recoveries.size()); }
 
 private:
   std::vector<std::pair<Clock::time_point, Clock::time_point>> m_stalls;
+  std::vector<Clock::time_point> m_recoveries;
+  std::vector<std::pair<Clock::time_point, Clock::time_point>> m_pending_stalls;
+  bool m_recovery_seen = false;
 };
 
 // A joiner's own port values: its name in the room (empty: unknown), and its controls and queue
@@ -275,7 +418,7 @@ enum class LobbyPickStep
 struct LobbyPickInputs
 {
   // Joining; the port it plays (a former joiner hosts nobody); in a matchmade room; the app's
-  // "host" cap; the app's cap for the picked queue (UX/OnlineMenu.h PickSearchable).
+  // "host" cap; the app's cap for the picked queue (UX/MenuEvents.h PickSearchable).
   bool joining = false;
   int local_seat = 0;
   bool queue_room = false;
@@ -299,7 +442,7 @@ struct LobbyPickPlan
   // Drop the invite's keyframe (made before the pick); a friend who comes later ends the queue
   // first (FriendEndsQueue). Never while a session runs or friends are kept.
   bool drop_keyframe = false;
-  // The announcement also starts the pick (UX/OnlineMenu.h AnnounceOnlinePick: the queue's own
+  // The announcement also starts the pick (UX/MenuEvents.h AnnounceOnlinePick: the queue's own
   // character select, or the search). False for a host that keeps its friends: the queue's header
   // would reach a friend on the way, who would refuse it, and the page cancels anyway.
   bool arm = true;

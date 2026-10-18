@@ -1,11 +1,13 @@
 // Copyright 2026 YouGame
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <xxh3.h>
 
 #include "Common/FileUtil.h"
 
@@ -66,6 +68,58 @@ TEST(OrcaJitWarm, DamagedFileIsRefused)
   longer.push_back(0);
   EXPECT_FALSE(Orca::JitWarm::Decode(longer).has_value());
   EXPECT_FALSE(Orca::JitWarm::Decode({}).has_value());
+}
+
+// A list is data anyone could have written (a player's cache file, a seed): Decode keeps only
+// what the JIT could have recorded.
+TEST(OrcaJitWarm, ImplausibleBlocksAreRefused)
+{
+  const auto decodes = [](const Block& b) {
+    return Orca::JitWarm::Decode(Orca::JitWarm::Encode({MakeBlock(0x80001000, 1), b})).has_value();
+  };
+  Block b = MakeBlock(0x80002000, 2);
+  EXPECT_TRUE(decodes(b));
+  // MEM2 too.
+  b = MakeBlock(0x90001000, 2);
+  EXPECT_TRUE(decodes(b));
+
+  b = MakeBlock(0x80002002, 2);  // a half-word address
+  EXPECT_FALSE(decodes(b));
+  b = MakeBlock(0x80002000, 2);
+  b.ranges[1] = {0x2041, 0x2048};  // a range not on words
+  EXPECT_FALSE(decodes(b));
+  b = MakeBlock(0x80002000, 2);
+  b.ranges[1] = {0x017FFFF0, 0x01800010};  // past the end of MEM1
+  EXPECT_FALSE(decodes(b));
+  b.ranges[1] = {0x02000000, 0x02000010};  // between MEM1 and MEM2
+  EXPECT_FALSE(decodes(b));
+  b.ranges[1] = {0x13FFFFF0, 0x14000010};  // past the end of MEM2
+  EXPECT_FALSE(decodes(b));
+  b = MakeBlock(0x80002000, 2);
+  b.physical = 0xFFFFFFFC;  // nowhere, and no wrap-around
+  EXPECT_FALSE(decodes(b));
+
+  // More instructions than one JIT block holds (32,000), even in ranges of allowed sizes.
+  b = MakeBlock(0x80002000, 2);
+  b.ranges.clear();
+  for (u32 i = 0; i < 2; ++i)
+    b.ranges.emplace_back(0x10000 + i * 0x10000, 0x10000 + i * 0x10000 + 0xFA00);
+  EXPECT_TRUE(decodes(b));  // exactly 32,000
+  b.ranges.back().second += 4;
+  EXPECT_FALSE(decodes(b));
+}
+
+TEST(OrcaJitWarm, OversizedFilesAreRefused)
+{
+  // A count the bytes can't hold is refused before anything is allocated for it.
+  std::vector<u8> bytes = Orca::JitWarm::Encode({MakeBlock(0x80001000, 1)});
+  bytes[8] = 0x40;  // count = 64, with a valid checksum
+  const u64 checksum = XXH3_64bits(bytes.data(), bytes.size() - sizeof(u64));
+  std::memcpy(bytes.data() + bytes.size() - sizeof(u64), &checksum, sizeof(checksum));
+  EXPECT_FALSE(Orca::JitWarm::Decode(bytes).has_value());
+  // Past MAX_FILE_BYTES: refused whatever it holds.
+  std::vector<u8> huge(Orca::JitWarm::MAX_FILE_BYTES + 1);
+  EXPECT_FALSE(Orca::JitWarm::Decode(huge).has_value());
 }
 
 TEST(OrcaJitWarm, HashFollowsWordsAndRanges)

@@ -29,6 +29,7 @@
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
 #include "Common/NandPaths.h"
+#include "Common/Network.h"
 #include "Common/QoSSession.h"
 #include "Common/SFMLHelper.h"
 #include "Common/Timer.h"
@@ -127,6 +128,9 @@ NetPlayClient::NetPlayClient(const std::string& address, const u16 port, NetPlay
     : m_dialog(dialog), m_player_name(std::move(name))
 {
   ClearBuffers();
+
+  if (Common::OfflineReplay())
+    return;
 
   if (!traversal_config.use_traversal)
   {

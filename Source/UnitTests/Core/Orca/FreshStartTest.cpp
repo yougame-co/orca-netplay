@@ -6,13 +6,19 @@
 // match, or before a friend joins a game it has played alone for a while, so a join replays only the
 // match's own frames.
 
+#include <chrono>
+#include <map>
 #include <optional>
 
 #include <gtest/gtest.h>
 
+#include "Core/Orca/Engine/GuestMemory.h"
+#include "Core/Orca/Mod.h"
 #include "Core/Orca/Session/PadCodec.h"
 #include "Core/Orca/Session/Replay.h"
+#include "Core/Orca/UX/Overlay.h"
 #include "Core/Rollback/OnlineMatch.h"
+#include "Core/System.h"
 
 using namespace Rollback::OnlineMatch;
 
@@ -235,4 +241,301 @@ TEST(OrcaFreshStart, UnseenBoundariesNeverCountTowardTheHeaderLimit)
   for (int i = 0; i < HEADER_WAIT_BOUNDARIES; ++i)
     ASSERT_EQ(HeaderWaitAt(&waited, false, false, false, true, false), HeaderWait::Wait) << i;
   EXPECT_EQ(HeaderWaitAt(&waited, false, false, false, true, false), HeaderWait::Ready);
+}
+
+namespace
+{
+class OriginMemory final : public Orca::UX::GuestMemory
+{
+public:
+  std::map<u32, u32> words;
+  bool Valid(u32 address) const override { return words.contains(address); }
+  u32 Read32(u32 address) const override { return words.at(address); }
+  u16 Read16(u32) const override { ADD_FAILURE(); return 0; }
+  u8 Read8(u32) const override { ADD_FAILURE(); return 0; }
+  void Write8(u32, u8) override { ADD_FAILURE(); }
+  void Write16(u32, u16) override { ADD_FAILURE(); }
+  void Write32(u32, u32) override { ADD_FAILURE(); }
+};
+}
+
+TEST(OrcaDeclaredOrigin, ExactlyTheDeclaredBoundaryWithoutWords)
+{
+  const Orca::Mod::OriginDecl decl{1801, {}, 30};
+  EXPECT_EQ(DecideDeclaredOrigin(1800, 0, decl), OriginStep::Wait);
+  EXPECT_EQ(DecideDeclaredOrigin(1801, 0, decl), OriginStep::Capture);
+  EXPECT_EQ(DecideDeclaredOrigin(1802, 0, decl), OriginStep::Fail);
+  for (const u32 frame : {1u, 36000u})
+    EXPECT_EQ(DecideDeclaredOrigin(frame, 0, {frame, {}, 30}), OriginStep::Capture);
+}
+
+TEST(OrcaDeclaredOrigin, WordsMustHoldConsecutivelyAndMappedZeroIsDistinct)
+{
+  const Orca::Mod::OriginDecl decl{100, {{0x80000000, 0}, {0x90000000, 42}}, 3};
+  OriginMemory memory;
+  memory.words = {{0x80000000, 0}, {0x90000000, 42}};
+  EXPECT_EQ(DeclaredOriginStreak(99, 2, decl, memory), 0);
+  int streak = DeclaredOriginStreak(100, 0, decl, memory);
+  EXPECT_EQ(streak, 1);
+  EXPECT_EQ(DecideDeclaredOrigin(100, streak, decl), OriginStep::Wait);
+  streak = DeclaredOriginStreak(101, streak, decl, memory);
+  EXPECT_EQ(streak, 2);
+  memory.words[0x90000000] = 43;
+  streak = DeclaredOriginStreak(102, streak, decl, memory);
+  EXPECT_EQ(streak, 0);
+  memory.words[0x90000000] = 42;
+  for (int frame = 103; frame <= 105; ++frame)
+    streak = DeclaredOriginStreak(frame, streak, decl, memory);
+  EXPECT_EQ(DecideDeclaredOrigin(105, streak, decl), OriginStep::Capture);
+  EXPECT_EQ(DeclaredOriginStreak(106, streak, decl, memory), 3);
+  memory.words.erase(0x80000000);
+  EXPECT_EQ(DeclaredOriginStreak(107, streak, decl, memory), 0);
+}
+
+TEST(OrcaDeclaredOrigin, SettleBoundsAndWindow)
+{
+  for (const u32 settle : {1u, 30u, 600u})
+  {
+    const Orca::Mod::OriginDecl decl{36000, {{0x80000000, 1}}, settle};
+    EXPECT_EQ(DecideDeclaredOrigin(35999, settle, decl), OriginStep::Wait);
+    EXPECT_EQ(DecideDeclaredOrigin(36000, settle - 1, decl), OriginStep::Wait);
+    EXPECT_EQ(DecideDeclaredOrigin(36000, settle, decl), OriginStep::Capture);
+    EXPECT_EQ(DecideDeclaredOrigin(36000 + ORIGIN_WORDS_WINDOW - 1, 0, decl), OriginStep::Wait);
+    EXPECT_EQ(DecideDeclaredOrigin(36000 + ORIGIN_WORDS_WINDOW, 0, decl), OriginStep::Fail);
+    EXPECT_EQ(DecideDeclaredOrigin(36001 + ORIGIN_WORDS_WINDOW, 0, decl), OriginStep::Fail);
+    EXPECT_EQ(DecideDeclaredOrigin(36000 + ORIGIN_WORDS_WINDOW, settle, decl), OriginStep::Capture);
+  }
+}
+
+TEST(OrcaDeclaredOrigin, RuleSelectionMatrix)
+{
+  EXPECT_EQ(SelectOriginRule(nullptr, true, false), OriginRule::Menu);
+  EXPECT_EQ(SelectOriginRule(nullptr, false, false), OriginRule::Frame0);
+  for (const bool builtin : {false, true})
+  {
+    for (const bool declared : {false, true})
+    {
+      for (const bool failed : {false, true})
+      {
+        Orca::Mod::Manifest manifest;
+        if (builtin)
+          manifest.builtin = Orca::Mod::Builtin::BrawlRev2;
+        if (declared)
+          manifest.origin = Orca::Mod::OriginDecl{1801, {}, 30};
+        const OriginRule expected = builtin && !failed ? OriginRule::Menu :
+                                    declared ? OriginRule::Declared :
+                                    builtin ? OriginRule::Failed : OriginRule::Frame0;
+        for (const bool supported : {false, true})
+          EXPECT_EQ(SelectOriginRule(&manifest, supported, failed), expected);
+      }
+    }
+  }
+}
+
+TEST(OrcaResetStart, OnlyDeclaredOriginsUseResetAndExitZero)
+{
+  for (const auto rule : {OriginRule::Menu, OriginRule::Declared, OriginRule::Frame0,
+                          OriginRule::Failed})
+    EXPECT_EQ(FreshKindForOrigin(rule), rule == OriginRule::Declared ? FreshKind::Reset :
+                                                                   FreshKind::Menu);
+  for (unsigned exit = 0; exit <= 255; ++exit)
+  {
+    EXPECT_EQ(FreshExitAllowed(FreshKind::Reset, static_cast<u8>(exit)), exit == 0);
+    EXPECT_EQ(FreshExitAllowed(FreshKind::Menu, static_cast<u8>(exit)),
+              Orca::Net::ValidMenuExit(exit));
+  }
+}
+
+TEST(OrcaResetStart, FriendsJoinInPlaceThroughThreeMinutesAtAnyFrameRate)
+{
+  EXPECT_EQ(FRESH_RESET_FRIENDS_AFTER, std::chrono::seconds(180));
+  FreshInputs in = SoloHost();
+  in.kind = FreshKind::Reset;
+  in.waiting = true;
+  for (const int frames_per_second : {30, 50, 60, 120})
+  {
+    for (const int seconds : {0, 10, 179, 180, 181})
+    {
+      in.history_frames = seconds * frames_per_second;
+      in.history_time = std::chrono::seconds(seconds);
+      EXPECT_EQ(DecideFreshStart(in), seconds > 180 ? FreshStep::Now : FreshStep::None);
+    }
+  }
+  // A paused host or a held game frame does not turn wall time into replay history.
+  in.history_frames = 100000;
+  in.history_time = std::chrono::seconds(1);
+  EXPECT_EQ(DecideFreshStart(in), FreshStep::None);
+  in.history_frames = 1;
+  in.history_time = std::chrono::seconds(181);
+  EXPECT_EQ(DecideFreshStart(in), FreshStep::Now);
+  in.in_place = true;
+  EXPECT_EQ(DecideFreshStart(in), FreshStep::None);
+  in.in_place = false;
+  in.history_frames = 2;
+  in.fresh_after = 1;  // The explicit test knob still counts frames.
+  EXPECT_EQ(DecideFreshStart(in), FreshStep::Now);
+}
+
+TEST(OrcaResetStart, QueueRestartsOnceAndOnlyASoloHostCanRestart)
+{
+  FreshInputs in = SoloHost(1);
+  in.kind = FreshKind::Reset;
+  in.queue_armed = true;
+  EXPECT_EQ(DecideFreshStart(in), FreshStep::Hold);
+  in.in_queue_room = true;
+  EXPECT_EQ(DecideFreshStart(in), FreshStep::Now);
+  for (bool FreshInputs::* blocked : {&FreshInputs::joining, &FreshInputs::session,
+                                      &FreshInputs::seated_or_plugging})
+  {
+    in.*blocked = true;
+    EXPECT_EQ(DecideFreshStart(in), FreshStep::None);
+    in.*blocked = false;
+  }
+  in.busy = true;
+  EXPECT_EQ(DecideFreshStart(in), FreshStep::Hold);
+  in.busy = false;
+  in.origin_ready = false;
+  EXPECT_EQ(DecideFreshStart(in), FreshStep::Hold);
+  in.origin_ready = true;
+  in.enabled = false;  // a frame-0 origin never enables fresh starts
+  EXPECT_EQ(DecideFreshStart(in), FreshStep::None);
+  in.enabled = true;
+  in.queue_armed = false;
+  in.waiting = true;
+  in.history_frames = 20 * 60 * 60;
+  in.history_time = std::chrono::minutes(20);
+  EXPECT_EQ(DecideFreshStart(in), FreshStep::None);
+  in.in_queue_room = false;
+  EXPECT_EQ(DecideFreshStart(in), FreshStep::Now);
+}
+
+TEST(OrcaResetStart, TailSettlesImmediatelyWithoutACharacterSelect)
+{
+  for (const int length : {0, 1, FRESH_TAIL_LIMIT - 1, FRESH_TAIL_LIMIT})
+    EXPECT_TRUE(FreshTailSettled(FreshKind::Reset, 0, length));
+  EXPECT_FALSE(FreshTailSettled(FreshKind::Menu, FRESH_CSS_SETTLE - 1,
+                               FRESH_TAIL_LIMIT - 1));
+  EXPECT_TRUE(FreshTailSettled(FreshKind::Menu, FRESH_CSS_SETTLE, 1));
+  EXPECT_TRUE(FreshTailSettled(FreshKind::Menu, 0, FRESH_TAIL_LIMIT));
+}
+
+TEST(OrcaResetStart, NewHistoryRecordsNoMenuExitOrSeed)
+{
+  auto reset = FreshReplayStart(FreshKind::Reset, 1801, 0x12345678, 0, 999);
+  EXPECT_EQ(reset.origin_hash, 0x12345678u);
+  EXPECT_EQ(reset.first_frame, 1801);
+  EXPECT_EQ(reset.EndFrame(), 1801);
+  EXPECT_TRUE(reset.frames.empty());
+  EXPECT_EQ(reset.boundary.menu_exit, 0);
+  EXPECT_EQ(reset.boundary.seed, 0u);
+  {
+    Orca::Net::ReplayRecordingScope recording(&reset);
+    auto* first = Orca::Net::ReplayRecordingScope::Frame(1801);
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(first->menu_exit, 0);
+    EXPECT_EQ(first->seed, 0u);
+    EXPECT_FALSE(first->header);
+    Orca::Net::ReplayRecordingScope::RecordPads(1801, CanonicalBootPads());
+  }
+  EXPECT_TRUE(Orca::Net::HeadersFitRuleset(reset, 0));
+  // Brawl's existing typed events retain their exact first-frame values.
+  for (const u8 exit : {Orca::Net::MENU_EXIT_FRIENDS, Orca::Net::MENU_EXIT_CASUAL,
+                        Orca::Net::MENU_EXIT_RANKED})
+  {
+    const auto menu = FreshReplayStart(FreshKind::Menu, 230, 0x12345678, exit, 999);
+    ASSERT_EQ(menu.frames.size(), 1u);
+    EXPECT_EQ(menu.frames[0].menu_exit, exit);
+    EXPECT_EQ(menu.frames[0].seed, 999u);
+    EXPECT_EQ(menu.origin_hash, 0x12345678u);
+    EXPECT_EQ(menu.first_frame, 230);
+  }
+}
+
+TEST(OrcaOriginNand, GameCubeNeedsNoIosAndWiiKeepsItsSessionRootRequirement)
+{
+  // The preflight used by capture, restore, and the joiner, with a real no-IOS system.
+  auto& system = Core::System::GetInstance();
+  ASSERT_EQ(system.GetIOS(), nullptr);
+  struct RestoreBootKind
+  {
+    Core::System& system;
+    bool is_wii;
+    ~RestoreBootKind() { system.SetIsWii(is_wii); }
+  } restore{system, system.IsWii()};
+  system.SetIsWii(false);
+  EXPECT_TRUE(LocalNandReady(system.IsWii(), system.GetIOS() != nullptr, false));
+  EXPECT_TRUE(LocalNandReady(system.IsWii(), system.GetIOS() != nullptr, true));
+  for (const bool has_nand : {false, true})
+  {
+    for (const bool temporary : {false, true})
+    {
+      EXPECT_TRUE(LocalNandReady(false, has_nand, temporary));
+      EXPECT_EQ(LocalNandReady(true, has_nand, temporary), has_nand && temporary);
+    }
+  }
+  system.SetIsWii(true);
+  EXPECT_FALSE(LocalNandReady(system.IsWii(), system.GetIOS() != nullptr, true));
+}
+
+TEST(OrcaResetStart, TheHostExplainsTheRestartToItsPlayer)
+{
+  const auto now = [] {
+    return std::chrono::duration<double, std::milli>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+  };
+  Orca::UX::ShowRestartForJoin("Ada");
+  auto view = Orca::UX::Overlay().View(now(), Orca::UX::Stats::Off);
+  ASSERT_FALSE(view.toasts.empty());
+  EXPECT_EQ(view.toasts.back().text, "Restarting the game in 3 seconds so Ada can join. Unsaved progress will be lost.");
+  Orca::UX::ShowRestartForJoin("");
+  view = Orca::UX::Overlay().View(now(), Orca::UX::Stats::Off);
+  ASSERT_FALSE(view.toasts.empty());
+  EXPECT_EQ(view.toasts.back().text, "Restarting the game in 3 seconds so your friend can join. Unsaved progress will be lost.");
+  Orca::UX::ShowRestartForMatch();
+  view = Orca::UX::Overlay().View(now(), Orca::UX::Stats::Off);
+  ASSERT_FALSE(view.toasts.empty());
+  EXPECT_EQ(view.toasts.back().text, "Restarting the game for this match");
+}
+
+TEST(OrcaResetStart, WarnsBeforeSchedulingAFriendsReset)
+{
+  using namespace std::chrono_literals;
+  FreshInputs in = SoloHost();
+  in.kind = FreshKind::Reset;
+  in.waiting = true;
+  in.history_time = FRESH_RESET_FRIENDS_AFTER + 1s;
+  const auto t0 = std::chrono::steady_clock::time_point{} + 1h;
+  std::optional<std::chrono::steady_clock::time_point> warned_at;
+  const auto step = [&](auto now) {
+    return WarnBeforeResetJoin(DecideFreshStart(in), in.kind, in.queue_armed, &warned_at, now);
+  };
+  EXPECT_EQ(step(t0), FreshStep::Warn);
+  ASSERT_EQ(warned_at, t0);
+  EXPECT_EQ(step(t0), FreshStep::Hold);
+  EXPECT_EQ(step(t0 + 2999ms), FreshStep::Hold);
+  EXPECT_EQ(step(t0 + 3s), FreshStep::Now);
+  EXPECT_EQ(step(t0 + 4s), FreshStep::Now);
+  // Leaving cancels the pending warning. A later arrival receives the full notice again.
+  in.waiting = false;
+  EXPECT_EQ(step(t0 + 5s), FreshStep::None);
+  EXPECT_FALSE(warned_at);
+  in.waiting = true;
+  EXPECT_EQ(step(t0 + 6s), FreshStep::Warn);
+  // A single-player hold also cancels it: warn anew once resetting becomes possible again.
+  in.single_player = true;
+  EXPECT_EQ(step(t0 + 7s), FreshStep::Hold);
+  EXPECT_FALSE(warned_at);
+  in.single_player = false;
+  EXPECT_EQ(step(t0 + 8s), FreshStep::Warn);
+  in.queue_armed = in.in_queue_room = true;
+  EXPECT_EQ(step(t0 + 8s), FreshStep::Now);
+  EXPECT_FALSE(warned_at);
+  in.queue_armed = in.in_queue_room = false;
+  in.kind = FreshKind::Menu;
+  EXPECT_EQ(step(t0 + 8s), FreshStep::Now);
+  EXPECT_FALSE(warned_at);
+  in.kind = FreshKind::Reset;
+  in.history_time = 1s;
+  EXPECT_EQ(step(t0 + 9s), FreshStep::None);
+  EXPECT_FALSE(warned_at);
 }

@@ -17,7 +17,7 @@
 #include "Core/Debugger/PPCDebugInterface.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Status.h"
-#include "Core/Orca/UX/NameTags.h"
+#include "Core/Orca/Engine/GuestMemory.h"
 #include "Core/PowerPC/MMU.h"
 
 namespace Orca::UX
@@ -332,6 +332,66 @@ const std::vector<GamePatch>& ActivePatches()
   static std::vector<GamePatch> s_patches;
   // e.g. RSBE01.patches for a disc, PPLUS32.patches for a launcher.
   const Orca::Profile* profile = Orca::ActiveProfile();
+  // Mod mode: the bundle's orca/patches/*.patches, in name order (keyed by its tree).
+  if (profile && profile->mod)
+  {
+    // Compared in place: this runs every frame, re-runs too.
+    const std::string& tree = profile->mod->tree.hash;
+    if (s_for.size() == 4 + tree.size() && s_for.starts_with("mod:") &&
+        std::string_view(s_for).substr(4) == tree)
+    {
+      return s_patches;
+    }
+    s_for = "mod:" + tree;
+    s_patches.clear();
+    // A flat bundle: its patches files as they were verified (Core/Orca/Bundle.cpp), in mod.json's
+    // order.
+    if (profile->mod->flat)
+    {
+      for (const auto& [name, text] : profile->mod->flat_patches)
+      {
+        std::string error;
+        const std::optional<std::vector<GamePatch>> parsed = ParseGamePatches(text, &error);
+        if (!parsed)
+        {
+          ERROR_LOG_FMT(ROLLBACK, "Orca: {}{} refused, {}: no game patches", profile->mod->dir, name,
+                        error);
+          Orca::Status::Error("profile", "This mod's game patches are damaged.");
+          s_patches.clear();
+          break;
+        }
+        NOTICE_LOG_FMT(ROLLBACK, "Orca: {} game patches from {}{}", parsed->size(),
+                       profile->mod->dir, name);
+        s_patches.insert(s_patches.end(), parsed->begin(), parsed->end());
+      }
+      return s_patches;
+    }
+    for (const Orca::Mod::TreeFile* file : profile->mod->tree.Under("orca/patches/"))
+    {
+      if (!file->path.ends_with(".patches") ||
+          file->path.find('/', sizeof("orca/patches/") - 1) != std::string::npos)
+      {
+        continue;
+      }
+      const std::string path = profile->mod->dir + file->path;
+      std::string text, error;
+      std::optional<std::vector<GamePatch>> parsed;
+      if (File::ReadFileToString(path, text))
+        parsed = ParseGamePatches(text, &error);
+      else
+        error = "it can't be read";
+      if (!parsed)
+      {
+        ERROR_LOG_FMT(ROLLBACK, "Orca: {} refused, {}: no game patches", path, error);
+        Orca::Status::Error("profile", "This mod's game patches are damaged.");
+        s_patches.clear();
+        break;
+      }
+      NOTICE_LOG_FMT(ROLLBACK, "Orca: {} game patches from {}", parsed->size(), path);
+      s_patches.insert(s_patches.end(), parsed->begin(), parsed->end());
+    }
+    return s_patches;
+  }
   const std::string game = profile ? profile->game_id : std::string{};
   if (game != s_for)
   {
@@ -350,7 +410,8 @@ const std::vector<GamePatch>& ActivePatches()
       else
       {
         ERROR_LOG_FMT(ROLLBACK, "Orca: {} refused, {}: no game patches", path, error);
-        Orca::Status::Error("profile", "Orca's game data for this disc is damaged. Reinstall Orca.");
+        Orca::Status::Error("profile",
+                            "YG Dolphin's game data for this disc is damaged. Reinstall YG Dolphin.");
       }
     }
   }

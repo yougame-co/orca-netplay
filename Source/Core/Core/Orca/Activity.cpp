@@ -20,7 +20,7 @@
 #include "Core/Orca/Status.h"
 #include "Core/Orca/UX/ControllerSource.h"
 #include "Core/Orca/UX/Controllers.h"
-#include "Core/Orca/UX/OnlineMenu.h"
+#include "Core/Orca/Games/Brawl/OnlineMenu.h"
 #include "Core/Rollback/Harness.h"
 #include "InputCommon/ControlReference/ControlReference.h"
 

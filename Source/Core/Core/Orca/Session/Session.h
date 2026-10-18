@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <algorithm>
+
 #include <array>
 #include <climits>
 #include <cstddef>
@@ -28,6 +30,7 @@ constexpr int MAX_SEATS = 4;
 // real pad never has it. Ports without a player stay unplugged; a joining friend plugs in at a
 // frame every machine agrees on.
 constexpr u8 PAD_WIRE_UNPLUGGED = 0x80;
+constexpr u8 PAD_WIRE_START_HIGH = 0x10;
 constexpr Pad UNPLUGGED_PAD{PAD_WIRE_UNPLUGGED, 0, 0, 0, 0, 0, 0, 0};
 inline bool IsUnplugged(const Pad& pad)
 {
@@ -98,6 +101,15 @@ struct SeatPlan
   bool operator==(const SeatPlan&) const = default;
 };
 
+// Host-owned inputs through completed stays, including unplugged gaps between rebuilds.
+struct DepartedInputs
+{
+  int from = NEVER;
+  int until = NEVER;
+  int first_frame = 0;
+  std::vector<Pad> pads;
+};
+
 // One message from one player: its recent inputs, what it has received, and a checksum.
 struct Packet
 {
@@ -109,7 +121,8 @@ struct Packet
   // pads[i] is the input for frame first_frame + i.
   int first_frame = 0;
   std::vector<Pad> pads;
-  // Highest frame of each other seat's input this sender has received in order (-1: none).
+  // Highest contiguous input received for each seat (-1: none). The sender's own seat stays -1,
+  // except for completed-seat history during a doubles rebuild.
   std::array<int, MAX_SEATS> ack{-1, -1, -1, -1};
   // The frame this sender is at, for time sync.
   int current_frame = 0;
@@ -139,6 +152,10 @@ struct Packet
 
   // Drop-in (see SeatPlan): which seats are plugged in when. Only the host's roster counts.
   std::optional<std::array<SeatPlan, MAX_SEATS>> roster;
+  // Multi-peer pre-match batch: suppress Start during [first, second).
+  std::optional<std::pair<int, int>> start_gate;
+  // The host's final seat history through completed stays (opted-in friends rooms only).
+  std::map<int, DepartedInputs> departed;
   // The highest frame of shared history this sender holds contiguously from frame 0 (-1: none). The
   // host sends a joining player the history it lacks.
   int history_ack = -1;
@@ -159,6 +176,12 @@ class Transport
 public:
   virtual ~Transport() = default;
   virtual void Send(const Packet& packet) = 0;
+  // Opted-in multi-peer rooms: one input range per receiving seat, one relay envelope.
+  virtual void SendToSeats(const std::map<int, Packet>& packets)
+  {
+    for (const auto& [seat, packet] : packets)
+      Send(packet);
+  }
   // Packets received since the last call, in arrival order.
   virtual std::vector<Packet> Receive() = 0;
   virtual bool Connected() const = 0;
@@ -167,6 +190,7 @@ public:
 struct Config
 {
   int seats = 2;
+  bool per_peer_inputs = false;
   int local_seat = 0;
   // Frames between sampling a local input and the frame it applies to: the starting delay and the
   // adaptive floor. Two, like Slippi: rollback hides the rest of a normal link.
@@ -318,6 +342,8 @@ public:
   // log up to live_from - 1 and exchanges live inputs from live_from on. Its controller plugs in
   // once it has caught up.
   void AddPeer(int seat, int live_from, int history_from);
+  // Host: all members plug in together after every member catches up.
+  void AddPeerBatch(const std::vector<int>& seats, int live_from, int history_from);
   // Host: the player at `seat` is gone (left or stopped answering); its controller unplugs after
   // its last received input.
   void DropSeat(int seat);
@@ -326,6 +352,8 @@ public:
   bool LeftDone() const;
   // Host: no other player is plugged in or joining, so the session can end and the host play solo.
   bool Idle() const;
+  // This player and every other one in play.
+  int PlayersInPlay() const;
   // ---- Port values (who plays a port, and with which controls) ---- The host sets each port's
   // values from the frame its controller plugs in, and every machine must hold them before running
   // that frame. So `seat` plugs in only once every player (newcomer included) acknowledges holding
@@ -336,10 +364,11 @@ public:
   // Local inputs already sampled for frames from CurrentFrame() on (the host keeps them when it
   // goes back to solo play).
   std::vector<Pad> PendingLocal() const;
-  // Whether this machine's own controller is plugged in at `frame`.
+  // Whether this seat's controller is plugged in at `frame`, including completed stays.
   bool Plugged(int seat, int frame) const;
   // The newest frame the host reported (a joining player catches up to it).
   int AuthorityFrame() const;
+  int AuthoritySeat() const { return m_config.authority_seat; }
   // This player is still replaying the host's game; its own controller isn't plugged in yet.
   bool CatchingUp() const;
   // Something besides inputs that frames from `frame` on depend on changed (a port's name arrived
@@ -373,10 +402,19 @@ public:
   const Stats& GetStats() const { return m_stats; }
   int CurrentFrame() const { return m_frame; }
   bool Resimulating() const { return m_resim_until >= 0; }
+  // Rollback can return from a boundary while its original input stall is still ongoing.
+  bool InputStalled() const { return m_stalling && m_stall_ended_ms < 0; }
+  std::vector<int> MissingInputSeats() const;
   int Delay() const { return m_delay; }
   // The newest frame whose inputs are known for every seat (every frame through it ran, or will
   // re-run, with real inputs).
   int ConfirmedFrame() const;
+  // Frames before this one are final: confirmed for every seat, run with those inputs, and not
+  // waiting to re-run (as CheckChecksums takes its checksums). A replay stream records only these.
+  int FinalFrame() const { return std::min({m_frame, ConfirmedFrame() + 1, m_dirty}); }
+  // This machine's RAM checksums of final frames (every Config::checksum_every), the newest 600
+  // frames' worth: (frame, RamChecksum of the state at that frame's start).
+  const std::map<int, u64>& LocalChecksums() const { return m_local_checksums; }
 
 private:
   void ReceivePackets();
@@ -402,9 +440,10 @@ private:
   double FramesFromMs(double ms) const;
   void TrackAdvantage();
   int KnownThrough(int seat) const;
+  int DepartedThrough(int seat) const;
+  const Pad* DepartedPad(int seat, int frame) const;
+  void AddDeparted(Packet* packet, int recipient) const;
   bool InPlay(int seat) const;
-  // This player and every other one in play.
-  int PlayersInPlay() const;
   int SettleFrom() const;
   int StallLimit() const;
   void AdvanceReceived(int seat);
@@ -413,6 +452,13 @@ private:
   void AppendConfirmedToLog();
   void PlugCaughtUpPeers();
   void AddHistory(Packet* packet);
+  std::set<int> m_plug_batch;
+  int m_history_next = 0;
+  std::optional<std::pair<int, int>> m_start_gate;
+  std::vector<std::pair<int, int>> m_previous_start_gates;
+  std::array<int, MAX_SEATS> m_authority_ack{-1, -1, -1, -1};
+  std::array<std::array<int, MAX_SEATS>, MAX_SEATS> m_peer_ack{};
+  std::map<int, DepartedInputs> m_departed;
 
   Config m_config;
   Game& m_game;
@@ -436,7 +482,7 @@ private:
   std::array<int, MAX_SEATS> m_remote_frame{0, 0, 0, 0};
 
   std::map<int, u64> m_local_checksums;
-  std::map<int, u64> m_peer_checksums;
+  std::map<std::pair<int, int>, u64> m_peer_checksums;
   int m_last_checksum_frame = 0;
   std::optional<int> m_pending_checksum;
   int m_last_sent_newest = -1;

@@ -158,12 +158,17 @@ Result<u32> HostFileSystem::WriteBytesToFile(Fd fd, const u8* ptr, u32 count)
   if ((u8(handle->mode) & u8(Mode::Write)) == 0)
     return std::unexpected{ResultCode::AccessDenied};
 
+  if (!ReserveClusters(handle->host_file->GetSize(), u64{handle->file_offset} + count))
+    return std::unexpected{ResultCode::NoFreeSpace};
   JournalWritten(BuildFilename(handle->wii_path).host_path, *handle->host_file,
                  handle->file_offset, count);
   // File might be opened twice, need to seek before we read
   handle->host_file->Seek(handle->file_offset, File::SeekOrigin::Begin);
   if (!handle->host_file->WriteBytes(ptr, count))
+  {
+    m_usage.reset();
     return std::unexpected{ResultCode::AccessDenied};
+  }
 
   handle->file_offset += count;
   return count;

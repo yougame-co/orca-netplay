@@ -4,8 +4,10 @@
 #include "Core/Orca/Status.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -13,10 +15,13 @@
 #include <fmt/format.h>
 
 #include "Core/Orca/Activity.h"
+#include "Core/Orca/BootMemory.h"
+#include "Core/Orca/Mod.h"
 #include "Core/Orca/Music.h"
 #include "Core/Orca/Profile.h"
-#include "Core/Orca/UX/OnlineRules.h"
-#include "Core/Orca/UX/Results.h"
+#include "Core/Orca/UX/UX.h"
+#include "Core/Orca/UX/YgOrb.h"
+#include "Core/Rollback/ReplayStream.h"
 
 namespace Orca::Status
 {
@@ -26,9 +31,34 @@ std::mutex s_mutex;
 std::string s_state;
 bool s_errored = false;
 std::atomic<bool> s_started{false};
+std::atomic<bool> s_online_withdrawn{false};
 std::atomic<bool> s_stopping{false};
 std::FILE* s_out = nullptr;
 std::set<std::string, std::less<>> s_app_caps;
+// The last `orca caps` list printed (nullopt: none yet), under s_mutex.
+std::optional<std::string> s_printed_caps;
+// The app's last `caps` line, and the offer s_app_caps was last agreed against (under s_mutex).
+std::string s_app_list;
+std::string s_offer_seen;
+
+// Both lists' names (under s_mutex).
+std::set<std::string, std::less<>> Agreed(std::string_view offered, std::string_view app)
+{
+  std::set<std::string, std::less<>> ours;
+  std::istringstream mine{std::string(offered)};
+  for (std::string name; mine >> name;)
+    ours.insert(name);
+  std::set<std::string, std::less<>> both;
+  std::istringstream theirs{std::string(app)};
+  for (std::string name; theirs >> name;)
+  {
+    if (ours.count(name))
+      both.insert(name);
+  }
+  return both;
+}
+// When CapsSettled was first asked (host clock: when "ready" waits, never what the game computes).
+std::optional<std::chrono::steady_clock::time_point> s_settle_asked;
 void (*s_error_listener)(std::string_view, std::string_view) = nullptr;
 void (*s_first_frame_listener)() = nullptr;
 
@@ -84,7 +114,7 @@ void Result(std::string_view json)
 {
   if (!SessionActive() || !Cap(RESULTS_CAP))
     return;
-  std::string line = fmt::format("orca result {}", OneLine(json));
+  std::string line = fmt::format("orca result {}", HarnessReport(OneLine(json)));
   // The app forwards at most 300 characters of a line.
   if (line.size() > 300)
     return;
@@ -102,11 +132,18 @@ void Line(std::string_view line)
 
 void Report(std::string_view code, std::string_view sentence)
 {
-  if (!Cap("join"))
+  bool app_reports;
+  {
+    std::lock_guard lock(s_mutex);
+    // The app's protocol support survives withdrawal of this boot's online features.
+    app_reports = Agreed("join", s_app_list).contains("join");
+  }
+  if (!app_reports)
   {
     Error(code, sentence);
     return;
   }
+  BootMemory::LogMemory();
   if (!SessionActive())
     return;
   std::lock_guard lock(s_mutex);
@@ -115,13 +152,49 @@ void Report(std::string_view code, std::string_view sentence)
 
 std::string OfferedCaps()
 {
-  std::string caps = CAPS;
+  std::string caps;
+  std::istringstream base{CAPS};
+  for (std::string cap; base >> cap;)
+  {
+    if ((s_online_withdrawn || Rollback::ReplayStream::ProductMode()) &&
+        (cap == "join" || cap == "host" || cap == "direct"))
+      continue;
+    if (!caps.empty())
+      caps += ' ';
+    caps += cap;
+  }
   if (Music::Supported())
     caps += fmt::format(" {}", MUSIC_CAP);
-  if (UX::ResultsVerified())
-    caps += fmt::format(" {}", RESULTS_CAP);
-  if (UX::Rules::ProfileRuleset() != UX::Rules::Ruleset::None)
-    caps += fmt::format(" {} {} {}", LOCKS_CAP, QUEUE2_CAP, PICK_CAPS);
+  // Mod mode (Core/Orca/Mod.h): besides the music switch above (host-only, the same rule in both
+  // modes), what mod.json offers and its builtin carries, only once the builtin's guard words have
+  // held and never after they failed (Mod::Offers). The pick caps go with "locks", as for a legacy
+  // ruleset profile.
+  if (Mod::ActiveMod())
+  {
+    for (const char* cap : {RESULTS_CAP, LOCKS_CAP, QUEUE2_CAP})
+    {
+      if (Mod::Offers(cap))
+        caps += fmt::format(" {}", cap);
+    }
+    if (Mod::Offers(LOCKS_CAP))
+      caps += fmt::format(" {}", PICK_CAPS);
+  }
+  else
+  {
+    // What the game module says (Engine/Module.h): results where it reads them while its addresses
+    // hold, the locks with a ruleset.
+    Orca::Engine::Module& game = UX::Game();
+    if (game.Active() && game.Describe().results)
+      caps += fmt::format(" {}", RESULTS_CAP);
+    if (game.ProfileRuleset() != Orca::Engine::Ruleset::None)
+      caps += fmt::format(" {} {} {}", LOCKS_CAP, QUEUE2_CAP, PICK_CAPS);
+  }
+  // Engine caps, like "music": every profile, legacy or mod, whatever its builtin or guards. Last,
+  // so an app that reads fewer words drops them before any other.
+  caps += fmt::format(" {} {}", TALK_CAP, RUMBLE_CAP);
+  if (Rollback::ReplayStream::ProductMode())
+    caps += fmt::format(" {}", REPLAY_CAP);
+  caps += fmt::format(" {} {}", RECORD_CAP, HOSTUI_CAP);
   return caps;
 }
 
@@ -131,24 +204,66 @@ void PrintCaps()
     return;
   const std::string caps = OfferedCaps();
   std::lock_guard lock(s_mutex);
+  s_printed_caps = caps;
   Print(fmt::format("orca caps {}\n", caps));
+}
+
+bool CapsSettled()
+{
+  if (!SessionActive() || Mod::GuardsDecided())
+    return true;
+  const auto now = std::chrono::steady_clock::now();
+  std::lock_guard lock(s_mutex);
+  if (!s_settle_asked)
+    s_settle_asked = now;
+  return now - *s_settle_asked >= CAPS_SETTLE_LIMIT;
+}
+
+void UpdateCaps()
+{
+  // Legacy profiles offer the same caps for the whole run: nothing to follow.
+  if (!SessionActive() || (!Mod::ActiveMod() && !s_online_withdrawn))
+    return;
+  const std::string caps = OfferedCaps();
+  std::lock_guard lock(s_mutex);
+  if (s_offer_seen == caps)
+    return;
+  s_offer_seen = caps;
+  // What is on follows the offer at once (a withdrawn cap off, a cap the app already listed on),
+  // before any new answer from the app.
+  s_app_caps = Agreed(caps, s_app_list);
+  if (s_printed_caps && *s_printed_caps != caps)
+  {
+    s_printed_caps = caps;
+    Print(fmt::format("orca caps {}\n", caps));
+  }
+}
+
+void WithdrawOnline()
+{
+  s_online_withdrawn = true;
+  UpdateCaps();
+}
+
+void ResetOnline()
+{
+  s_online_withdrawn = false;
+  const std::string caps = OfferedCaps();
+  std::lock_guard lock(s_mutex);
+  // Legacy profiles do not pass through UpdateCaps after a reboot. Restore the agreement here
+  // against the app's existing list, without waiting for another caps command.
+  s_app_caps = Agreed(caps, s_app_list);
+  s_offer_seen.clear();
 }
 
 void SetAppCaps(std::string_view list)
 {
-  std::set<std::string, std::less<>> ours;
-  std::istringstream mine{OfferedCaps()};
-  for (std::string name; mine >> name;)
-    ours.insert(name);
-  std::set<std::string, std::less<>> both;
-  std::istringstream theirs{std::string(list)};
-  for (std::string name; theirs >> name;)
-  {
-    if (ours.count(name))
-      both.insert(name);
-  }
+  const std::string offered = OfferedCaps();
   std::lock_guard lock(s_mutex);
-  s_app_caps = std::move(both);
+  s_app_list = std::string(list);
+  s_app_caps = Agreed(offered, list);
+  if (!s_app_caps.contains(HOSTUI_CAP))
+    UX::YgOrb::Menu().Close();
 }
 
 bool Cap(std::string_view name)
@@ -175,6 +290,7 @@ void Shaders(std::size_t compiled, std::size_t total)
 
 void Error(std::string_view code, std::string_view sentence)
 {
+  BootMemory::LogMemory();
   if (!SessionActive())
     return;
   std::lock_guard lock(s_mutex);
@@ -225,6 +341,11 @@ void Stopping()
   s_stopping.store(true, std::memory_order_relaxed);
 }
 
+bool IsStopping()
+{
+  return s_stopping.load(std::memory_order_relaxed);
+}
+
 int Finish()
 {
   if (!SessionActive())
@@ -238,7 +359,7 @@ int Finish()
             !s_stopping.load(std::memory_order_relaxed);
   }
   if (stuck)
-    Error("boot", "Orca couldn't start the game");
+    Error("boot", "YG Dolphin couldn't start the game");
   State("ended");
   return ExitCode();
 }

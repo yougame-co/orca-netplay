@@ -41,9 +41,11 @@ public:
 
   // Embed mode (Embed.h): draw inside the parent window. Call before Init.
   void SetEmbed(const Embed::Options& options);
-  bool IsEmbedded() const { return m_embed.enabled; }
+  bool IsEmbedded() const { return m_embed.enabled && !m_embed_fallback; }
   // Tests: accept embed commands on stdin without embedding (ORCA_TEST_COMMANDS=1).
   void EnableTestCommands() { m_test_commands = true; }
+  // Test commands in mod mode: `orca caps` goes out from the main loop once the caps are settled.
+  void RequestTestCaps() { m_test_caps_pending = true; }
   // Called when the first frame is presented; "ready" is sent on the next main loop pass.
   void NotifyFirstFrame(int width, int height, double fps);
   // Hides the view and drops focus once the main loop ends, while emulation stops.
@@ -83,6 +85,13 @@ protected:
   void WatchRoomWhilePaused();
   // Per-platform handlers for the window commands. The rect is relative to the parent; its units
   // depend on the OS (see ORCA.md, "Embedding").
+  // Main/window thread only. Fallback retains the protocol while using a standalone window.
+  void EmbedSucceeded();
+  bool EmbedResultDecided() const { return m_embed_result.Decided(); }
+  void EmbedFallback(std::string_view reason);
+  // Queried only with ORCA_EMBED_TRACE=1; each backend reads only our own window.
+  virtual std::optional<Embed::WindowBounds> EmbedGetBounds() const { return std::nullopt; }
+  void TraceEmbedRect(const Embed::Rect& requested) const;
   virtual void EmbedSetRect(const Embed::Rect& rect) {}
   virtual void EmbedSetVisible(bool visible) {}
   virtual void EmbedSetFocus(bool focus) {}
@@ -105,6 +114,7 @@ protected:
 
   Embed::Options m_embed;
   bool m_test_commands = false;
+  bool m_test_caps_pending = false;
 
 private:
   // Titles are set only on the main loop's thread. On Win32, setting one from the emulation thread
@@ -121,6 +131,8 @@ private:
   std::mutex m_ready_lock;
   std::optional<std::string> m_ready_line;
   bool m_ready_sent = false;
+  Embed::Result m_embed_result;
+  bool m_embed_fallback = false;
   // The view is visible only when the app's last command was "show" and the last rect wasn't
   // TooSmall.
   bool m_embed_shown = true;

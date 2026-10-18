@@ -4,6 +4,8 @@
 #include "Common/Timer.h"
 
 #include <chrono>
+#include <ctime>
+#include <exception>
 #include <thread>
 #include "Common/CommonFuncs.h"
 
@@ -66,14 +68,9 @@ u64 Timer::ElapsedMs() const
   return end - m_start_ms;
 }
 
-u64 Timer::GetLocalTimeSinceJan1970()
+// Local time from the C runtime: the fallback on Windows, the only path elsewhere.
+static u64 LocalTimeFromCRuntime()
 {
-#ifdef _MSC_VER
-  std::chrono::zoned_seconds seconds(
-      std::chrono::current_zone(),
-      std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()));
-  return seconds.get_local_time().time_since_epoch().count();
-#else
   time_t sysTime, tzDiff, tzDST;
   time(&sysTime);
   tm* gmTime = localtime(&sysTime);
@@ -89,6 +86,27 @@ u64 Timer::GetLocalTimeSinceJan1970()
   tzDiff = sysTime - mktime(gmTime);
 
   return static_cast<u64>(sysTime + tzDiff + tzDST);
+}
+
+u64 Timer::GetLocalTimeSinceJan1970()
+{
+#ifdef _MSC_VER
+  // MSVC's time zone database throws std::runtime_error ("unable to locate time_zone with given
+  // name") on some machines (an unmapped Windows time zone, or no ICU), which closed Orca before
+  // its first frame. Fall back to the C runtime's local time there.
+  try
+  {
+    std::chrono::zoned_seconds seconds(
+        std::chrono::current_zone(),
+        std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()));
+    return seconds.get_local_time().time_since_epoch().count();
+  }
+  catch (const std::exception&)
+  {
+    return LocalTimeFromCRuntime();
+  }
+#else
+  return LocalTimeFromCRuntime();
 #endif
 }
 

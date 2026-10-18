@@ -27,7 +27,7 @@ void Start();
 // Switches to a new room after Shutdown: a friend's (`code`, joining) or this player's own (empty
 // code). Never asks the app for an invite. A joiner sends the host its own controls
 // (Orca::Events::OwnControls).
-void StartRoom(const std::string& code, bool joining);
+void StartRoom(const std::string& code, bool joining, bool friends_room = true);
 // The room's code once known; "" before that or with no room.
 std::string Code();
 // The roster's name for a seat; "" when unknown or with no room.
@@ -50,6 +50,7 @@ std::optional<std::string> TakeHostRequest();
 // ---- Matchmade rooms ----
 // The room's queue: "private" (a friends room, or no room), "casual" or "ranked".
 std::string RoomQueue();
+bool RoomDoubles();
 // A room match is running and its result isn't in yet.
 bool MatchLive();
 // A ranked set's room after its verdict, still open: the players stay together on the results
@@ -72,6 +73,14 @@ void ReportPeerFault();
 // Waiting in a ranked set's room for the verdict, with no session: this game still runs
 // (YouGameRoom::KeepAlive). Emulation thread.
 void KeepAlive();
+// Sends a replay stream's next bytes to the room for its watchers (YouGameRoom::SendReplayStream).
+void SendReplayStream(const std::vector<u8>& bytes);
+// Queues a saved copy of the match (Rollback/ReplayStream.h RepackedPieces) for the room, if it is
+// still the room of `generation` (RoomGeneration()). Any thread, never blocks; nothing without it.
+void SendReplayPacked(const std::vector<std::vector<u8>>& pieces, int frames, u64 generation);
+// The current room/socket's process-wide generation (0 with no room). Changes on a reopen,
+// including one with the same code; room readiness is still checked separately.
+u64 RoomGeneration();
 // In a ranked set whose opponent stopped sending inputs (15 s stalled, or silent), this player
 // claims the set. Does nothing outside a ranked room's live match.
 void ReportStall();
@@ -85,6 +94,19 @@ std::optional<int> ChosenDelay();
 // applies it at its next tick. Any thread, never blocks.
 void SetDirectWanted(bool on);
 bool DirectWanted();
+// The app's "record on|off|auto" (with its "record" cap): whether this player's Orca streams its
+// match to the room, for watchers and the saved replay the site keeps in the players' accounts.
+// "auto", the default, records ranked rooms only; a tournament or friends room records after the
+// page's "record on". Persists across rooms. Any thread, never blocks.
+enum class RecordChoice
+{
+  Auto,
+  On,
+  Off,
+};
+void SetRecordChoice(RecordChoice choice);
+// Whether to record in the current room now: the app's "record" cap, a room, and the choice above.
+bool RecordWanted();
 // Whether this Orca joins someone else's game (ORCA_JOIN=1, or the app opened an invite); nullopt
 // until known, or if the room ended first.
 std::optional<bool> Joining();
@@ -98,6 +120,12 @@ std::vector<Net::PeerEvent> TakePeerEvents();
 bool HostLeftPending();
 // Host: seats of players whose leaving is among the untaken events. Any thread.
 std::vector<int> LeftSeatsPending();
+std::optional<std::chrono::steady_clock::time_point> HostAwayDeadline();
+void RetryPeer(int seat);
+bool HoldInputSilence(std::chrono::steady_clock::time_point since,
+                       std::chrono::steady_clock::time_point now,
+                       std::optional<std::vector<int>> missing = std::nullopt);
+bool RoomRecovering(std::chrono::steady_clock::time_point now);
 bool RoomEnded();
 // This Orca is in its room: the welcome arrived and the room hasn't ended.
 bool InRoom();
@@ -179,6 +207,14 @@ void Shutdown();
 
 // The lobby compatibility key: players with different keys can't share a room. Built from the Orca
 // build, game profile and data files, every forced setting both machines must share, the disc and
-// the seeded save. Not the host CPU, so Mac and PC players can meet.
+// the seeded save. Not the host CPU, so Mac and PC players can meet. "orca2:<xxh3>" in both modes;
+// in mod mode (Core/Orca/Mod.h) over the engine, the bundle's tree and its SD image instead of the
+// profile files.
 std::string CompatibilityKey();
+// What the key hashes (tests pin its legacy form).
+std::string CompatibilityKeyParts();
+// The key's last part, the in-game UX's version (S3, WP19 a): "|ux=<engine>" (UX::kCompatVersion),
+// then ".<game>" when the running game's module gives that game a revision of its own
+// (Engine/Module.h Manifest::compat), so a change to one game's steps splits only its rooms.
+std::string UxKeyPart(int engine, int game);
 }  // namespace Orca::Online

@@ -40,12 +40,14 @@
 #include "Core/Host.h"
 #include "Core/Orca/Activity.h"
 #include "Core/Orca/BootLogs.h"
+#include "Core/Orca/BootMemory.h"
 #include "Core/Orca/Branding.h"
 #include "Core/Orca/Bridge.h"
 #include "Core/Orca/CrashNote.h"
 #include "Core/Orca/Disc.h"
 #include "Core/Orca/DiscVerify.h"
 #include "Core/Orca/Launch.h"
+#include "Core/Orca/Mod.h"
 #include "Core/Orca/Perf.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Sandbox.h"
@@ -77,7 +79,8 @@ static bool s_sandbox_probe = false;
 
 static void signal_handler(int)
 {
-  constexpr char message[] = "A signal was received. A second signal will force Orca to stop.\n";
+  constexpr char message[] =
+      "A signal was received. A second signal will force YG Dolphin to stop.\n";
 #ifdef _WIN32
   fputs(message, stderr);
 #else
@@ -327,7 +330,7 @@ static std::optional<std::string> ChooseSessionDisc(const std::string& user_dire
       Orca::Status::Error(check.code, check.sentence);
       return std::nullopt;
     }
-    Platform::ShowErrorMacOS("Orca can't play that disc", check.sentence);
+    Platform::ShowErrorMacOS("YG Dolphin can't play that disc", check.sentence);
     refused = std::move(check);
   }
 }
@@ -536,7 +539,7 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
   {
     fprintf(stderr, "Could not boot the specified file\n");
     if (embed.enabled && !Orca::SessionActive())
-      Embed::Out("error Orca couldn't start the game");
+      Embed::Out("error YG Dolphin couldn't start the game");
     Orca::Status::Finish();
     return 1;
   }
@@ -563,7 +566,7 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
     fprintf(stderr, "No platform found, or failed to initialize.\n");
     // Unless the platform already said why (sandbox_embed: nothing adopted the window).
     if (embed.enabled && Orca::Status::ExitCode() == 0)
-      Embed::Out("error Orca couldn't open its view in the app's window");
+      Embed::Out("error YG Dolphin couldn't open its view in the app's window");
     return 1;
   }
 
@@ -700,19 +703,29 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
       Orca::Perf::Ready();
   }
 
-  if (!BootManager::BootCore(Core::System::GetInstance(), std::move(boot), wsi))
+  bool booted = false;
+  Orca::BootMemory::Run([&] {
+    booted = BootManager::BootCore(Core::System::GetInstance(), std::move(boot), wsi);
+  });
+  if (!booted)
   {
     fprintf(stderr, "Could not boot the specified file\n");
     // In a session, the session status has already reported the error.
     if (embed.enabled && !Orca::SessionActive())
-      Embed::Out("error Orca couldn't start the game");
+      Embed::Out("error YG Dolphin couldn't start the game");
     Orca::Status::Finish();
     return 1;
   }
 
-  // Print the caps now that the boot has chosen a profile.
+  // Print the caps now that the boot has chosen a profile. Mod mode: from the main loop once they
+  // are settled (Status::CapsSettled: a builtin's caps wait for its guard words).
   if (test_commands)
-    Orca::Status::PrintCaps();
+  {
+    if (Orca::Mod::Requested())
+      s_platform->RequestTestCaps();
+    else
+      Orca::Status::PrintCaps();
+  }
 
 #ifdef USE_DISCORD_PRESENCE
   Discord::UpdateDiscordPresence();
@@ -737,6 +750,9 @@ int main(const int raw_argc, char* raw_argv[])
 {
   // Windows: a C++ exception names itself on stderr as it is thrown, so a run it ends says why.
   Orca::CrashNote::InstallThrowReporter();
+  // And so does a fault (an access violation, a failed assert): its module, offset and the
+  // graphics device's state.
+  Orca::CrashNote::InstallFaultReporter();
   // Remove --embed, --parent, --rect and --verify before the regular parser sees the arguments.
   std::vector<char*> arg_list(raw_argv, raw_argv + raw_argc);
   std::string embed_error;

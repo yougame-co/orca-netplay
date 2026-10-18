@@ -1,11 +1,25 @@
-# Orca - GameCube and Wii rollback netplay
+# YG Dolphin (formerly YG Baiji and Orca) - GameCube and Wii rollback netplay
 
-Orca is the rollback netcode core behind online play for Super Smash Bros. Brawl and Project+ on
-[YouGame](https://yougame.co). It is a fork of the [Dolphin](https://github.com/dolphin-emu/dolphin)
-emulator: an exact whole-machine snapshot at each frame boundary, controller input injected at the
-SI device, and re-run frames that skip host rendering, with per-game profiles.
+> **2026-10-13: YG Baiji is now YG Dolphin.** Players see YG Dolphin from 0.3.42 on. The code,
+> files and contracts keep the codename Orca. Packages are `YG Dolphin.app`, `yg-dolphin.exe`
+> and `yg-dolphin/yg-dolphin`; the Mac program stays `Contents/MacOS/Orca`. Tags are
+> `yg-dolphin-<version>` from 0.3.42; older `yg-baiji-` and `orca-` tags keep their names.
+> Earlier notes are left as they were.
 
-- **Play:** Orca ships inside the [YouGame desktop app](https://yougame.co/desktop) for Mac and
+> **2026-10-12: Orca is now called YG Baiji.** The name was picked in a YouGame community poll; the
+> baiji is the Yangtze river dolphin. Players see the new name from 0.3.40 on. The code, its files
+> and its protocols keep the codename Orca (`Core/Orca`, `Sys/Orca/`, `orca <verb>` lines, the
+> `ORCA_*` variables), and so do ORCA.md and ORCA_ARCHITECTURE.md. Releases up to 0.3.39 keep their
+> `orca-<version>` tags; later ones are tagged `yg-baiji-<version>`. Nothing written before this
+> note was reworded.
+
+YG Dolphin is the rollback netcode core behind online play for Super Smash Bros. Brawl and Project+
+on [YouGame](https://yougame.co). It is a fork of the
+[Dolphin](https://github.com/dolphin-emu/dolphin) emulator: an exact whole-machine snapshot at each
+frame boundary, controller input injected at the SI device, and re-run frames that skip host
+rendering, with per-game profiles.
+
+- **Play:** YG Dolphin ships inside the [YouGame desktop app](https://yougame.co/desktop) for Mac and
   Windows. Bring your own disc image; none are included or distributed here.
 - **How it works:** [ORCA_ARCHITECTURE.md](ORCA_ARCHITECTURE.md) explains the rollback design and how
   it compares with Slippi and Brawlback. [ORCA.md](ORCA.md) has the engineering detail: building,
@@ -13,8 +27,36 @@ SI device, and re-run frames that skip host rendering, with per-game profiles.
 - **License:** like Dolphin, GPL-2.0-or-later, with per-file SPDX tags; in aggregate the repository
   is GPLv3-compatible ([COPYING](COPYING), [LICENSES/](LICENSES)).
 
-Orca is not affiliated with or endorsed by the Dolphin project or Nintendo. Dolphin's own readme
-follows.
+## Public source release
+
+YG Dolphin is YouGame's Dolphin-based netplay build, licensed under GPL-2.0-or-later.
+Game mods ship as separate signed packs, not inside the emulator build.
+
+Build from source with CMake 3.25 or newer after initializing the submodules as described in
+Dolphin's build instructions below. On macOS use Xcode 14.3 or newer and its command-line tools;
+on Windows use Visual Studio 2022 with the C++ tools (v143, MSVC 19.32 or newer); on Linux use
+GCC 12 or newer, or Clang 15 or newer, with the development libraries listed in the Linux build
+instructions. See [ORCA.md](ORCA.md#building) for this fork's build details.
+
+For the NoGUI frontend used by YouGame, configure and build with:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_NOGUI=ON -DENABLE_QT=OFF
+cmake --build build --config Release --target dolphin-nogui --parallel 2
+```
+
+On macOS add `-DMACOS_CODE_SIGNING=OFF` for a local unsigned build, and optionally
+`-DORCA_MACOS_BUNDLE=ON` for an app bundle. On Windows run these commands in a Visual Studio
+developer shell. The NoGUI executable is `dolphin-emu-nogui` on macOS/Linux and
+`DolphinNoGUI.exe` on Windows; macOS app bundles contain `Contents/MacOS/Orca`.
+The Qt frontend can be built with `-DENABLE_QT=ON` and the Qt dependencies in Dolphin's instructions.
+
+Send security reports privately to [security@yougame.co](mailto:security@yougame.co).
+YouGame offers a $200 bounty for each unique, valid security issue, paid after a fix.
+Keep reports private and never disclose an issue publicly until it is fixed.
+
+YG Dolphin is not affiliated with or endorsed by the Dolphin project or Nintendo. Dolphin's own
+readme follows.
 
 ---
 

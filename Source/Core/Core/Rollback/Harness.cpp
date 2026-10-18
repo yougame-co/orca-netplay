@@ -41,8 +41,8 @@
 #include "Core/Orca/Session/Online.h"
 #include "Core/Orca/Session/PadCodec.h"
 #include "Core/Orca/UX/OrbCombo.h"
-#include "Core/Orca/UX/Queue.h"
-#include "Core/Orca/UX/Results.h"
+#include "Core/Orca/UX/QueueApp.h"
+#include "Core/Orca/UX/UX.h"
 #include "Core/PowerPC/JitInterface.h"
 #include "Core/PowerPC/MMU.h"
 #include "Core/Rollback/Diag.h"
@@ -196,45 +196,16 @@ const int s_dump_frames_to = EnvInt("YG_DUMP_FRAMES_TO", -1);
 
 // ---- Scene names (scene-relative input and logs) ----
 
-// Super Smash Bros. Brawl (NTSC-U, revision 2): gfSceneManager* at 0x805a0060, its current scene
-// at +0x4, and the scene's name (char*) at +0x0, e.g. scTitle, scSelctCharacter, scMelee.
-std::string BrawlSceneName(const Core::CPUThreadGuard& guard)
-{
-  const u32 manager = PowerPC::MMU::HostRead<u32>(guard, 0x805a0060);
-  if (manager < 0x80000000u)
-    return {};
-  const u32 scene = PowerPC::MMU::HostRead<u32>(guard, manager + 0x4);
-  if (scene < 0x80000000u)
-    return {};
-  const u32 name_ptr = PowerPC::MMU::HostRead<u32>(guard, scene);
-  if (name_ptr < 0x80000000u)
-    return {};
-  std::string name;
-  for (u32 i = 0; i < 32; ++i)
-  {
-    const char c = static_cast<char>(PowerPC::MMU::HostRead<u8>(guard, name_ptr + i));
-    if (c == '\0')
-      break;
-    name.push_back(c);
-  }
-  return name;
-}
-
+// The game module's scene names (Brawl rev 2's, Games/Brawl/BrawlModule.cpp), where it can read
+// them: Dolphin runs Brawl rev 2, a mod declares a builtin, or a launcher profile boots it.
 using SceneReader = std::string (*)(const Core::CPUThreadGuard&);
 
 SceneReader SceneReaderForRunningGame()
 {
   const SConfig& config = SConfig::GetInstance();
-  if (config.GetGameID() == "RSBE01" && config.GetRevision() == 2)
-    return BrawlSceneName;
-  // A launcher profile booting Brawl rev 2 (Project+): the reported revision comes from the TMD and
-  // may not match, but the profile already verified the disc.
-  if (const Orca::Profile* profile = Orca::ActiveProfile();
-      profile && profile->IsLauncher() && profile->disc == "RSBE01" && profile->revision == 2)
-  {
-    return BrawlSceneName;
-  }
-  return nullptr;
+  if (!Orca::UX::Game().ScenesReadable(config.GetGameID(), config.GetRevision()))
+    return nullptr;
+  return [](const Core::CPUThreadGuard& guard) { return Orca::UX::Game().SceneName(guard); };
 }
 
 // Opens the file named by an environment variable for writing; a null handle when unset.
@@ -555,7 +526,7 @@ void KeyframeTest(Core::System& system, int f, bool first_pass)
   if (f == to && s_keyframe.image && !s_keyframe.loaded)
   {
     s_keyframe.loaded = true;
-    const bool ok = Ring().LoadImage(system, std::move(*s_keyframe.image), from);
+    const bool ok = Ring().LoadMachineImage(system, std::move(*s_keyframe.image), from);
     const u64 ram = LiveRamChecksum(system);
     NOTICE_LOG_FMT(ROLLBACK, "Keyframe test: loaded frame {} at frame {}: {}, RAM {:016x} (captured {:016x}) {}",
                    from, f, ok ? "ok" : "failed", ram, s_keyframe.ram,
@@ -1372,14 +1343,14 @@ void OnFrameBoundary(const Core::CPUThreadGuard& guard)
                       spec);
         return out;
       }
-      Orca::UX::Queue::Identity id;
+      Orca::UX::QueueApp::Identity id;
       id.character = std::atoi(f[1].c_str());
       id.costume = std::atoi(f[2].c_str());
       id.x = std::strtof(f[3].c_str(), nullptr);
       id.y = std::strtof(f[4].c_str(), nullptr);
       id.rating = f.size() == 6 ? std::atoi(f[5].c_str()) : -1;
       out.from = std::atoi(f[0].c_str());
-      out.queue = Orca::UX::Queue::EncodeIdentity(id);
+      out.queue = Orca::UX::QueueApp::EncodeIdentity(id);
       NOTICE_LOG_FMT(ROLLBACK, "ORCA_TEST_QUEUE_PICK: port 2 from frame {}: character {} costume "
                      "{} at ({}, {})",
                      out.from, id.character, id.costume, id.x, id.y);
@@ -1409,21 +1380,22 @@ void OnFrameBoundary(const Core::CPUThreadGuard& guard)
     }
     // The queue's casual ready timer for port 1; it logs when it runs out.
     if (first_pass_here && !Orca::TestQueueSpec().empty())
-      Orca::UX::Queue::ConfirmTimeout(frame_here + 1, 0);
-    // YG_RESULTS=1: log the match results reader's output (UX/Results.h). Frames are final at
-    // their first pass here.
+      Orca::UX::QueueApp::ConfirmTimeout(frame_here + 1, 0);
+    // YG_RESULTS=1: log the match results reader's output (the module's Verdicts,
+    // Engine/Module.h). Frames are final at their first pass here.
     static const bool s_results = Orca::GetEnv("YG_RESULTS") == "1";
     if (s_results && first_pass_here)
     {
-      for (const Orca::UX::GameResult& r : Orca::UX::Tracker().Confirm(frame_here + 1, -1))
+      for (const Orca::Engine::GameResult& r :
+           Orca::UX::Game().Results().Confirm(frame_here + 1, -1))
       {
         NOTICE_LOG_FMT(ROLLBACK, "Results: frame {}: {}{}{}", r.frame,
-                       r.kind == Orca::UX::GameResult::Kind::Win ?
+                       r.kind == Orca::Engine::GameResult::Kind::Win ?
                            fmt::format("port {} won", r.winner_port + 1) :
-                       r.kind == Orca::UX::GameResult::Kind::Draw ? std::string("a draw") :
-                                                                    "void " + r.why,
-                       r.kind == Orca::UX::GameResult::Kind::Void ? "" : " ",
-                       r.kind == Orca::UX::GameResult::Kind::Void ? "" : r.DetailJson());
+                       r.kind == Orca::Engine::GameResult::Kind::Draw ? std::string("a draw") :
+                                                                        "void " + r.why,
+                       r.kind == Orca::Engine::GameResult::Kind::Void ? "" : " ",
+                       r.kind == Orca::Engine::GameResult::Kind::Void ? "" : r.DetailJson());
       }
     }
   }

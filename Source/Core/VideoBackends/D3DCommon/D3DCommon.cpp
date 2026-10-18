@@ -10,6 +10,8 @@
 #include <utility>
 #include <wrl/client.h>
 
+#include <fmt/format.h>
+
 #include "Common/Assert.h"
 #include "Common/DynamicLibrary.h"
 #include "Common/FileUtil.h"
@@ -170,6 +172,26 @@ std::vector<std::string> GetAdapterNames()
   }
 
   return adapters;
+}
+
+std::string GetAdapterDriverVersion(int index)
+{
+  Microsoft::WRL::ComPtr<IDXGIFactory> factory;
+  if (FAILED(create_dxgi_factory(IID_PPV_ARGS(&factory))))
+    return {};
+  Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
+  if (index < 0 || FAILED(factory->EnumAdapters(static_cast<UINT>(index), &adapter)))
+  {
+    if (FAILED(factory->EnumAdapters(0, &adapter)))
+      return {};
+  }
+  // DXGI's one way to read the UMD version: four 16-bit parts, high to low.
+  LARGE_INTEGER umd;
+  if (FAILED(adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd)))
+    return {};
+  const auto high = static_cast<u32>(umd.HighPart);
+  const auto low = static_cast<u32>(umd.LowPart);
+  return fmt::format("{}.{}.{}.{}", high >> 16, high & 0xFFFF, low >> 16, low & 0xFFFF);
 }
 
 DXGI_FORMAT GetDXGIFormatForAbstractFormat(AbstractTextureFormat format, bool typeless)

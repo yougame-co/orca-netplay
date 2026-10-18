@@ -44,6 +44,7 @@ class Orca:
             "PATH": os.environ["PATH"],
             "ORCA_SESSION": "1",
             "ORCA_TEST_COMMANDS": "1",
+            "ORCA_TEST_ROOM_DROP": "1",
             "ORCA_TEST_DEV_GAME": "orca-dropin-test",
             "ORCA_NAME": name,
             "YG_INPUT": INPUT,
@@ -127,14 +128,15 @@ if "paused" not in line:
     fail(f"not paused: {line}")
 time.sleep(3)
 host.send("test-drop-room")
-host.expect("orca error network", 20)
+host.expect("orca state room-away self", 20)
+host.expect("orca state room-back self", 90)
 end = time.time() + 40
-while time.time() < end and not host.log_lines("hosting room"):
+while time.time() < end and not host.log_lines(f"in room {ROOM} on seat"):
     time.sleep(1)
-again = host.log_lines("hosting room")
+again = host.log_lines(f"in room {ROOM} on seat")
 if not again:
-    fail("the room never opened again while paused")
-log(f"host: {again[-1][again[-1].find('Drop-in'):]}")
+    fail("the room never recovered while paused")
+log(f"host: {again[-1][again[-1].find('Orca room'):]}")
 if any("state running" in l for l in host.all[mark:]):
     fail("the game ran while paused")
 host.send("resume")

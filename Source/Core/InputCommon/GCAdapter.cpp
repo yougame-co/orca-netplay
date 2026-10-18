@@ -39,6 +39,7 @@ using namespace std::chrono_literals;
 #include "Core/HW/SystemTimers.h"
 #include "Core/System.h"
 #include "InputCommon/GCPadStatus.h"
+#include "InputCommon/LocalInput.h"
 
 #if GCADAPTER_USE_LIBUSB_IMPLEMENTATION
 #include "Common/ScopeGuard.h"
@@ -537,6 +538,9 @@ static void RefreshConfig()
 
 void Init()
 {
+  if (InputCommon::LocalInputDisabled())
+    return;
+
 #if GCADAPTER_USE_LIBUSB_IMPLEMENTATION
   if (s_handle != nullptr)
     return;
@@ -571,6 +575,15 @@ void Init()
   if (!s_config_callback_id)
     s_config_callback_id = Config::AddConfigChangedCallback(RefreshConfig);
   RefreshConfig();
+}
+
+bool IsInitialized()
+{
+#if GCADAPTER_USE_LIBUSB_IMPLEMENTATION
+  return s_libusb_context != nullptr;
+#elif GCADAPTER_USE_ANDROID_IMPLEMENTATION
+  return s_adapter_class != nullptr;
+#endif
 }
 
 static void Setup()

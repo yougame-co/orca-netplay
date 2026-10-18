@@ -4,6 +4,7 @@
 #include "DolphinNoGUI/Embed.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,6 +21,7 @@
 #include <unistd.h>
 #endif
 
+#include "Common/Logging/Log.h"
 #include "Core/Orca/Bridge.h"
 
 namespace Embed
@@ -59,7 +61,7 @@ bool ParseInt(const char* text, int* out)
 }
 }  // namespace
 
-std::optional<Rect> ParseRect(const std::string& text)
+std::optional<Rect> ParseRect(const std::string& text, bool clamp_size)
 {
   std::string spaced = text;
   for (char& c : spaced)
@@ -74,11 +76,28 @@ std::optional<Rect> ParseRect(const std::string& text)
   std::string rest;
   if (in >> rest)
     return std::nullopt;
-  if (r.w < 1)
-    r.w = 1;
-  if (r.h < 1)
-    r.h = 1;
+  if (clamp_size)
+  {
+    r.w = std::max(r.w, 1);
+    r.h = std::max(r.h, 1);
+  }
   return r;
+}
+
+bool TraceEnabled()
+{
+  const char* const value = std::getenv("ORCA_EMBED_TRACE");
+  return value && std::strcmp(value, "1") == 0;
+}
+
+void Trace(const Rect& requested, const WindowBounds& actual)
+{
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now().time_since_epoch())
+                      .count();
+  NOTICE_LOG_FMT(ROLLBACK, "embed-trace t={} req={},{},{},{} real={},{},{},{} scale={}", ms,
+                 requested.x, requested.y, requested.w, requested.h, actual.x, actual.y, actual.w,
+                 actual.h, actual.scale);
 }
 
 bool TooSmall(const Rect& rect)
@@ -166,6 +185,21 @@ std::optional<Options> TakeArguments(std::vector<char*>* argv, std::string* erro
   }
   *argv = std::move(kept);
   return options;
+}
+
+void Result::Decide(std::string_view reason)
+{
+  if (!m_enabled || m_decided)
+    return;
+  m_decided = true;
+  m_line = reason.empty() ? "orca embed ok" : "orca embed failed " + std::string(reason);
+}
+
+std::optional<std::string> Result::TakeLine(bool ready)
+{
+  if (!ready)
+    return std::nullopt;
+  return std::exchange(m_line, std::nullopt);
 }
 
 std::FILE* ClaimStdout()

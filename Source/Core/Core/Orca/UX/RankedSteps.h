@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -16,12 +17,23 @@
 //
 // Game 1 is 1-2-1 on the starters. Later games, the winner strikes or bans, then the loser picks
 // (never a stage they already won on). Casual games skip strikes: both players name a stage at
-// once and a seeded coin decides between two different ones. In ranked, either player may propose
-// a stage at any time, and matching proposals end the steps.
+// once and a seeded coin decides between two different ones; a player may name Random instead. In
+// ranked, either player may propose a stage at any time, and matching proposals end the steps.
 namespace Orca::UX::Ranked
 {
 using StageMask = u16;
 constexpr int MAX_STAGES = 16;
+
+// A player's preferred (casual) or proposed (ranked) stage is a stage index, or one of these.
+constexpr s8 PREF_NONE = -1;
+// Casual only: "Random", the seeded random legal stage CasualDefault gives that player. The marker
+// is what is kept, never the stage it draws, so the other player can't see the draw.
+constexpr s8 PREF_RANDOM = -2;
+// Whether a player has named something: a stage, or Random.
+constexpr bool Named(s8 pref)
+{
+  return pref >= 0 || pref == PREF_RANDOM;
+}
 
 enum class StepKind : u8
 {
@@ -54,10 +66,52 @@ struct Turn
   bool operator==(const Turn&) const = default;
 };
 
+// Who decides a timed-out game of a ranked set.
+enum class TimeOut : u8
+{
+  // The game's own results screen (Project+: its codeset's overtime).
+  Results,
+  // The ledge-grab limit, then stocks, then percent, as they were when time ran out; a level game
+  // is a tie.
+  Judged,
+};
+
+// A ranked set's ledge-grab limits (TimeOut::Judged): a player over the limit loses a timed-out
+// game, unless both are.
+struct LedgeLimits
+{
+  struct Character
+  {
+    int character = -1;
+    u8 limit = 0;
+    u8 tiebreak_limit = 0;
+    bool operator==(const Character&) const = default;
+  };
+  u8 limit = 0;
+  u8 tiebreak_limit = 0;
+  std::array<Character, 4> characters{};
+  u8 character_count = 0;
+
+  // The limit for a character (the game's character id) in a regular or tiebreak game.
+  int For(bool tiebreak, int character) const
+  {
+    for (u8 i = 0; i < character_count && i < characters.size(); ++i)
+    {
+      if (characters[i].character == character)
+        return tiebreak ? characters[i].tiebreak_limit : characters[i].limit;
+    }
+    return tiebreak ? tiebreak_limit : limit;
+  }
+  bool operator==(const LedgeLimits&) const = default;
+};
+
+// A competitive ruleset. The builtin ones are data (Games/Brawl/Rulesets/*.json, read through
+// Engine/Ruleset.h against Tools/orca/mods/ruleset.schema.json); nothing here names a game.
 struct Ruleset
 {
-  u8 id = 0;  // MatchBlock's ruleset byte
-  std::string_view name;
+  u8 id = 0;  // MatchBlock's ruleset byte (the file's "block")
+  std::string slug;  // the file's "id", as mod.json's "rulesets" lists it
+  std::string name;
   int stage_count = 0;
   StageMask starters = 0;
   StageMask counterpicks = 0;
@@ -81,10 +135,37 @@ struct Ruleset
   // Casual games give both players 15 seconds to name a stage, with a shorter grace.
   u16 casual_seconds = 15;
   u16 casual_grace_frames = 30;
-  // Short stage names for the overlay and logs.
-  std::array<std::string_view, MAX_STAGES> stage_names{};
+  // Stage names for the overlay and logs, and each stage's id in the game (Brawl and Project+:
+  // srStageKind).
+  std::array<std::string, MAX_STAGES> stage_names{};
+  std::array<u8, MAX_STAGES> stage_kinds{};
+
+  // A ranked set, and every locked match: stocks and minutes, who decides a time-out, the
+  // ledge-grab limits, the tiebreak game (with its own stocks and minutes) or none, and how many
+  // ties in a row void the set.
+  u8 stocks = 3;
+  u8 minutes = 8;
+  TimeOut time_out = TimeOut::Results;
+  LedgeLimits ledge{};
+  bool tiebreak = false;
+  u8 tiebreak_stocks = 1;
+  u8 tiebreak_minutes = 3;
+  u8 void_after_ties = 5;
+  // Ranked character select: a player still without a fighter this long after the other picked
+  // is a no-show.
+  u16 css_ready_seconds = 60;
+  // The queue's character select (Policy/Queue.h): its ready timer, and how long B is held to skip.
+  u16 queue_ready_seconds = 30;
+  u16 queue_skip_frames = 90;
+  // Ranked games 2+: each player's turn in the character order (Policy/CharOrder.h).
+  u16 order_pick_seconds = 45;
+
+  // A set with a tiebreak game writes each game's stocks and minutes itself (RankedSet.h); without
+  // one, the locks write the set's for every game (OnlineRules).
+  bool SetWritesGameRules() const { return tiebreak; }
 
   StageMask All() const { return static_cast<StageMask>((1u << stage_count) - 1); }
+  bool operator==(const Ruleset&) const = default;
 };
 
 // MatchBlock's ruleset ids.
@@ -92,13 +173,10 @@ constexpr u8 RULESET_NONE = 0;
 constexpr u8 RULESET_BRAWL_SUPERNOVA_2025 = 1;
 constexpr u8 RULESET_PPLUS_2024 = 2;
 
-// Project+ 2024: BF, PS2, SV, LM, ToT; counterpicks GHZ, BC, FH, DL. Winner strikes 2.
-const Ruleset& PPlus2024();
-// Brawl, Supernova 2025: BF, PS1, LC, SV, YI; counterpicks FD, Delfino. Winner may ban 1. Meta
-// Knight clause; Ice Climbers never on FD.
-const Ruleset& Brawl2025();
-// nullptr for none or an unknown id.
-const Ruleset* RulesetById(u8 id);
+// The rulesets themselves are data: the builtin module's are Games/Brawl/Rulesets.h (Project+ 2024:
+// BF, PS2, SV, LM, ToT; counterpicks GHZ, BC, FH, DL; winner strikes 2. Brawl Supernova 2025: BF,
+// PS1, LC, SV, YI; counterpicks FD, Delfino; winner may ban 1; Meta Knight clause; Ice Climbers
+// never on FD).
 
 // What a game's steps depend on.
 struct SetView
@@ -135,11 +213,12 @@ Plan PlanGame(const Ruleset& rules, const SetView& set);
 u32 CasualSeed(u32 room, u8 coin, int game);
 // One Prefer step for both players on the whole legal list. No Meta Knight clause.
 Plan PlanCasual(const Ruleset& rules, const SetView& set, u32 seed);
-// The random legal stage a player gets if their Prefer timer runs out. -1 if none is allowed.
+// The random legal stage a player gets if they name Random, or if their Prefer timer runs out
+// with nothing named. -1 if none is allowed.
 int CasualDefault(const Plan& plan, int port);
 // Which port's stage is played when the two differ (one bit of the seed).
 int CasualChoice(const Plan& plan);
-// The stage played from both preferences. -1 for a port that named none uses its default.
+// The stage played from both preferences. A port that named Random, or none, uses its default.
 int CasualResult(const Plan& plan, std::array<s8, 2> prefs);
 
 // Stages the player at `step` may act on, given this game's strikes and bans so far.
@@ -166,8 +245,9 @@ struct Progress
   StageMask struck = 0;  // stages struck or banned this game
   u16 frames = 0;        // left on this step's timer, grace included
   s8 picked = -1;        // -1 until a stage is picked
-  // Each port's proposed (ranked) or preferred (casual) stage, -1 for none.
-  std::array<s8, 2> prefs{-1, -1};
+  // Each port's proposed (ranked) or preferred (casual) stage, PREF_NONE for none, PREF_RANDOM for
+  // a casual Random.
+  std::array<s8, 2> prefs{PREF_NONE, PREF_NONE};
   bool operator==(const Progress&) const = default;
 };
 
@@ -185,16 +265,18 @@ bool Skip(const Ruleset& rules, const Plan& plan, Progress* progress);
 // Records the game's pick. False if the step doesn't allow `stage`.
 bool Pick(const Plan& plan, Progress* progress, int stage);
 // `port` proposes `stage`, or names it in a casual game. Two matching ranked proposals pick it;
-// two casual preferences pick CasualResult. False and no change if the stage isn't Proposable or
-// is already this port's proposal.
+// two casual preferences pick CasualResult. In a casual game `stage` may be PREF_RANDOM. False and
+// no change if the stage isn't Proposable (Random: not casual, or nothing allowed) or is already
+// this port's proposal.
 bool Propose(const Plan& plan, Progress* progress, int port, int stage);
-// Takes back `port`'s proposal. False if it had none or a stage is picked.
+// Takes back `port`'s proposal (a stage or Random). False if it had none or a stage is picked.
 bool Withdraw(Progress* progress, int port);
 // What a player may propose now; 0 once the stage is picked.
 StageMask Proposable(const Plan& plan, const Progress& progress);
 // A pick step with exactly one stage allowed picks it.
 void AutoPick(const Plan& plan, Progress* progress);
-// Advances the current step's timer one frame, applying its default when it runs out.
+// Advances the current step's timer one frame, applying its default when it runs out. A casual
+// Random stays in `prefs` (the result is the same as CasualResult's).
 void Tick(const Ruleset& rules, const Plan& plan, Progress* progress);
 // Whole seconds the timer shows, 0 during the grace. The first form uses the ruleset's grace.
 int SecondsShown(const Ruleset& rules, u16 frames);

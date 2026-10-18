@@ -12,6 +12,7 @@ struct GCPadStatus;
 namespace GCAdapter
 {
 void Init();
+bool IsInitialized();
 void ResetRumble();
 void Shutdown();
 void SetAdapterCallback(std::function<void(void)> func);

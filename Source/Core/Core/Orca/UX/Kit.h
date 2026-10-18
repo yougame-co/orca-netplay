@@ -209,8 +209,8 @@ struct GuideItem
   std::string label;
   bool operator==(const GuideItem&) const = default;
 };
-// Parses a hint into guide entries, e.g. "B to change · Hold Z to find someone else" becomes
-// B "Change" and Z "Hold: find someone else". Parts that name no button stay as words.
+// Parses a hint into guide entries, e.g. "B to change · Hold B to leave" becomes B "Change" and
+// B "Hold: leave". Parts that name no button stay as words.
 std::vector<GuideItem> GuideOf(std::string_view hint);
 // A control guide like the games' own, right-aligned at `right`: buttons in GameCube colours with
 // labels. Shrinks to as little as 70% to fit `max_width` (0 = unlimited). Returns its box.

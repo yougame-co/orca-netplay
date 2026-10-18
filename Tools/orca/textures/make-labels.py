@@ -78,7 +78,7 @@ LABELS = [
          box=(13, 17, 116, 39), style="pplus-css"),
 ]
 
-# The relabels (Core/Orca/UX/Relabel.h, ORCA.md "On-screen UI"): the game's big words say what
+# The relabels (Core/Orca/Games/Brawl/Relabel.h, ORCA.md "On-screen UI"): the game's big words say what
 # to do now. Orca marks each texture with an invisible value, so each label hashes to its own name:
 #   band-<game>-<n>   READY TO FIGHT! (MenSelchrReady01_2, C4 352x36): 1 PRESS START TO LOCK IN!,
 #                     2 WINNER PICKS FIRST!, 3 LOSER PICKS NOW!

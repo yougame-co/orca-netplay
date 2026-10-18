@@ -531,8 +531,8 @@ TEST(OrcaKit, AttentionBlinks)
 TEST(OrcaKit, GuideOfOrcasHints)
 {
   using G = Kit::GuideItem;
-  EXPECT_EQ(Kit::GuideOf("B to change \u00b7 Hold Z to find someone else"),
-            (std::vector<G>{{"B", "Change"}, {"Z", "Hold: find someone else"}}));
+  EXPECT_EQ(Kit::GuideOf("B to change \u00b7 Hold B to leave"),
+            (std::vector<G>{{"B", "Change"}, {"B", "Hold: leave"}}));
   EXPECT_EQ(Kit::GuideOf("Pick with A, then press Start to lock in"),
             (std::vector<G>{{"A", "Pick"}, {"Start", "Lock in"}}));
   EXPECT_EQ(Kit::GuideOf("Press Start to lock in"), (std::vector<G>{{"Start", "Lock in"}}));
@@ -547,7 +547,10 @@ TEST(OrcaKit, GuideOfOrcasHints)
             (std::vector<G>{{"X", "Ban"}, {"Y", "Skip"}}));
   EXPECT_EQ(Kit::GuideOf("bo wants Smashville \u00b7 A on it to agree"),
             (std::vector<G>{{"", "bo wants Smashville"}, {"A", "Agree"}}));
-  EXPECT_EQ(Kit::GuideOf("Hold Z to leave"), (std::vector<G>{{"Z", "Hold: leave"}}));
+  EXPECT_EQ(Kit::GuideOf("Hold B to leave"), (std::vector<G>{{"B", "Hold: leave"}}));
+  // The one-time tip on the queue's own select: a word, then the hold.
+  EXPECT_EQ(Kit::GuideOf("New \u00b7 Hold B to leave"),
+            (std::vector<G>{{"", "New"}, {"B", "Hold: leave"}}));
   EXPECT_EQ(Kit::GuideOf("Your turn: X on a stage strikes it \u00b7 A proposes a stage"),
             (std::vector<G>{{"X", "Strike"}, {"A", "Propose a stage"}}));
   EXPECT_TRUE(Kit::GuideOf("").empty());

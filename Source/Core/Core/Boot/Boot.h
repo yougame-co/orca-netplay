@@ -204,6 +204,9 @@ public:
   virtual bool LoadIntoMemory(Core::System& system, bool only_in_mem1 = false) const = 0;
   virtual bool LoadSymbols(const Core::CPUThreadGuard& guard, PPCSymbolDB& ppc_symbol_db,
                            const std::string& filename) const = 0;
+  // Orca: the executable's file as read, once, which is what boots (a flat bundle's signature is
+  // checked on it). No reader rewrites these: one that has to (ElfReader) parses its own copy.
+  const std::vector<u8>& GetBytes() const { return m_bytes; }
 
 protected:
   std::vector<u8> m_bytes;

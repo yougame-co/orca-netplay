@@ -13,6 +13,7 @@
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
 
+#include "VideoBackends/D3DCommon/DeviceLost.h"
 #include "VideoCommon/VideoConfig.h"
 
 static bool IsTearingSupported(IDXGIFactory2* dxgi_factory)
@@ -59,13 +60,6 @@ static const char* ResizeErrorName(HRESULT hr)
   default:
     return "error";
   }
-}
-
-// Orca: the device is gone and never comes back, so a picture never will either.
-static bool DeviceLost(HRESULT hr)
-{
-  return hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET ||
-         hr == DXGI_ERROR_DEVICE_HUNG || hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR;
 }
 
 namespace D3DCommon
@@ -174,7 +168,9 @@ bool SwapChain::CreateSwapChain(bool stereo, bool hdr)
 
   if (FAILED(hr))
   {
-    PanicAlertFmt("Failed to create swap chain: {}", Common::HRWrap(hr));
+    // Orca: a lost device is reported and stops the run (DeviceLost.h); anything else is a panic.
+    if (!CheckDeviceLost(hr, "a new swap chain"))
+      PanicAlertFmt("Failed to create swap chain: {}", Common::HRWrap(hr));
     return false;
   }
 
@@ -219,10 +215,18 @@ bool SwapChain::CreateSwapChain(bool stereo, bool hdr)
   m_buffers_error = S_OK;
   if (!CreateSwapChainBuffers())
   {
-    if (FAILED(m_buffers_error))
+    if (CheckDeviceLost(m_buffers_error, "the swap chain's buffers"))
+    {
+      // Reported, and the run stops (DeviceLost.h).
+    }
+    else if (FAILED(m_buffers_error))
+    {
       PanicAlertFmt("Failed to create swap chain buffers: {}", Common::HRWrap(m_buffers_error));
+    }
     else
+    {
       PanicAlertFmt("Failed to create swap chain buffers");
+    }
     DestroySwapChainBuffers();
     m_swap_chain.Reset();
     return false;
@@ -276,9 +280,14 @@ bool SwapChain::ResizeSwapChain()
   // build (Orca 0.3.30-0.3.34 on Windows, exit 0x80000003). The backends skip the picture and ask
   // for the resize again instead (Gfx::BindBackbuffer); the game's log says why, once per change.
   // stderr, not the VIDEO log: an embedded Orca's log has only NETPLAY and ROLLBACK.
+  m_buffers_error = S_OK;
   const bool ok = CreateSwapChainBuffers();
   if (ok)
     m_frames_without_buffers = 0;
+  // A lost device never draws again: reported once (its reason in the log), and the run stops like
+  // any other stop (DeviceLost.h). The resize's result or GetBuffer's may be the first to say so.
+  const bool lost = !ok && (CheckDeviceLost(resize_hr, "a swap chain resize") ||
+                            CheckDeviceLost(m_buffers_error, "the swap chain's buffers"));
   if (ok != m_buffers_ok || (!ok && resize_hr != m_resize_error))
   {
     RECT client = {};
@@ -295,16 +304,13 @@ bool SwapChain::ResizeSwapChain()
                    "window (ResizeBuffers 0x%08lX, %s)%s\n",
                    client.right - client.left, client.bottom - client.top,
                    static_cast<unsigned long>(resize_hr), ResizeErrorName(resize_hr),
-                   DeviceLost(resize_hr) ? "; the graphics device is lost, Orca stops" :
-                                           "; no picture until a resize works");
+                   lost ? "; the graphics device is lost, Orca stops" :
+                          "; no picture until a resize works");
     }
     std::fflush(stderr);
   }
   m_buffers_ok = ok;
   m_resize_error = ok ? S_OK : resize_hr;
-  // A lost device never draws again: end as before (the app reports the crash), now with the why.
-  if (!ok && DeviceLost(resize_hr))
-    Crash();
   return ok;
 }
 
@@ -384,7 +390,10 @@ bool SwapChain::Present()
   HRESULT hr = m_swap_chain->Present(static_cast<UINT>(g_ActiveConfig.bVSyncActive), present_flags);
   if (FAILED(hr))
   {
-    WARN_LOG_FMT(VIDEO, "Swap chain present failed: {}", Common::HRWrap(hr));
+    // Orca: a hung or removed device usually says so here first (DXGI_ERROR_DEVICE_REMOVED); it
+    // used to be a warning, and the next frame drew on the dead device.
+    if (!CheckDeviceLost(hr, "present"))
+      WARN_LOG_FMT(VIDEO, "Swap chain present failed: {}", Common::HRWrap(hr));
     return false;
   }
 

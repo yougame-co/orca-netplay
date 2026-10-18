@@ -1,6 +1,8 @@
 add_library(videod3dcommon
   D3DCommon.cpp
   D3DCommon.h
+  DeviceLost.cpp
+  DeviceLost.h
   FxcCache.cpp
   FxcCache.h
   Shader.cpp

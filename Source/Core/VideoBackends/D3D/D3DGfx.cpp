@@ -26,6 +26,7 @@
 #include "VideoBackends/D3D/DXPipeline.h"
 #include "VideoBackends/D3D/DXShader.h"
 #include "VideoBackends/D3D/DXTexture.h"
+#include "VideoBackends/D3DCommon/DeviceLost.h"
 
 #include "VideoCommon/BPFunctions.h"
 #include "VideoCommon/FramebufferManager.h"
@@ -140,12 +141,17 @@ void Gfx::SetViewport(float x, float y, float width, float height, float near_de
 
 void Gfx::Draw(u32 base_vertex, u32 num_vertices)
 {
+  // Orca: nothing is drawn on a lost device while the run stops (D3DCommon/DeviceLost.h).
+  if (D3DCommon::IsDeviceLost())
+    return;
   D3D::stateman->Apply();
   D3D::context->Draw(num_vertices, base_vertex);
 }
 
 void Gfx::DrawIndexed(u32 base_index, u32 num_indices, u32 base_vertex)
 {
+  if (D3DCommon::IsDeviceLost())
+    return;
   D3D::stateman->Apply();
   D3D::context->DrawIndexed(num_indices, base_index, base_vertex);
 }
@@ -153,6 +159,8 @@ void Gfx::DrawIndexed(u32 base_index, u32 num_indices, u32 base_vertex)
 void Gfx::DispatchComputeShader(const AbstractShader* shader, u32 groupsize_x, u32 groupsize_y,
                                 u32 groupsize_z, u32 groups_x, u32 groups_y, u32 groups_z)
 {
+  if (D3DCommon::IsDeviceLost())
+    return;
   D3D::stateman->SetComputeShader(static_cast<const DXShader*>(shader)->GetD3DComputeShader());
   D3D::stateman->SyncComputeBindings();
   D3D::context->Dispatch(groups_x, groups_y, groups_z);
@@ -160,6 +168,10 @@ void Gfx::DispatchComputeShader(const AbstractShader* shader, u32 groupsize_x, u
 
 bool Gfx::BindBackbuffer(const ClearColor& clear_color)
 {
+  // Orca: a lost device shows no more pictures (D3DCommon/DeviceLost.h), and its swap chain may be
+  // gone.
+  if (D3DCommon::IsDeviceLost())
+    return false;
   CheckForSwapChainChanges();
   // Orca: no back buffer after a resize the driver refused (D3DCommon::SwapChain::ResizeSwapChain):
   // no picture this frame, and the resize is asked for again now and then.
@@ -175,7 +187,7 @@ bool Gfx::BindBackbuffer(const ClearColor& clear_color)
 
 void Gfx::PresentBackbuffer()
 {
-  if (m_swap_chain->GetFramebuffer())
+  if (m_swap_chain->GetFramebuffer() && !D3DCommon::IsDeviceLost())
     m_swap_chain->Present();
 }
 

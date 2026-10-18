@@ -1216,7 +1216,7 @@ std::string Plain(std::string_view verb)
 }
 
 // Parses one hint clause. Recognised shapes (after an optional "Your turn: " prefix):
-//   "[Press |Hold ]<button> to <what>"   B to change, Hold Z to find someone else
+//   "[Press |Hold ]<button> to <what>"   B to change, Hold B to leave
 //   "<button> on <thing> to <what>"      A on it to agree
 //   "<button> on <thing> <does> it"      X on a stage strikes it
 //   "<button> on <thing>"                A on a character
@@ -1633,7 +1633,7 @@ void DrawDemo(ImDrawList* dl, ImVec2 o, ImVec2 size, float u, double now_s)
   Badge(dl, at(0.62f, 0.71f), u, "READY", Tone::Gold, 3.2f);
   const Box waiting = Badge(dl, at(0.77f, 0.71f), u, "WAITING", Tone::Grey, 3.2f);
   caption(ImVec2(waiting.max.x + 1.5f * u, waiting.min.y + 0.8f * u), "Badge", Align::Left);
-  LabelPlate(dl, at(0.70f, 0.58f), u, "Hold Z to find someone else", 2.6f, Align::Centre, Tone::Green);
+  LabelPlate(dl, at(0.70f, 0.58f), u, "Hold B to leave", 2.6f, Align::Centre, Tone::Green);
   // Portrait frame, turn frame, set dots and the searching ring.
   const ImVec2 f0 = at(0.80f, 0.79f), f1 = at(0.88f, 0.95f);
   PortraitFrame(dl, f0, f1, u, Tone::Gold);

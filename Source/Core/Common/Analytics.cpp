@@ -9,6 +9,7 @@
 #include <type_traits>
 
 #include "Common/CommonTypes.h"
+#include "Common/Network.h"
 #include "Common/StringUtil.h"
 #include "Common/Thread.h"
 
@@ -210,7 +211,7 @@ HttpAnalyticsBackend::~HttpAnalyticsBackend() = default;
 
 void HttpAnalyticsBackend::Send(std::string report)
 {
-  if (m_http.IsValid())
+  if (!OfflineReplay() && m_http.IsValid())
     m_http.Post(m_endpoint, report);
 }
 }  // namespace Common

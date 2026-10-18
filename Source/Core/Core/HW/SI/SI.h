@@ -61,6 +61,9 @@ public:
   // wait for the next poll.
   void RelatchInputs();
   u32 GetInLength() const { return m_com_csr.INLNGTH; }
+  // Orca: a channel's output register as the game last wrote it, the command every poll sends (a
+  // GameCube controller's holds its motor, Orca/UX/Rumble.h). Part of every snapshot. Read only.
+  u32 GetChannelOut(int channel) const { return m_channel[channel].out.hex; }
 
   void RemoveDevice(int device_number);
   void AddDevice(SIDevices device, int device_number);

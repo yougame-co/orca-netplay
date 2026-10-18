@@ -20,16 +20,13 @@
 
 #include "Common/HookableEvent.h"
 #include "Core/Core.h"
-#include "Core/Orca/UX/CharOrder.h"
 #include "Core/Orca/UX/Kit.h"
-#include "Core/Orca/UX/NativeText.h"
-#include "Core/Orca/UX/OnlineMenu.h"
-#include "Core/Orca/UX/Queue.h"
-#include "Core/Orca/UX/RankedPPlus.h"
-#include "Core/Orca/UX/RankedSet.h"
-#include "Core/Orca/UX/Relabel.h"
+#include "Core/Orca/UX/OrbCombo.h"
+#include "Core/Orca/UX/QueueApp.h"
+#include "Core/Orca/UX/RankedSteps.h"
+#include "Core/Orca/UX/Search.h"
 #include "Core/Orca/UX/SetEnd.h"
-#include "Core/Orca/UX/StageCursors.h"
+#include "Core/Orca/UX/UX.h"
 #include "Core/Orca/UX/YgCard.h"
 #include "Core/Orca/UX/YgOrbDraw.h"
 #include "VideoCommon/AsyncRequests.h"
@@ -514,10 +511,12 @@ void PictureRect(ImVec2* pic, ImVec2* pic_size)
 
 // The stage select's two cursors: each player's pointer and proposed stage in their colour, or one
 // gold frame when both propose the same stage. Positions come from the match block.
-void DrawStageCursors(ImDrawList* dl, const StageCursors::View& v, ImVec2 pic, ImVec2 pic_size,
+void DrawStageCursors(ImDrawList* dl, const Orca::Engine::Display& d, ImVec2 pic, ImVec2 pic_size,
                       float unit, double now_s)
 {
-  const StageCursors::Layout* layout = StageCursors::LayoutFor(v.game);
+  namespace StageCursors = Orca::Engine::Cursors;
+  const StageCursors::View& v = d.cursors;
+  const StageCursors::Layout* layout = d.layout;
   if (!layout)
     return;
   const auto at16 = [&](int x16, int y16) {
@@ -528,15 +527,19 @@ void DrawStageCursors(ImDrawList* dl, const StageCursors::View& v, ImVec2 pic, I
   for (int port = 0; port < 2; ++port)
   {
     const StageCursors::View::Player& p = v.players[port];
-    if (!p.present || p.proposal < 0)
+    if (!p.present || !Ranked::Named(p.proposal))
       continue;
-    const StageCursors::Tile* tile = StageCursors::TileOf(*layout, p.proposal, v.page);
-    if (!tile)
+    // A stage's tile, or the Random button as drawn for a casual Random.
+    const StageCursors::Rect* rect = d.proposals[port];
+    if (p.proposal == Ranked::PREF_RANDOM)
+      rect = layout->random_art.x0 < layout->random_art.x1 ? &layout->random_art :
+                                                             &layout->random_button;
+    if (!rect || rect->x0 >= rect->x1 || rect->y0 >= rect->y1)
       continue;
     const bool both = v.players[1 - port].present && v.players[1 - port].proposal == p.proposal;
     if (both && port == 1)
       continue;
-    const ImVec2 c0 = at16(tile->rect.x0, tile->rect.y1), c1 = at16(tile->rect.x1, tile->rect.y0);
+    const ImVec2 c0 = at16(rect->x0, rect->y1), c1 = at16(rect->x1, rect->y0);
     Kit::Frame(dl, ImVec2(std::min(c0.x, c1.x), std::min(c0.y, c1.y)),
                ImVec2(std::max(c0.x, c1.x), std::max(c0.y, c1.y)), unit,
                both ? Kit::Tone::Gold : Kit::PortTone(port),
@@ -558,7 +561,7 @@ void DrawStageCursors(ImDrawList* dl, const StageCursors::View& v, ImVec2 pic, I
   std::array<StageCursors::TurnCue, 2> cues;
   for (int port = 0; port < 2; ++port)
   {
-    cues[port] = StageCursors::TurnText(v, port);
+    cues[port] = d.cues[port];
     const bool acting = cues[port].mode == StageCursors::TurnCue::Mode::Acting;
     if (acting && (s_mode[port] != StageCursors::TurnCue::Mode::Acting || s_kind[port] != v.kind))
       s_since[port] = now_s;
@@ -605,7 +608,7 @@ void DrawStageCursors(ImDrawList* dl, const StageCursors::View& v, ImVec2 pic, I
                  clamp_min, clamp_max, cue.local ? blink.on : 0.0f);
   }
   // Brawl's Meta Knight clause (no strikes this game), shown large for the first 3 s.
-  const std::string mk = StageCursors::MkClauseNote(v);
+  const std::string& mk = d.mk_note;
   const double shown = now_s - s_opened;
   if (!mk.empty() && shown < 3.0)
   {
@@ -669,10 +672,11 @@ struct Scene
   bool legend = false;  // Project+'s stage select legend is relabelled
   std::array<std::string, 4> labels;
   std::array<bool, 4> locked{};
-  StageCursors::View cursors;
+  // The game module's display: the stage select cursors and what is drawn from them.
+  Orca::Engine::Display display;
   int picker = -1;
   std::string picker_ribbon;  // "YOUR PICK" / "BO PICKS" on the picker's portrait
-  RankedSet::Dots dots;
+  Orca::Engine::SetDots dots;
   bool searching = false;
 
   bool Empty() const
@@ -682,7 +686,8 @@ struct Scene
            rules.empty() && rules_note.empty() && hint.empty() &&
            std::all_of(labels.begin(), labels.end(),
                        [](const std::string& l) { return l.empty(); }) &&
-           std::none_of(locked.begin(), locked.end(), [](bool l) { return l; }) && !cursors.on &&
+           std::none_of(locked.begin(), locked.end(), [](bool l) { return l; }) &&
+           !display.cursors.on &&
            picker < 0 && !dots.on && !searching && band_seconds < 0 && line_seconds < 0 &&
            set_end.Empty();
   }
@@ -691,6 +696,9 @@ struct Scene
 Scene Gather(double now)
 {
   Scene s;
+  // What the game module shows, read once for this frame.
+  s.display = Game().Show();
+  const Orca::Engine::Display& game = s.display;
   s_overlay.Update(s_demo ? DemoLink(now) : ViewOf(Events::GetLinkStats()), now);
   s.f = s_overlay.View(now, s_stats.load(std::memory_order_relaxed),
                        s_perf.load(std::memory_order_relaxed));
@@ -714,8 +722,7 @@ Scene Gather(double now)
     s.locked = s_queue_locked;
   }
   // With READY TO FIGHT! relabelled, the turn timer moves onto the band.
-  const Relabel::Shown words = Relabel::Current();
-  const bool band_clock = words.band != Relabel::Band::Game && words.band_up;
+  const bool band_clock = game.band_clock;
   const auto take = [](int* seconds, std::string* line) {
     const int t = TakeTimer(line);
     if (*seconds < 0)
@@ -728,19 +735,24 @@ Scene Gather(double now)
   }
   // Skip what the game's own text boxes already say: a named plate needs no tab, and a rules bar
   // showing the queue line replaces the top lines. Local hints move to the control guide.
-  const u8 native = NativeText::Shown();
   for (int port = 0; port < 4; ++port)
   {
-    if (native & (1 << port))
+    if (game.plates & (1 << port))
       s.labels[port].clear();
   }
-  if ((native & NativeText::SHOWN_RULES) && !joining)
+  if (game.rules_bar && !joining)
   {
     // On the solo queue character select the bar says it all (but a matched joiner's bar still
     // says it is searching).
-    s.hint = Queue::OnSoloCss() ? std::string() : std::move(s.search_note);
+    s.hint = QueueApp::OnSoloCss() ? std::string() : std::move(s.search_note);
     s.search.clear();
     s.search_note.clear();
+  }
+  // The one-time "New · Hold B to leave" on the queue's own select, in the control guide.
+  if (QueueApp::OnSoloCss())
+  {
+    if (const std::string& tip = game.tip; !tip.empty())
+      s.hint = s.hint.empty() ? tip : s.hint + " \u00b7 " + tip;
   }
   // A ranked set's lines: the stage flow's, else the set score; under it the stage flow's turn,
   // else the character order's.
@@ -756,12 +768,11 @@ Scene Gather(double now)
   }
   if (s.rules.empty() && s.rules_note.empty())
   {
-    const RankedPPlus::Lines ranked = RankedPPlus::CurrentLines();
-    s.rules = ranked.set;
-    s.rules_note = ranked.turn;
+    s.rules = game.ranked_set;
+    s.rules_note = game.ranked_turn;
   }
   if (s.rules.empty())
-    s.rules = RankedSet::CurrentScoreLine();
+    s.rules = game.score_line;
   if (s.rules_note.empty())
     s.rules_note = rule_line;
   if (band_clock)
@@ -771,7 +782,7 @@ Scene Gather(double now)
   }
   // With STAGE SELECT relabelled to show the turn, the timer moves beside the label, the score to
   // the dots and the turn's buttons to the guide.
-  if (words.line != Relabel::LINE_GAME)
+  if (game.line_relabelled)
   {
     take(&s.line_seconds, &s.rules);
     take(&s.line_seconds, &s.rules_note);
@@ -786,25 +797,24 @@ Scene Gather(double now)
     s.rules.clear();
     s.rules_note.clear();
   }
-  s.legend = words.legend;
+  s.legend = game.legend;
   // The rules bar already shows these, and the solo queue character select has no set yet.
-  if ((native & NativeText::SHOWN_RULES) || Queue::OnSoloCss())
+  if (game.rules_bar || QueueApp::OnSoloCss())
   {
     s.rules.clear();
     s.rules_note.clear();
   }
-  s.cursors = StageCursors::Current();
   // Picker and dots on the character and stage selects only, not on the solo queue character
   // select, which has no opponent yet.
-  if (Queue::OnQueueCss())
+  if (QueueApp::OnQueueCss())
   {
-    s.picker = CharOrder::CurrentPicker();
+    s.picker = game.picker;
     if (s.picker >= 0)
-      s.picker_ribbon = CharOrder::CurrentPickerRibbon();
+      s.picker_ribbon = game.picker_ribbon;
   }
-  if ((Queue::OnQueueCss() && !Queue::OnSoloCss()) || s.cursors.on)
-    s.dots = RankedSet::CurrentDots();
-  s.searching = Queue::OnSoloCss() && Queue::SoloReady();
+  if ((QueueApp::OnQueueCss() && !QueueApp::OnSoloCss()) || game.cursors.on)
+    s.dots = game.dots;
+  s.searching = QueueApp::OnSoloCss() && QueueApp::SoloReady();
   return s;
 }
 
@@ -935,7 +945,7 @@ Kit::Box DrawTopCentre(ImDrawList* dl, const Scene& s, ImVec2 pic, ImVec2 pic_si
     if (seconds < 0)
       seconds = TakeTimer(&note);
   }
-  if (Kit::CurrentLook() == Kit::Look::ProjectPlus && Queue::OnQueueCss() && !groups.empty())
+  if (Kit::CurrentLook() == Kit::Look::ProjectPlus && QueueApp::OnQueueCss() && !groups.empty())
   {
     // Project+'s queue character select: draw the lines over its own rules bar, which is locked
     // in a queue room anyway. The timer goes under the bar's right end and the local hint in the
@@ -1004,7 +1014,7 @@ void DrawScene()
   }
   // Load the chat font before any chat needs it.
   Yg::Warm();
-  const YgOrb::Model::View yg = YgOrb::Current().At(now);
+  const YgOrb::Model::View yg = YgOrb::HostView(now);
   // Dolphin's OSD messages are drawn top left before this. While the YouGame button shows they
   // move below it, from the next frame.
   if (!yg.on)
@@ -1024,8 +1034,8 @@ void DrawScene()
   const double now_s = ImGui::GetTime();
   const OverlayModel::Frame& f = s.f;
   // Stage select cursors first, so all text draws over them.
-  if (s.cursors.on)
-    DrawStageCursors(dl, s.cursors, pic, pic_size, unit, now_s);
+  if (s.display.cursors.on)
+    DrawStageCursors(dl, s.display, pic, pic_size, unit, now_s);
   // Character select panels: a name tab where the game's plate shows no name, a gold LOCKED IN
   // frame for locked-in players, and a blinking frame in port colour on the current picker with
   // YOUR PICK / BO PICKS. The empty seat gets a ring while the queue searches.
@@ -1207,6 +1217,7 @@ void DrawScene()
     SetEnd::Draw(dl, unit, vis.x, vis.y, vis_size.x, vis_size.y, s.set_end);
   // The YouGame button goes on top, where the app's own button is.
   YgOrb::DrawButton(dl, yg);
+  YgOrb::DrawHostControls(dl, yg);
 }
 
 // The dim (SetDim) over the whole display, last on the foreground list so it covers everything.
@@ -1319,6 +1330,17 @@ void ShowToast(std::string text)
   s_overlay.AddToast(std::move(text), NowMs());
 }
 
+void ShowRestartForMatch()
+{
+  ShowToast("Restarting the game for this match");
+}
+
+void ShowRestartForJoin(std::string_view name)
+{
+  ShowToast(fmt::format("Restarting the game in 3 seconds so {} can join. "
+                       "Unsaved progress will be lost.", name.empty() ? "your friend" : name));
+}
+
 void SetQueueLines(std::string line, std::string note, std::array<std::string, 4> labels,
                    std::array<bool, 4> locked)
 {
@@ -1400,12 +1422,15 @@ void InitOverlay()
     s_stats = v[0] == '2' ? Stats::Full : Stats::Ping;
   if (const char* v = std::getenv("ORCA_UX_OVERLAY_DEMO"); v && v[0] == '1')
     s_demo = true;
-  // A pause must not count as a slow frame. Runs on whichever thread pauses.
+  // A pause must not count as a slow frame. Runs on whichever thread pauses. A paused or stopping
+  // game reads no pad, so a held controller shortcut ends there (hold-to-talk, UX/OrbCombo.h).
   s_state_hook = Core::AddOnStateChangedCallback([](Core::State state) {
     if (state == Core::State::Paused)
       s_overlay.Pause(NowMs());
     else if (state == Core::State::Running)
       s_overlay.Resume(NowMs());
+    if (state == Core::State::Paused || state == Core::State::Stopping)
+      LocalPadStopped();
   });
   OSD::SetHostOverlay(&Draw, &Kit::ReleaseGpu);
 }

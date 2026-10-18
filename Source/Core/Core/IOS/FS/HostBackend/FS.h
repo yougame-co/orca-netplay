@@ -7,6 +7,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -24,7 +25,10 @@ namespace IOS::HLE::FS
 class HostFileSystem final : public FileSystem
 {
 public:
-  HostFileSystem(std::string root_path, std::vector<NandRedirect> nand_redirects = {});
+  // cluster_quota: 0 for none; otherwise a write that would leave the NAND's files using more
+  // clusters fails with NoFreeSpace, as on a full Wii NAND (Orca sessions: USABLE_CLUSTERS).
+  HostFileSystem(std::string root_path, std::vector<NandRedirect> nand_redirects = {},
+                 u64 cluster_quota = 0);
   ~HostFileSystem() override;
 
   void DoState(PointerWrap& p) override;
@@ -71,6 +75,10 @@ public:
   // True once if journaling or undoing failed since the last call: the NAND may no longer match
   // what a snapshot expects.
   bool TakeJournalError() { return std::exchange(m_journal_error, false); }
+  // The journal keeps at most this many bytes of destroyed contents; a change past it is kept
+  // without them, and a rollback that undoes it fails (TakeJournalError) instead of memory growing.
+  static constexpr u64 JOURNAL_MAX_BYTES = u64{128} << 20;
+  u64 JournalBytes() const { return m_journal_bytes; }
   // Orca drop-in: the NAND's host folder, and re-reading the FST after its files were replaced
   // with a keyframe's (no handle may be open on them: load the keyframe's state next).
   const std::string& HostRoot() const { return m_root_path; }
@@ -83,6 +91,7 @@ public:
   {
     ResetFst();
     LoadFst();
+    m_usage.reset();
   }
 
 private:
@@ -132,6 +141,8 @@ private:
     std::vector<std::string> removed_contents;
     FstEntry root_fst;
     FstEntry redirect_fst;
+    // Its destroyed bytes were not kept (JOURNAL_MAX_BYTES): undoing it can't restore the NAND.
+    bool lossy = false;
   };
   u64 JournalMark();
   void JournalUndo(u64 mark);
@@ -141,6 +152,16 @@ private:
   void JournalRemoved(const std::string& host_path);
   void JournalWritten(const std::string& host_path, File::IOFile& file, u64 offset, u64 count);
   void JournalRenamed(const std::string& old_host_path, const std::string& new_host_path);
+  // Counts a new entry's bytes; past JOURNAL_MAX_BYTES drops them and flags a journal error.
+  void JournalAccount(JournalEntry& entry);
+  void JournalForget(const JournalEntry& entry);
+  static u64 JournalEntryBytes(const JournalEntry& entry);
+
+  // The quota (cluster_quota, and TOTAL_INODES files and directories): false if growing a file
+  // from old_size to new_size, or creating one more entry, would pass it.
+  ExtendedDirectoryStats& Usage();
+  bool ReserveClusters(u64 old_size, u64 new_size);
+  bool ReserveInode();
 
   Handle* GetHandleFromFd(Fd fd);
   Fd ConvertHandleToFd(const Handle* handle) const;
@@ -189,6 +210,13 @@ private:
   u64 m_journal_next_seq = 0;
   u64 m_journal_mark = 0;
   std::deque<JournalEntry> m_journal;
+  u64 m_journal_bytes = 0;
+  u64 m_journal_peak_logged = 0;
+
+  u64 m_cluster_quota = 0;
+  // What the NAND's files use, while known: counted from the host folder when needed, then kept up
+  // to date by writes and creates; any other change forgets it.
+  std::optional<ExtendedDirectoryStats> m_usage;
 };
 
 }  // namespace IOS::HLE::FS

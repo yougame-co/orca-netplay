@@ -7,13 +7,16 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -25,22 +28,36 @@
 #endif
 
 #include <fmt/format.h>
+#include "Common/Config/Config.h"
 #include "Common/FileUtil.h"
+#include "Common/Image.h"
+#include "Common/IOFile.h"
+#include "Common/Logging/LogManager.h"
+#include "Common/ScopeGuard.h"
 #include <gtest/gtest.h>
 #include <imgui.h>
 
 #include "Core/Orca/Session/Events.h"
+#include "Core/Core.h"
+#include "Core/Orca/Bridge.h"
+#include "Core/Orca/Session/Replay.h"
+#include "Core/Orca/Status.h"
 #include "Core/Orca/UX/Chat.h"
 #include "Core/Orca/UX/ControllerSource.h"
 #include "Core/Orca/UX/Controllers.h"
-#include "Core/Orca/UX/FreeSpace.h"
+#include "Core/Orca/Games/Brawl/FreeSpace.h"
+#include "Core/Orca/Games/Brawl/MatchBlock.h"
 #include "Core/Orca/UX/GamePatches.h"
-#include "Core/Orca/UX/NameTags.h"
+#include "Core/Orca/Engine/GuestMemory.h"
+#include "Core/Orca/Games/Brawl/NameTags.h"
 #include "Core/Orca/UX/OrbCombo.h"
 #include "Core/Orca/UX/Overlay.h"
+#include "Core/Orca/UX/OverlayKey.h"
 #include "Core/Orca/UX/YgOrbDraw.h"
+#include "Core/Rollback/Rollback.h"
 #include "InputCommon/GCPadStatus.h"
 #include "VideoCommon/OnScreenDisplay.h"
+#include "VideoCommon/FrameDumper.h"
 
 using namespace Orca::UX;
 
@@ -384,10 +401,10 @@ TEST(OrcaUXControllers, RefusesMalformedSnapshots)
   EXPECT_FALSE(
       ParseSnapshotEvent(Event(false, "", PadJson(0, "standard", "[2,0,0,0]", Buttons17())))
           .has_value());
-  EXPECT_FALSE(ParseSnapshotEvent(R"({"type":"other","snapshot":{}})").has_value());
-  EXPECT_FALSE(ParseSnapshotEvent("not json").has_value());
+  EXPECT_FALSE(ParseSnapshotEvent(std::string_view{R"({"type":"other","snapshot":{}})"}).has_value());
+  EXPECT_FALSE(ParseSnapshotEvent(std::string_view{"not json"}).has_value());
   EXPECT_FALSE(ParseSnapshotEvent(std::string(100, '[') + std::string(100, ']')).has_value());
-  EXPECT_FALSE(ParseSnapshotEvent(R"({"type":"controllers","n":1e999})").has_value());
+  EXPECT_FALSE(ParseSnapshotEvent(std::string_view{R"({"type":"controllers","n":1e999})"}).has_value());
   EXPECT_FALSE(
       ParseSnapshotEvent(R"({"type":"controllers","n":)" + std::string(400, '9') + "}").has_value());
 }
@@ -1740,6 +1757,15 @@ TEST(OrcaUXFreeSpace, TheBlockAndTheCavesFitAndNoShippedPatchStraysIntoThem)
   using namespace FreeSpace;
   // Room for the ~96-byte header and set state, and code space for the lock patches.
   EXPECT_GE(kMatchBlock.Size(), 96u);
+  // kMatchBlock is all of the block, as MatchBlock.h lays it out (its last field ends at the next
+  // relocated word), and its head the first 512 bytes the block's codecs count in.
+  EXPECT_EQ(kMatchBlock.begin, MatchBlock::BASE);
+  EXPECT_EQ(kMatchBlock.end, MatchBlock::FRIENDS_END);
+  EXPECT_EQ(kMatchBlock.Size(), MatchBlock::FULL_SIZE);
+  EXPECT_EQ(kMatchBlockHead.Size(), 512u);
+  EXPECT_EQ(kMatchBlockHead.Size(), MatchBlock::SIZE);
+  for (const FreeSpace::Range& cave : kCodeCaves)
+    EXPECT_FALSE(cave.Overlaps(kMatchBlock)) << std::hex << cave.begin;
   u32 cave_bytes = 0;
   for (const FreeSpace::Range& cave : kCodeCaves)
     cave_bytes += cave.Size();
@@ -1789,6 +1815,13 @@ TEST(OrcaUXNameTags, UsernamesBecomeBrawlTags)
   EXPECT_EQ(BrawlTag("longusername"), u"LONGU");
   EXPECT_EQ(BrawlTag("sandbox-ada"), u"SANDB");
   EXPECT_EQ(BrawlTag("a_b c"), u"A-B-C");
+  // An anonymized replay name fits the tag.
+  EXPECT_EQ(BrawlTag("Player 2", true), u"P2");
+  EXPECT_EQ(BrawlTag("Player 12", true), u"P12");
+  EXPECT_EQ(BrawlTag("Player X", true), u"PLAYE");
+  // Normal play keeps compat 30's tag bytes, including names matching replay labels.
+  EXPECT_EQ(BrawlTag("Player 2"), u"PLAYE");
+  EXPECT_EQ(BrawlTag("Player 12"), u"PLAYE");
   EXPECT_EQ(BrawlTag("x.y!?"), u"X.Y!?");
   EXPECT_EQ(BrawlTag("H4l9x"), u"H4L9X");
   EXPECT_EQ(BrawlTag("j\xc3\xa9r\xc3\xb4me"), u"JRME");  // non-ASCII dropped, never transliterated
@@ -1849,6 +1882,122 @@ TEST(OrcaUXNameTags, ReusesTheSameNameAndLeavesAChosenTagAlone)
   EXPECT_EQ(m.NameId(1), 3);
   for (int slot : {1, 2, 4, 119})
     EXPECT_EQ(m.TagName(slot), u"") << slot;  // nothing new was made
+}
+
+TEST(OrcaUXNameTags, ReplayViewNamesReplaceAWornTagAndLaterUpdates)
+{
+  FakeBrawl m;
+  m.SetTag(0, u"FILE");
+  m.Join(0);
+  m.W32(FakeBrawl::Area(0) + 0x1C8, 0);
+  EXPECT_EQ(ApplyNameTags(m, {{0, "Alice", false}}, true), 0);
+  EXPECT_EQ(m.TagName(0), u"ALICE");
+  EXPECT_EQ(m.NameId(0), 0);
+  const int writes = m.writes;
+  ApplyNameTags(m, {{0, "Alice", false}}, true);
+  EXPECT_EQ(m.writes, writes);
+  ApplyNameTags(m, {{0, "Bob", false}}, true);
+  EXPECT_EQ(m.TagName(0), u"BOB");
+  ApplyNameTags(m, {{0, "\xf0\x9f\x90\xac", false}}, true);
+  EXPECT_EQ(m.TagName(0), u"P1");
+}
+
+TEST(OrcaUXNameTags, LiveNamesAndNameFreeReplayKeepTagDecisions)
+{
+  FakeBrawl live;
+  live.SetTag(0, u"MINE");
+  for (int port = 0; port < 3; ++port)
+    live.Join(port);
+  live.W32(FakeBrawl::Area(0) + 0x1C8, 0);
+  const std::vector<Orca::Events::PortInfo> ports{{0, "Alice", false},
+                                                {1, "\xf0\x9f\x90\xac", true},
+                                                {2, "sandbox-ada", true}};
+  const auto stored = Orca::Net::RecordingPorts(ports);
+  FakeBrawl played = live;
+  for (int i = 0; i < 60; ++i)
+  {
+    Orca::Net::ReplayFrame frame;
+    {
+      const Orca::Net::ReplayScope scope(&frame, false);
+      NameTagsFrame(live, ports, ports, nullptr, {}, 0);
+    }
+    {
+      const Orca::Net::ReplayScope scope(&frame, true, true, false, true);
+      NameTagsFrame(played, stored, stored, nullptr, {}, 0);
+    }
+    for (int port = 0; port < 3; ++port)
+      EXPECT_EQ(live.NameId(port), played.NameId(port));
+  }
+  EXPECT_EQ(live.TagName(live.NameId(2)), u"SANDB");
+  EXPECT_EQ(played.TagName(played.NameId(2)), u"P3");
+  EXPECT_EQ(played.NameId(1), -1);
+  EXPECT_NE(live.bytes, played.bytes);  // Peer hashes continue to cover real names.
+}
+
+TEST(OrcaUXNameTags, RollbackReplacesPredictedTagAssignments)
+{
+  const std::vector<Orca::Events::PortInfo> ports{{0, "Alice", false}};
+  for (const bool resimulating : {false, true})
+  {
+    SCOPED_TRACE(resimulating);
+    FakeBrawl confirmed;
+    confirmed.SetTag(3, u"MINE");
+    confirmed.Join(0);
+    confirmed.W32(FakeBrawl::Area(0) + 0x1C8, 3);
+    FakeBrawl predicted = confirmed;
+    predicted.W32(FakeBrawl::Area(0) + 0x1C8, 0xffffffff);
+    Orca::Net::ReplayFrame frame;
+    {
+      const Orca::Net::ReplayScope scope(&frame, false);
+      NameTagsFrame(predicted, ports, ports, nullptr, {}, 0);
+    }
+    ASSERT_TRUE(frame.tag_assignments);
+    ASSERT_EQ(frame.tag_assignments->size(), 1u);
+    auto rerun = confirmed;
+    {
+      // Live netplay rollback uses playback=true, network=false. Its writes must be
+      // recomputed from restored RAM, as on an ordinary live frame.
+      const Orca::Net::ReplayScope scope(&frame, resimulating);
+      NameTagsFrame(rerun, ports, ports, nullptr, {}, 0);
+    }
+    ASSERT_TRUE(frame.tag_assignments);
+    EXPECT_TRUE(frame.tag_assignments->empty());
+    Orca::Net::ReplayFrame clean_frame;
+    auto clean = confirmed;
+    {
+      const Orca::Net::ReplayScope scope(&clean_frame, false);
+      NameTagsFrame(clean, ports, ports, nullptr, {}, 0);
+    }
+    EXPECT_EQ(rerun.bytes, clean.bytes);
+    EXPECT_EQ(frame.tag_assignments, clean_frame.tag_assignments);
+    auto played = confirmed;
+    const auto labeled = Orca::Net::RecordingPorts(ports);
+    {
+      const Orca::Net::ReplayScope scope(&frame, true, true, false, true);
+      NameTagsFrame(played, labeled, labeled, nullptr, {}, 0);
+    }
+    EXPECT_EQ(played.bytes, clean.bytes);
+    EXPECT_EQ(played.NameId(0), 3);
+  }
+}
+
+TEST(OrcaUXNameTags, RollbackClearsAssignmentsBeforeCharacterSelectChecks)
+{
+  FakeBrawl memory;
+  memory.Join(0);
+  const std::vector<Orca::Events::PortInfo> ports{{0, "Alice", false}};
+  Orca::Net::ReplayFrame frame;
+  {
+    const Orca::Net::ReplayScope scope(&frame, false);
+    NameTagsFrame(memory, ports, ports, nullptr, {}, 0);
+  }
+  ASSERT_EQ(frame.tag_assignments->size(), 1u);
+  memory.Write8(FakeBrawl::NAME, 'x');  // Restored frame is outside character select.
+  {
+    const Orca::Net::ReplayScope scope(&frame, true);
+    NameTagsFrame(memory, ports, ports, nullptr, {}, 0);
+  }
+  EXPECT_TRUE(frame.tag_assignments->empty());
 }
 
 TEST(OrcaUXNameTags, ANewTagIsMadeAsTheGameMakesOneAndNothingElseIsWritten)
@@ -2083,10 +2232,10 @@ TEST(OrcaUXNameTags, ControlsReplaceThoseOfATagAlreadyHoldingTheName)
   EXPECT_TRUE(chosen.written.empty());
 }
 
-TEST(OrcaUXNameTags, ATagThePlayerMakesAgainWearsTheirOwnControls)
+TEST(OrcaUXNameTags, ATagThePlayerMakesAgainKeepsItsSelectedDefaults)
 {
   // Tags made in the game die with Orca, so after a restart the player makes MYTAG again: the game
-  // creates it with its defaults, rumble on, and the port wears it. Its own controls go in it.
+  // creates it with its defaults, rumble on, and the player chooses those controls.
   FakeBrawl m;
   GameMadeTag(m, 118, u"MYTAG");
   m.Join(0);
@@ -2096,18 +2245,12 @@ TEST(OrcaUXNameTags, ATagThePlayerMakesAgainWearsTheirOwnControls)
   // No tag given: the port keeps the one it wears.
   EXPECT_EQ(ApplyNameTags(m, ports), 0);
   EXPECT_EQ(m.NameId(0), 118);
-  EXPECT_EQ(TagLayout(m, 118), CustomLayout());
-  EXPECT_EQ(m.Read8(FakeBrawl::Tag(118) + 0x0C), 0);
+  EXPECT_EQ(TagLayout(m, 118), FakeBrawl::CONTROLS);
+  EXPECT_EQ(m.Read8(FakeBrawl::Tag(118) + 0x0C), 1);
   EXPECT_EQ(m.TagName(118), u"MYTAG");
   EXPECT_EQ(m.TagName(0), u"");  // no YouGame tag made (it would be the lowest free slot)
-  // Only that tag's rumble and layout.
-  for (const u32 a : m.written)
-  {
-    EXPECT_TRUE(a == FakeBrawl::Tag(118) + 0x0C ||
-                (a >= FakeBrawl::Tag(118) + 0x14 && a < FakeBrawl::Tag(118) + 0x41))
-        << std::hex << a;
-  }
-  // Idempotent: it no longer holds the defaults, so the next frame (or a re-run) writes nothing.
+  EXPECT_TRUE(m.written.empty());
+  // The next frame and a re-run also leave the chosen controls alone.
   const int writes = m.writes;
   EXPECT_EQ(ApplyNameTags(m, ports), 0);
   EXPECT_EQ(m.writes, writes);
@@ -2123,14 +2266,14 @@ TEST(OrcaUXNameTags, ATagThePlayerMakesAgainWearsTheirOwnControls)
   }
   ApplyNameTags(host, {{0, "cy", false, {}}, {1, "ada", true, Profile(1, CustomLayout())}});
   ApplyNameTags(joiner, {{0, "cy", true, {}}, {1, "ada", false, Profile(1, CustomLayout())}});
-  EXPECT_EQ(TagLayout(host, 40), CustomLayout());
+  EXPECT_EQ(TagLayout(host, 40), FakeBrawl::CONTROLS);
   EXPECT_EQ(host.Read8(FakeBrawl::Tag(40) + 0x0C), 1);
   EXPECT_EQ(host.TagName(host.NameId(0)), u"CY");
   EXPECT_EQ(TagLayout(host, host.NameId(0)), FakeBrawl::CONTROLS);
   EXPECT_EQ(host.bytes, joiner.bytes);
 }
 
-TEST(OrcaUXNameTags, OnlyAWornTagHoldingExactlyTheDefaultsGetsThePortsControls)
+TEST(OrcaUXNameTags, WornTagsKeepEveryMenuChoice)
 {
   const std::vector<Orca::Events::PortInfo> carries{{0, "zeke", false, Profile(0, CustomLayout())}};
   const auto untouched = [](FakeBrawl& m, const std::vector<Orca::Events::PortInfo>& ports) {
@@ -2176,7 +2319,7 @@ TEST(OrcaUXNameTags, OnlyAWornTagHoldingExactlyTheDefaultsGetsThePortsControls)
     Wear(m, 0, 101);
     Wear(m, 1, 100);
     EXPECT_EQ(ApplyNameTags(m, {{1, "ada", true, Profile(0, CustomLayout())}}), 0);
-    EXPECT_EQ(TagLayout(m, 100), CustomLayout());
+    EXPECT_EQ(TagLayout(m, 100), FakeBrawl::CONTROLS);
     EXPECT_EQ(TagLayout(m, 101), FakeBrawl::CONTROLS);
     EXPECT_EQ(TagLayout(m, 102), FakeBrawl::CONTROLS);
     EXPECT_EQ(m.Read8(FakeBrawl::Tag(101) + 0x0C), 1);
@@ -2461,8 +2604,8 @@ TEST(OrcaUXNameTags, AcrossRestartsATagMadeAgainKeepsTheKeptControls)
     for (int f = 0; f < 3; ++f)
       frame();
     EXPECT_TRUE(published.empty()) << "run " << run;
-    EXPECT_EQ(TagLayout(m, 118), CustomLayout()) << "run " << run;
-    EXPECT_EQ(m.Read8(FakeBrawl::Tag(118) + 0x0C), 0) << "run " << run;
+    EXPECT_EQ(TagLayout(m, 118), FakeBrawl::CONTROLS) << "run " << run;
+    EXPECT_EQ(m.Read8(FakeBrawl::Tag(118) + 0x0C), 1) << "run " << run;
     if (!published.empty())
       kept = published.back();
   }
@@ -2481,12 +2624,11 @@ TEST(OrcaUXNameTags, TheOwnControlsReadComesAfterTheWrites)
     EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, custom, 0));
     EXPECT_EQ(m.TagName(0), u"ZEKE");
     EXPECT_EQ(TagLayout(m, 0), CustomLayout());
-    // They make MYTAG again (the game makes it at its defaults) and wear it: the same frame gives
-    // it their controls, and the read sees those, not the defaults.
+    // They make MYTAG again at the defaults and choose it: their choice stays intact.
     GameMadeTag(m, 118, u"MYTAG");
     Wear(m, 0, 118);
     EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, custom, 0));
-    EXPECT_EQ(TagLayout(m, 118), CustomLayout());
+    EXPECT_EQ(TagLayout(m, 118), FakeBrawl::CONTROLS);
     EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, custom, 0));
     // Their own edit of it is still their change.
     m.Write8(FakeBrawl::Tag(118) + 0x14, 0x04);
@@ -2496,16 +2638,16 @@ TEST(OrcaUXNameTags, TheOwnControlsReadComesAfterTheWrites)
     EXPECT_EQ((*edited)[1], 0x04);
   }
   {
-    // The defaults land in the very tag the port wears on the character select: Orca puts the
-    // controls back in the same frame, and the read after the writes sees no change.
+    // The currently worn tag is reset to the defaults: the menu choice stays, and the reader
+    // publishes this edit to that same tag (switching to a different default tag is covered above).
     FakeBrawl m;
     m.Join(0);
     OwnControlsReader reader;
     EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, custom, 0));
     GameMadeTag(m, 0, u"ZEKE");
-    EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, custom, 0));
-    EXPECT_EQ(TagLayout(m, 0), CustomLayout());
-    // Read before the writes (the old order), that frame published the defaults.
+    EXPECT_EQ(NameTagsFrame(m, ports, ports, &reader, custom, 0), Profile(1, FakeBrawl::CONTROLS));
+    EXPECT_EQ(TagLayout(m, 0), FakeBrawl::CONTROLS);
+    // Reading before the hook follows the same default-switch rule.
     FakeBrawl old;
     old.Join(0);
     OwnControlsReader before;
@@ -2669,9 +2811,365 @@ TEST(OrcaUXNameTags, ControlsSavedInTheGamesMenusArePublishedThere)
     const std::vector<Orca::Events::PortInfo> now{{0, "sandbox-ada", false, *edited}};
     EXPECT_FALSE(NameTagsFrame(m, now, now, &reader, *edited, 0));
     EXPECT_EQ(m.NameId(0), 0);
+    EXPECT_EQ(m.TagName(0), Typed(u"SANDB"));
     // Tap jump off, and the game's own Save bit kept.
     EXPECT_EQ(m.Read8(FakeBrawl::Tag(0) + 0x14 + 11), 0x01);
     EXPECT_EQ(TagLayout(m, 119), orcas);
+  }
+}
+
+TEST(OrcaUXNameTags, InARoomATagSavedInTheGamesMenusKeepsWhatWasSaved)
+{
+  // A friends room: both ports carry the controls they joined with. Port 1 (ADA) goes to Options >
+  // Controls in the room and saves tap jump back on, with Z as jump. The next character select
+  // starts with every port wearing no tag (rc2 runs: area +0x1C8 = 0xFFFFFFFF on entry).
+  std::array<u8, 0x2D> cy_layout = FakeBrawl::CONTROLS;
+  cy_layout[3] = 0x02;  // GameCube X: jump
+  const std::vector<u8> cy = Profile(1, cy_layout);
+  const std::vector<u8> ada = Profile(0, CustomLayout());
+  const auto room = [&](bool ada_remote) {
+    return std::vector<Orca::Events::PortInfo>{{0, "cy", ada_remote ? false : true, cy},
+                                               {1, "ada", ada_remote, ada}};
+  };
+  const auto saved_in_room = [](FakeBrawl& m, int slot) {
+    m.Write8(FakeBrawl::Tag(slot) + 0x0C, 1);          // rumble on
+    m.Write8(FakeBrawl::Tag(slot) + 0x14 + 2, 0x02);   // Z: jump
+    m.Write8(FakeBrawl::Tag(slot) + 0x14 + 11, 0x81);  // tap jump on, and the game's Save bit
+  };
+  const auto next_character_select = [](FakeBrawl& m) {
+    m.W32(FakeBrawl::Area(0) + 0x1C8, 0xFFFFFFFF);
+    m.W32(FakeBrawl::Area(1) + 0x1C8, 0xFFFFFFFF);
+  };
+  std::array<FakeBrawl, 2> machines;
+  for (size_t i = 0; i < machines.size(); ++i)
+  {
+    FakeBrawl& m = machines[i];
+    m.Join(0);
+    m.Join(1);
+    ASSERT_EQ(ApplyNameTags(m, room(i == 0)), 2);
+    const int slot = m.NameId(1);
+    ASSERT_EQ(m.TagName(slot), u"ADA");
+    EXPECT_EQ(TagLayout(m, slot), CustomLayout());
+    saved_in_room(m, slot);
+    std::array<u8, 0x2D> edited = CustomLayout();
+    edited[2] = 0x02;
+    edited[11] = 0x81;
+    ASSERT_EQ(TagLayout(m, slot), edited);
+    // Before: the controls ADA joined with went back into the tag here, so the edit was gone.
+    next_character_select(m);
+    EXPECT_EQ(ApplyNameTags(m, room(i == 0)), 2);
+    EXPECT_EQ(m.NameId(1), slot);
+    EXPECT_EQ(TagLayout(m, slot), edited);
+    // Rumble too: nothing of the controls they joined with goes back in.
+    EXPECT_EQ(m.Read8(FakeBrawl::Tag(slot) + 0x0C), 1);
+    // And on every later character select of the room.
+    next_character_select(m);
+    ApplyNameTags(m, room(i == 0));
+    EXPECT_EQ(TagLayout(m, slot), edited);
+    // Port 0 never saved its tag: it keeps getting its own controls.
+    EXPECT_EQ(TagLayout(m, m.NameId(0)), cy_layout);
+  }
+  // Whoever is remote on each machine, the same bytes.
+  EXPECT_EQ(machines[0].bytes, machines[1].bytes);
+  {
+    // Alone nothing changes: the reader made the edit the port's own controls, and a profile the
+    // app sends later (another device) still goes into the tag at the next character select.
+    FakeBrawl m;
+    m.Join(1);
+    const std::vector<Orca::Events::PortInfo> solo{{1, "ada", false, ada}};
+    ASSERT_EQ(ApplyNameTags(m, solo), 1);
+    const int slot = m.NameId(1);
+    saved_in_room(m, slot);
+    m.W32(FakeBrawl::Area(1) + 0x1C8, 0xFFFFFFFF);
+    ApplyNameTags(m, solo);
+    std::array<u8, 0x2D> written = CustomLayout();
+    written[11] = 0x01;  // the profile's tap jump off, the game's Save bit kept
+    EXPECT_EQ(TagLayout(m, slot), written);
+    EXPECT_EQ(m.Read8(FakeBrawl::Tag(slot) + 0x0C), 0);
+  }
+  {
+    // In a room, a tag of the name that was never saved in the game (a friend back in the host's
+    // game after changing their controls elsewhere) still gets the controls they joined with.
+    FakeBrawl m;
+    GameMadeTag(m, 0, u"ADA");
+    m.Write8(FakeBrawl::Tag(0) + 0x14 + 6, 0x03);
+    m.Join(0);
+    m.Join(1);
+    ApplyNameTags(m, room(true));
+    EXPECT_EQ(m.NameId(1), 0);
+    EXPECT_EQ(TagLayout(m, 0), CustomLayout());
+  }
+  {
+    // Two names that make one tag (sandbox-ada, sandbox-bo: SANDB and port 0's variant SAND1): port 0
+    // saved SANDB in the room, then port 1 joins the next character select first and wears SANDB.
+    // It plays with its own controls, never port 0's saved ones.
+    const std::vector<u8> bo = Profile(1, cy_layout);
+    const std::vector<Orca::Events::PortInfo> pair{{0, "sandbox-ada", false, ada},
+                                                   {1, "sandbox-bo", true, bo}};
+    FakeBrawl m;
+    m.Join(0);
+    m.Join(1);
+    ASSERT_EQ(ApplyNameTags(m, pair), 2);
+    const int sandb = m.NameId(0);
+    ASSERT_EQ(m.TagName(sandb), u"SANDB");
+    saved_in_room(m, sandb);
+    next_character_select(m);
+    m.Join(1);
+    m.W32(FakeBrawl::Area(0) + 0x1B4, 0);  // port 0 not joined yet
+    ApplyNameTags(m, pair);
+    ASSERT_EQ(m.NameId(1), sandb);
+    std::array<u8, 0x2D> bo_in_saved = cy_layout;
+    bo_in_saved[11] |= 0x01;  // the game's Save bit stays; the rest is port 1's own
+    EXPECT_EQ(TagLayout(m, sandb), bo_in_saved);
+    m.Join(0);
+    ApplyNameTags(m, pair);
+    ASSERT_EQ(m.TagName(m.NameId(0)), u"SAND1");
+    EXPECT_EQ(TagLayout(m, m.NameId(0)), CustomLayout());
+  }
+}
+
+namespace
+{
+// Puts scene `name` on (Options > Controls' page is "scButton", the main menu "muMenuMain"): its
+// name at a spare address, the scene's name pointer at it.
+void OnScene(FakeBrawl& m, const char* name)
+{
+  constexpr u32 at = 0x806ff400;
+  for (size_t i = 0; i <= std::strlen(name); ++i)
+    m.bytes[at + static_cast<u32>(i)] = static_cast<u8>(name[i]);
+  m.W32(FakeBrawl::SCENE, at);
+}
+// Sets the custom layout (CustomLayout) in tag `slot` as the game's Controls page saves it: the
+// GameCube flag byte with the page's Save bit.
+void SavedCustom(FakeBrawl& m, int slot)
+{
+  for (u32 i = 0; i < 0x2D; ++i)
+    m.Write8(FakeBrawl::Tag(slot) + 0x14 + i, CustomLayout()[i]);
+  m.Write8(FakeBrawl::Tag(slot) + 0x14 + 11, 0x01);
+}
+}  // namespace
+
+TEST(OrcaUXNameTags, RumbleWiiRemoteAndClassicEditsDoNotNeedTheGameCubeSaveBitToBeRead)
+{
+  // Synthetic menu/CSS writes: these verify the reader, not which bits a game's editor sets.
+  // The latter needs a real Brawl/Project+ session.
+  struct Edit
+  {
+    const char* name;
+    u32 offset;
+    size_t profile_byte;
+    u8 value;
+  };
+  for (const Edit edit : {Edit{"rumble", 0x0C, 0, 0},
+                          Edit{"Wii Remote", 0x14 + 0x0C, 1 + 0x0C, 0x02},
+                          Edit{"Classic", 0x14 + 0x20, 1 + 0x20, 0x02}})
+  {
+    SCOPED_TRACE(edit.name);
+    for (const bool css : {false, true})
+    {
+      SCOPED_TRACE(css ? "worn CSS tag" : "Options Controls page");
+      for (const bool saved_bit : {false, true})
+      {
+        SCOPED_TRACE(saved_bit);
+        FakeBrawl m(css ? "scSelctCharacter" : "scButton");
+        GameMadeTag(m, 0, Typed(u"MINE"));
+        if (css)
+        {
+          m.Join(0);
+          Wear(m, 0, 0);
+        }
+        const std::vector<u8> own = Profile(1, FakeBrawl::CONTROLS);
+        const std::vector<Orca::Events::PortInfo> ports{{0, "ada", false, own}};
+        OwnControlsReader reader;
+        EXPECT_FALSE(reader.Read(m, ports, own, 0));
+        m.Write8(FakeBrawl::Tag(0) + edit.offset, edit.value);
+        if (saved_bit)
+          m.Write8(FakeBrawl::Tag(0) + 0x14 + 11, 0x81);
+        std::vector<u8> want = own;
+        want[edit.profile_byte] = edit.value;
+        m.written.clear();
+        m.recording = true;
+        const auto changed = reader.Read(m, ports, own, 0);
+        ASSERT_TRUE(changed);
+        EXPECT_EQ(*changed, want);
+        EXPECT_TRUE(ControlsValid(*changed));
+        EXPECT_FALSE(reader.Read(m, ports, want, 0));
+        EXPECT_TRUE(m.written.empty());
+      }
+    }
+  }
+}
+
+TEST(OrcaUXNameTags, RumbleWiiRemoteAndClassicRoomEditsKeepOnlyTagsWithTheSaveBit)
+{
+  for (const u32 offset : {0x0Cu, 0x14u + 0x0C, 0x14u + 0x20})
+  {
+    SCOPED_TRACE(offset);
+    for (const bool saved_bit : {false, true})
+    {
+      SCOPED_TRACE(saved_bit);
+      std::array<FakeBrawl, 2> machines;
+      for (size_t i = 0; i < machines.size(); ++i)
+      {
+        FakeBrawl& m = machines[i];
+        const auto own = Profile(1, FakeBrawl::CONTROLS);
+        const std::vector<Orca::Events::PortInfo> ports{{0, "ada", i == 0, own},
+                                                       {1, "cy", i != 0, own}};
+        m.Join(0);
+        m.Join(1);
+        ASSERT_EQ(ApplyNameTags(m, ports), 2);
+        const int slot = m.NameId(0);
+        m.Write8(FakeBrawl::Tag(slot) + offset, offset == 0x0C ? 0 : 0x02);
+        if (saved_bit)
+          m.Write8(FakeBrawl::Tag(slot) + 0x14 + 11, 0x81);
+        const auto edited_layout = TagLayout(m, slot);
+        const u8 edited_rumble = m.Read8(FakeBrawl::Tag(slot) + 0x0C);
+        Wear(m, 0, -1);
+        Wear(m, 1, -1);
+        ASSERT_EQ(ApplyNameTags(m, ports), 2);
+        EXPECT_EQ(m.NameId(0), slot);
+        EXPECT_EQ(TagLayout(m, slot), saved_bit ? edited_layout : FakeBrawl::CONTROLS);
+        EXPECT_EQ(m.Read8(FakeBrawl::Tag(slot) + 0x0C), saved_bit ? edited_rumble : 1);
+      }
+      EXPECT_EQ(machines[0].bytes, machines[1].bytes);
+    }
+  }
+}
+
+TEST(OrcaUXNameTags, ATemplateWithTheSaveBitDoesNotMakeNewRoomTagsReadAsEdited)
+{
+  FakeBrawl m;
+  // A variant whose default template already contains the bit must still receive carried controls.
+  m.Write8(0x80406938 + 11, 0x81);
+  const auto custom = Profile(0, CustomLayout());
+  const std::vector<Orca::Events::PortInfo> ports{{0, "ada", false, custom},
+                                                 {1, "cy", true, custom}};
+  m.Join(0);
+  m.Join(1);
+  ASSERT_EQ(ApplyNameTags(m, ports), 2);
+  auto want = CustomLayout();
+  want[11] |= 0x01;
+  for (const int port : {0, 1})
+  {
+    EXPECT_EQ(TagLayout(m, m.NameId(port)), want);
+    EXPECT_EQ(m.Read8(FakeBrawl::Tag(m.NameId(port)) + 0x0C), 0);
+  }
+}
+
+TEST(OrcaUXNameTags, ButtonsSetOnTheControlsPageAreThePlayersOwnWhateverTheTagIsCalled)
+{
+  const std::vector<Orca::Events::PortInfo> ports{{0, "sandbox-ada", false, {}}};
+  {
+    // The players' flow (comments 10-09..10-11): they wore Orca's SANDB on a character select,
+    // then in Options > Controls made a tag of another name, MINE, set its buttons and saved, and
+    // went online. Through 0.3.40 only SANDB was read, so MINE's buttons were never kept, never
+    // carried into a room, and gone after a restart.
+    FakeBrawl m;
+    m.Join(0);
+    OwnControlsReader reader;
+    EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, {}, 0));
+    ASSERT_EQ(m.TagName(m.NameId(0)), u"SANDB");
+    ASSERT_EQ(m.NameId(0), 0);
+    OnScene(m, "muMenuMain");
+    GameMadeTag(m, 1, Typed(u"MINE"));
+    EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, {}, 0));  // made at the defaults
+    OnScene(m, "scButton");
+    EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, {}, 0));  // the page opens
+    // A Save that changes nothing the controls play (only the page's Save bit) is no edit.
+    m.Write8(FakeBrawl::Tag(1) + 0x14 + 11, 0x81);
+    EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, {}, 0));
+    SavedCustom(m, 1);
+    const std::optional<std::vector<u8>> edited = NameTagsFrame(m, ports, ports, &reader, {}, 0);
+    ASSERT_TRUE(edited);
+    EXPECT_EQ(*edited, Profile(1, CustomLayout()));
+    EXPECT_TRUE(ControlsValid(*edited));
+    // Back on the main menu: still that tag, nothing more to publish.
+    OnScene(m, "muMenuMain");
+    EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, *edited, 0));
+    EXPECT_FALSE(NameTagsFrame(m, ports, ports, &reader, *edited, 0));
+    // The next character select (here alone; a room carries the same profile): Orca's SANDB gets
+    // what they set, and MINE stays as they saved it. Nothing is published there.
+    m.W32(FakeBrawl::SCENE, FakeBrawl::NAME);
+    m.W32(FakeBrawl::Area(0) + 0x1C8, 0xFFFFFFFF);  // joined again
+    const std::vector<Orca::Events::PortInfo> now{{0, "sandbox-ada", false, *edited}};
+    EXPECT_FALSE(NameTagsFrame(m, now, now, &reader, *edited, 0));
+    EXPECT_EQ(m.NameId(0), 0);
+    EXPECT_EQ(TagLayout(m, 0), CustomLayout());
+    EXPECT_EQ(m.Read8(FakeBrawl::Tag(1) + 0x14 + 11), 0x01);
+    // Off the character select again, the tag they wore is read, and it holds the same.
+    OnScene(m, "muMenuMain");
+    EXPECT_FALSE(NameTagsFrame(m, now, now, &reader, *edited, 0));
+  }
+  {
+    // Making, renaming or deleting a tag on the way is no edit; the reader never writes.
+    FakeBrawl m("scButton");
+    GameMadeTag(m, 0, Typed(u"SANDB"));
+    GameMadeTag(m, 1, Typed(u"OLD"));
+    SavedCustom(m, 1);
+    OwnControlsReader reader;
+    const auto read = [&] {
+      m.written.clear();
+      m.recording = true;
+      std::optional<std::vector<u8>> got = reader.Read(m, ports, {}, 0);
+      m.recording = false;
+      EXPECT_TRUE(m.written.empty());
+      return got;
+    };
+    EXPECT_FALSE(read());
+    m.SetTag(1, u"");                    // deleted
+    GameMadeTag(m, 2, Typed(u"NEW"));    // made
+    SavedCustom(m, 2);
+    EXPECT_FALSE(read());
+    m.SetTag(2, Typed(u"NEWER"));        // renamed
+    m.Write8(FakeBrawl::Tag(2) + 0x14 + 2, 0x02);
+    EXPECT_FALSE(read());
+    // The same tag with other buttons is one.
+    m.Write8(FakeBrawl::Tag(2) + 0x14 + 3, 0x02);
+    const std::optional<std::vector<u8>> edited = read();
+    ASSERT_TRUE(edited);
+    EXPECT_EQ((*edited)[1 + 3], 0x02);
+  }
+  {
+    // A write that lands as the page closes is still seen, once; then the page is no longer
+    // watched (later changes elsewhere are Orca's or the game's, not the player's set-up).
+    FakeBrawl m("scButton");
+    GameMadeTag(m, 0, Typed(u"SANDB"));
+    GameMadeTag(m, 5, Typed(u"MINE"));
+    OwnControlsReader reader;
+    EXPECT_FALSE(reader.Read(m, ports, {}, 0));
+    OnScene(m, "muMenuMain");
+    SavedCustom(m, 5);
+    const std::optional<std::vector<u8>> edited = reader.Read(m, ports, {}, 0);
+    ASSERT_TRUE(edited);
+    EXPECT_EQ(*edited, Profile(1, CustomLayout()));
+    // Off the page, another tag changing is no set-up: MINE is still the one read.
+    m.Write8(FakeBrawl::Tag(0) + 0x14 + 2, 0x02);
+    EXPECT_FALSE(reader.Read(m, ports, *edited, 0));
+    EXPECT_FALSE(reader.Read(m, ports, *edited, 0));
+    // A resync forgets it (the tag may be someone else's now): what is read then is no change.
+    m.Write8(FakeBrawl::Tag(5) + 0x14 + 4, 0x02);
+    EXPECT_FALSE(reader.Read(m, ports, *edited, 1));
+  }
+  // Setting a tag up back to the game's defaults (tap jump on again) is their choice too, even
+  // though the reader switches to that tag at the defaults. Detect it with or without a Save bit.
+  for (const bool saved_bit : {false, true})
+  {
+    SCOPED_TRACE(saved_bit);
+    FakeBrawl m("scButton");
+    GameMadeTag(m, 0, Typed(u"SANDB"));
+    SavedCustom(m, 0);
+    GameMadeTag(m, 1, Typed(u"MINE"));
+    SavedCustom(m, 1);
+    const std::vector<u8> own = Profile(1, CustomLayout());
+    OwnControlsReader reader;
+    EXPECT_FALSE(reader.Read(m, ports, own, 0));
+    for (u32 i = 0; i < 0x2D; ++i)
+      m.Write8(FakeBrawl::Tag(1) + 0x14 + i, FakeBrawl::CONTROLS[i]);
+    if (saved_bit)
+      m.Write8(FakeBrawl::Tag(1) + 0x14 + 11, 0x81);
+    const std::optional<std::vector<u8>> edited = reader.Read(m, ports, own, 0);
+    ASSERT_TRUE(edited);
+    EXPECT_EQ(*edited, Profile(1, FakeBrawl::CONTROLS));
   }
 }
 
@@ -3491,6 +3989,464 @@ TEST(OrcaUXOrbCombo, TheLocalPadKeepsItsStateWhileUnfocusedAndOnReRuns)
   FilterLocalPad(with(0), true, true);
 }
 
+TEST(OrcaUXOrbCombo, LettingGoOfStartEndsAHoldOnceWithTheMaskUnchanged)
+{
+  using Orca::UX::OrbCombo;
+  constexpr u16 UP = PAD_BUTTON_UP, START = PAD_BUTTON_START;
+  OrbCombo c;
+  c.Next(UP);
+  auto s = c.Next(UP | START);
+  EXPECT_TRUE(s.fired);
+  EXPECT_FALSE(s.released);
+  s = c.Next(UP | START);
+  EXPECT_FALSE(s.fired);
+  EXPECT_FALSE(s.released);
+  // Start let go with Up still held: released once, and the D-pad stays masked as before.
+  s = c.Next(UP);
+  EXPECT_TRUE(s.released);
+  EXPECT_EQ(s.buttons, 0);
+  EXPECT_TRUE(c.Held());
+  s = c.Next(UP);
+  EXPECT_FALSE(s.released);
+  EXPECT_EQ(s.buttons, 0);
+  // Start again while still masked: neither a new press nor a new release.
+  s = c.Next(UP | START);
+  EXPECT_FALSE(s.fired);
+  EXPECT_EQ(s.buttons, 0);
+  s = c.Next(0);
+  EXPECT_FALSE(s.released);
+  EXPECT_FALSE(c.Held());
+  // Both let go together: released on that frame.
+  c.Next(UP);
+  EXPECT_TRUE(c.Next(UP | START).fired);
+  s = c.Next(0);
+  EXPECT_TRUE(s.released);
+  EXPECT_EQ(s.buttons, 0);
+  EXPECT_FALSE(c.Held());
+  // No shortcut, no release.
+  EXPECT_FALSE(c.Next(START).released);
+  EXPECT_FALSE(c.Next(0).released);
+}
+
+TEST(OrcaUXOverlayKey, APressIsADownThenOneUpOrCancelAndTheToggleWithoutTalk)
+{
+  using Orca::UX::OverlayKey::Press;
+  using Orca::UX::OverlayKey::Source;
+  Press keys(Source::Keys);
+  // Without "talk": the toggle, and nothing follows.
+  EXPECT_EQ(keys.Down(false), "orca orb");
+  EXPECT_FALSE(keys.IsDown());
+  EXPECT_EQ(keys.Up(), "");
+  EXPECT_EQ(keys.Cancel(), "");
+  // With it: down, then exactly one up.
+  EXPECT_EQ(keys.Down(true), "orca overlay down keys");
+  EXPECT_TRUE(keys.IsDown());
+  EXPECT_EQ(keys.Down(true), "") << "a second press while down is the same press";
+  EXPECT_EQ(keys.Up(), "orca overlay up keys");
+  EXPECT_EQ(keys.Up(), "");
+  EXPECT_EQ(keys.Cancel(), "");
+  // Or exactly one cancel, after which a late key-up prints nothing.
+  EXPECT_EQ(keys.Down(true), "orca overlay down keys");
+  EXPECT_EQ(keys.Cancel(), "orca overlay cancel keys");
+  EXPECT_EQ(keys.Cancel(), "");
+  EXPECT_EQ(keys.Up(), "");
+  // A press that began with "talk" ends with its up even if the cap went away meanwhile.
+  Press pad(Source::Pad);
+  EXPECT_EQ(pad.Down(true), "orca overlay down pad");
+  EXPECT_EQ(pad.Down(false), "");
+  EXPECT_EQ(pad.Up(), "orca overlay up pad");
+  EXPECT_EQ(pad.Down(true), "orca overlay down pad");
+  EXPECT_EQ(pad.Cancel(), "orca overlay cancel pad");
+}
+
+TEST(OrcaUXOrbCombo, TheLocalPadPrintsItsPressAndReleaseWithTalk)
+{
+  using Orca::UX::FilterLocalPad;
+  constexpr u16 UP = PAD_BUTTON_UP, START = PAD_BUTTON_START;
+  GCPadStatus pad;
+  const auto with = [&pad](u16 buttons) {
+    GCPadStatus p = pad;
+    p.button = buttons;
+    return p;
+  };
+  std::FILE* const out = std::tmpfile();
+  ASSERT_NE(out, nullptr);
+  const auto printed = [out] {
+    std::fflush(out);
+    std::rewind(out);
+    std::string text;
+    char buffer[256];
+    while (std::fgets(buffer, sizeof(buffer), out))
+      text += buffer;
+    std::fseek(out, 0, SEEK_END);
+    return text;
+  };
+  const char* const was = std::getenv("ORCA_SESSION");
+  const std::string saved = was ? was : "";
+  const auto session = [](const char* value) {
+#ifdef _WIN32
+    _putenv_s("ORCA_SESSION", value ? value : "");
+#else
+    if (value)
+      setenv("ORCA_SESSION", value, 1);
+    else
+      unsetenv("ORCA_SESSION");
+#endif
+  };
+  // Status lines print only in a session; the app agreed "talk".
+  Orca::Status::SetAppCaps("talk");
+  ASSERT_TRUE(Orca::Status::Cap(Orca::Status::TALK_CAP));
+  session("1");
+  Orca::Status::SetOutput(out);
+
+  // A hold: down at the Start press, up at its release, masked as ever.
+  EXPECT_EQ(FilterLocalPad(with(UP), true, true).button, UP);
+  EXPECT_EQ(FilterLocalPad(with(UP | START), true, true).button, 0);
+  // A re-run's read of Start let go is no release.
+  EXPECT_EQ(FilterLocalPad(with(UP), false, true).button, 0);
+  EXPECT_EQ(FilterLocalPad(with(UP | START), true, true).button, 0);
+  EXPECT_EQ(FilterLocalPad(with(UP), true, true).button, 0);
+  EXPECT_EQ(FilterLocalPad(with(0), true, true).button, 0);
+  EXPECT_EQ(printed(), "orca overlay down pad\norca overlay up pad\n");
+
+  // The game lost focus mid-press: cancelled, and the release that follows prints nothing.
+  FilterLocalPad(with(UP), true, true);
+  FilterLocalPad(with(UP | START), true, true);
+  EXPECT_EQ(FilterLocalPad(with(0), true, false).button, 0);
+  EXPECT_EQ(FilterLocalPad(with(0), true, false).button, 0);
+  FilterLocalPad(with(0), true, true);
+  // Paused or stopping mid-press: cancelled once.
+  FilterLocalPad(with(UP), true, true);
+  FilterLocalPad(with(UP | START), true, true);
+  Orca::UX::LocalPadStopped();
+  Orca::UX::LocalPadStopped();
+  FilterLocalPad(with(0), true, true);
+  EXPECT_EQ(printed(), "orca overlay down pad\norca overlay up pad\n"
+                       "orca overlay down pad\norca overlay cancel pad\n"
+                       "orca overlay down pad\norca overlay cancel pad\n");
+
+  // Without "talk": the toggle, as before.
+  Orca::Status::SetAppCaps("");
+  FilterLocalPad(with(UP), true, true);
+  FilterLocalPad(with(UP | START), true, true);
+  FilterLocalPad(with(0), true, true);
+  const std::string all = printed();
+  EXPECT_EQ(all.substr(all.size() - 9), "orca orb\n");
+
+  Orca::Status::SetOutput(nullptr);
+  session(was ? saved.c_str() : nullptr);
+  std::fclose(out);
+  EXPECT_FALSE(Orca::UX::OverlayKey::Pad().IsDown());
+}
+
+TEST(OrcaUXOverlayKey, APadLetGoAtATimeOrcaCannotPlaceIsCancelledOncePastTheTapLine)
+{
+  using Orca::UX::OverlayKey::PAGE_HOLD_MS;
+  using Orca::UX::OverlayKey::Press;
+  using Orca::UX::OverlayKey::READ_GAP_MS;
+  using Orca::UX::OverlayKey::Source;
+  Press pad(Source::Pad);
+  // Read every frame: up, a tap or a hold alike.
+  EXPECT_EQ(pad.Down(true, 1000), "orca overlay down pad");
+  pad.Seen(1017);
+  EXPECT_EQ(pad.Release(1034), "orca overlay up pad");
+  EXPECT_EQ(pad.Down(true, 2000), "orca overlay down pad");
+  for (Orca::UX::OverlayKey::Ms t = 2017; t <= 4000; t += 17)
+    pad.Seen(t);
+  EXPECT_EQ(pad.Release(4017), "orca overlay up pad");
+  EXPECT_EQ(pad.Release(4034), "") << "once per down";
+  // A gap that ends before the tap line: the page sees a tap either way.
+  pad.Down(true, 5000);
+  EXPECT_EQ(pad.Release(5000 + PAGE_HOLD_MS - 1), "orca overlay up pad");
+  // Let go somewhere in a gap that crosses the tap line: a tap could read as a hold.
+  pad.Down(true, 6000);
+  pad.Seen(6017);
+  EXPECT_EQ(pad.Release(6000 + PAGE_HOLD_MS), "orca overlay cancel pad");
+  // A hold whose release falls in a gap: the talk could run on past the player's release.
+  pad.Down(true, 7000);
+  pad.Seen(9000);
+  EXPECT_EQ(pad.Release(9000 + READ_GAP_MS + 1), "orca overlay cancel pad");
+  pad.Down(true, 10000);
+  pad.Seen(12000);
+  EXPECT_EQ(pad.Release(12000 + READ_GAP_MS), "orca overlay up pad");
+  // An older read never moves the last sighting back.
+  pad.Down(true, 13000);
+  pad.Seen(13400);
+  pad.Seen(13100);
+  EXPECT_EQ(pad.Release(13417), "orca overlay up pad");
+  // Keys see their key-up as it happens: a long hold is an up.
+  Press keys(Source::Keys);
+  keys.Down(true, 0);
+  EXPECT_EQ(keys.Up(), "orca overlay up keys");
+}
+
+namespace
+{
+// Orca's status lines while a test runs, with the app's caps set to `caps`.
+class StatusLines
+{
+public:
+  explicit StatusLines(const char* caps)
+  {
+    const char* const was = std::getenv("ORCA_SESSION");
+    m_had = was != nullptr;
+    m_saved = was ? was : "";
+    Orca::Status::SetAppCaps(caps);
+    // Status lines print only in a session.
+    SetSession("1");
+    m_out = std::tmpfile();
+    Orca::Status::SetOutput(m_out);
+  }
+  ~StatusLines()
+  {
+    Orca::Status::SetOutput(nullptr);
+    Orca::Status::SetAppCaps("");
+    SetSession(m_had ? m_saved.c_str() : nullptr);
+    if (m_out)
+      std::fclose(m_out);
+  }
+  StatusLines(const StatusLines&) = delete;
+  StatusLines& operator=(const StatusLines&) = delete;
+  bool Ok() const { return m_out != nullptr; }
+  // What printed since the last call.
+  std::string Take()
+  {
+    std::fflush(m_out);
+    std::fseek(m_out, m_taken, SEEK_SET);
+    std::string text;
+    char buffer[256];
+    while (std::fgets(buffer, sizeof(buffer), m_out))
+      text += buffer;
+    std::fseek(m_out, 0, SEEK_END);
+    m_taken = std::ftell(m_out);
+    return text;
+  }
+
+private:
+  static void SetSession(const char* value)
+  {
+#ifdef _WIN32
+    _putenv_s("ORCA_SESSION", value ? value : "");
+#else
+    if (value)
+      setenv("ORCA_SESSION", value, 1);
+    else
+      unsetenv("ORCA_SESSION");
+#endif
+  }
+  std::FILE* m_out = nullptr;
+  long m_taken = 0;
+  bool m_had = false;
+  std::string m_saved;
+};
+}  // namespace
+
+TEST(OrcaUXOrbCombo, AStallEndsATalkPressWhenStartIsLetGoWithTheSentPadsUnchanged)
+{
+  using Orca::UX::FilterLocalPad;
+  using Orca::UX::LocalPadWaiting;
+  using Orca::UX::OrbCombo;
+  using Orca::UX::OverlayKey::Ms;
+  constexpr u16 UP = PAD_BUTTON_UP, START = PAD_BUTTON_START, A = PAD_BUTTON_A;
+  StatusLines lines("talk");
+  ASSERT_TRUE(lines.Ok());
+  ASSERT_TRUE(Orca::Status::Cap(Orca::Status::TALK_CAP));
+  GCPadStatus pad;
+  const auto with = [&pad](u16 buttons) {
+    GCPadStatus p = pad;
+    p.button = buttons;
+    return p;
+  };
+  // The shared combo starts from rest, like `sent` below.
+  Orca::UX::LocalPadStopped();
+  FilterLocalPad(with(0), true, true, 0);
+  FilterLocalPad(with(0), true, true, 0);
+  lines.Take();
+  // What every machine plays: the combo fed the frames' reads alone.
+  OrbCombo sent;
+  Ms t = 100'000;
+  const auto frame = [&](u16 buttons) {
+    t += 17;
+    const u16 got = FilterLocalPad(with(buttons), true, true, t).button;
+    EXPECT_EQ(got, sent.Next(buttons).buttons) << "frame at " << t;
+    return got;
+  };
+  // A stall of `ms`, ticking every 1 ms with the pad as it is now.
+  const auto stall = [&](int ms, u16 buttons) {
+    for (int i = 0; i < ms; ++i)
+      LocalPadWaiting(buttons, ++t);
+  };
+
+  // A hold: the stall starts with Start down; the player lets go 3 s in. The up prints on that
+  // tick, not 10 s later when the game moves again, and the frames still mask the D-pad and Start.
+  frame(UP);
+  EXPECT_EQ(frame(UP | START), 0);
+  EXPECT_EQ(lines.Take(), "orca overlay down pad\n");
+  stall(3000, UP | START);
+  EXPECT_EQ(lines.Take(), "");
+  stall(1, UP);
+  EXPECT_EQ(lines.Take(), "orca overlay up pad\n") << "within one stall tick";
+  stall(7000, UP);
+  EXPECT_EQ(frame(UP), 0);
+  EXPECT_EQ(frame(UP | A), A);
+  EXPECT_EQ(frame(A), A);
+  EXPECT_EQ(lines.Take(), "") << "one up per down";
+
+  // A tap that a stall swallows: let go 100 ms in, read on the tick. A tap for the page.
+  frame(UP);
+  frame(UP | START);
+  stall(100, UP | START);
+  stall(1, 0);
+  stall(5000, 0);
+  frame(0);
+  EXPECT_EQ(lines.Take(), "orca overlay down pad\norca overlay up pad\n");
+
+  // No fresh read in the stall (a test script's pad): the release is only found when frames
+  // resume, past the tap line, so Orca cannot tell a tap from a hold and cancels.
+  frame(UP);
+  frame(UP | START);
+  for (int i = 0; i < 4000; ++i)
+    LocalPadWaiting(std::nullopt, ++t);
+  frame(UP);
+  frame(0);
+  EXPECT_EQ(lines.Take(), "orca overlay down pad\norca overlay cancel pad\n");
+
+  // Let go and pressed again within one stall: the second press is not a new down, and its
+  // release prints nothing; the frames mask it as before.
+  frame(UP);
+  frame(UP | START);
+  stall(50, UP | START);
+  stall(50, UP);
+  stall(50, UP | START);
+  EXPECT_EQ(frame(UP | START), 0);
+  EXPECT_EQ(frame(0), 0);
+  EXPECT_EQ(lines.Take(), "orca overlay down pad\norca overlay up pad\n");
+
+  // The game lost focus during the stall: the stall reads cannot see it (the input gate moves with
+  // the frames' pad poll), so the first frame after it, unfocused, cancels the press.
+  frame(UP);
+  frame(UP | START);
+  stall(20, UP | START);
+  EXPECT_EQ(lines.Take(), "orca overlay down pad\n");
+  t += 17;
+  EXPECT_EQ(FilterLocalPad(with(UP | START), true, false, t).button, 0) << "still masked";
+  EXPECT_EQ(lines.Take(), "orca overlay cancel pad\n");
+  stall(20, 0);
+  EXPECT_EQ(frame(0), 0);
+  EXPECT_EQ(lines.Take(), "") << "one cancel per down";
+
+  // No press down: a stall prints nothing.
+  stall(50, 0);
+  stall(50, UP | START);
+  frame(0);
+  EXPECT_EQ(lines.Take(), "");
+  EXPECT_FALSE(Orca::UX::OverlayKey::Pad().IsDown());
+}
+
+TEST(OrcaUXYgOrb, ParsesTalkLines)
+{
+  using namespace Orca::UX::YgOrb;
+  auto t = ParseTalk("talk listen Ada Listening%E2%80%A6%20let%20go%20to%20send");
+  ASSERT_TRUE(t);
+  EXPECT_EQ(t->phase, Talk::Phase::Listen);
+  EXPECT_EQ(t->name, "Ada");
+  EXPECT_EQ(t->text, "Listening\xE2\x80\xA6 let go to send");
+  t = ParseTalk("talk sent Bo%20Li gg%20wp");
+  ASSERT_TRUE(t);
+  EXPECT_EQ(t->phase, Talk::Phase::Sent);
+  EXPECT_EQ(t->name, "Bo Li");
+  EXPECT_EQ(t->text, "gg wp");
+  EXPECT_EQ(ParseTalk("talk send Ada hi")->phase, Talk::Phase::Send);
+  EXPECT_EQ(ParseTalk("talk error Ada No%20mic")->phase, Talk::Phase::Error);
+  t = ParseTalk("talk off");
+  ASSERT_TRUE(t);
+  EXPECT_EQ(t->phase, Talk::Phase::Off);
+  for (const char* bad : {"talk", "talk ", "talk off now", "talk listen", "talk listen Ada",
+                          "talk shout Ada hi", "talk off Ada hi", "talk listen Ada hi there",
+                          "talk listen Ada%0A hi", "talk listen Ada hi%", "talk  listen Ada hi",
+                          "talk listen Ada hi ", "Talk off", "talks off"})
+  {
+    EXPECT_FALSE(ParseTalk(bad)) << bad;
+  }
+}
+
+TEST(OrcaUXYgOrb, TheTalkRowIsReplacedInPlaceAndOutlivesTheNotices)
+{
+  using namespace Orca::UX::YgOrb;
+  const auto talk = [](Talk::Phase phase, std::string text) {
+    Talk t;
+    t.phase = phase;
+    t.name = "Ada";
+    t.text = std::move(text);
+    return t;
+  };
+  Model m;
+  m.Apply(*ParseOrb("orb 32 32 80 1 0 0"), 0);
+  EXPECT_FALSE(m.At(0).showing);
+  // The mic opens: the row shows and the button pulses green.
+  m.SetTalk(talk(Talk::Phase::Listen, "Listening"), 1000);
+  auto v = m.At(1000);
+  EXPECT_TRUE(v.showing);
+  EXPECT_TRUE(v.listening);
+  EXPECT_NEAR(v.ring, 0.0f, 0.01f);
+  Model::TalkEntry row;
+  std::uint64_t generation = m.TalkRow(0, &row);
+  EXPECT_EQ(row.talk.text, "Listening");
+  // Live words replace it in place; the pulse runs on from when the mic opened.
+  m.SetTalk(talk(Talk::Phase::Listen, "gg"), 1300);
+  EXPECT_EQ(m.At(1300).talk_generation, generation + 1);
+  generation = m.TalkRow(generation, &row);
+  EXPECT_EQ(row.talk.text, "gg");
+  EXPECT_EQ(row.at, 1300);
+  EXPECT_NEAR(m.At(1600).ring, 0.5f, 0.01f);
+  // Notices come and go beside it; it keeps no timer of theirs.
+  Notice n;
+  n.kind = Kind::Leave;
+  n.name = "Bo";
+  n.text = "left";
+  for (int i = 0; i < 5; ++i)
+    m.Add(n, 2000 + i);
+  std::vector<Model::Entry> lines;
+  m.Lines(0, &lines);
+  EXPECT_EQ(lines.size(), Model::KEEP);
+  EXPECT_TRUE(m.At(30000).showing);
+  EXPECT_EQ(TalkAlpha(row.talk, row.at, 30000), 1.0f);
+  // A blink still wins over the pulse.
+  m.Apply(*ParseOrb("orb blink"), 30000);
+  EXPECT_FALSE(m.At(30350).listening);
+  EXPECT_NEAR(m.At(30350).ring, 0.5f, 0.01f);
+  // Sending: no pulse, the row stays.
+  m.SetTalk(talk(Talk::Phase::Send, "gg"), 40000);
+  EXPECT_FALSE(m.At(41000).listening);
+  EXPECT_LT(m.At(41000).ring, 0);
+  EXPECT_TRUE(m.At(90000).showing);
+  // Sent fades by itself after 3 s, an error after 4 s.
+  const Talk sent = talk(Talk::Phase::Sent, "gg");
+  EXPECT_EQ(TalkAlpha(sent, 0, 2000), 1.0f);
+  EXPECT_NEAR(TalkAlpha(sent, 0, 2800), 0.5f, 0.01f);
+  EXPECT_EQ(TalkAlpha(sent, 0, 3000), 0.0f);
+  EXPECT_EQ(TalkAlpha(talk(Talk::Phase::Error, "No mic"), 0, 3900), 0.25f);
+  m.SetTalk(sent, 100000);
+  EXPECT_TRUE(m.At(102000).showing);
+  EXPECT_FALSE(m.At(103000).showing);
+  // A listen row the page never ends goes after TALK_STALE_MS.
+  m.SetTalk(talk(Talk::Phase::Listen, "hi"), 200000);
+  EXPECT_TRUE(m.At(200000 + TALK_STALE_MS - 1000).showing);
+  EXPECT_FALSE(m.At(200000 + TALK_STALE_MS).showing);
+  // Off, or the button going off, removes it at once.
+  m.SetTalk(talk(Talk::Phase::Listen, "hi"), 300000);
+  m.SetTalk(Talk{}, 300100);
+  EXPECT_FALSE(m.At(300100).showing);
+  EXPECT_LT(m.At(300100).ring, 0);
+  m.SetTalk(talk(Talk::Phase::Listen, "hi"), 300200);
+  generation = m.At(300200).talk_generation;
+  m.Apply(*ParseOrb("orb off"), 300300);
+  EXPECT_FALSE(m.At(300300).showing);
+  EXPECT_GT(m.At(300300).talk_generation, generation);
+  m.TalkRow(0, &row);
+  EXPECT_EQ(row.talk.phase, Talk::Phase::Off);
+}
+
 TEST(OrcaUXYgOrb, ThePlaceScalesFromThePagesPixelsToTheBackbuffer)
 {
   using namespace Orca::UX::YgOrb;
@@ -3532,4 +4488,457 @@ TEST(OrcaUXYgOrb, ThePillsWordsAreCutAfterASpaceAndNeverInsideACharacter)
   EXPECT_EQ(FitPrefix("ab", 0, w), 0u);
   // A word that ends right at the limit stays ("abcde fg" is eight).
   EXPECT_EQ(FitPrefix("abcde fg hij", 8, w), 8u);
+}
+
+TEST(OrcaUXYgOrb, LiveWordsKeepTheirEndAndAreCutBeforeAWord)
+{
+  using Orca::UX::YgOrb::FitSuffix;
+  const auto w = [](std::string_view t) { return static_cast<float>(t.size()); };
+  EXPECT_EQ(FitSuffix("gg wp", 10, w), 0u);
+  // "you ready" is nine: it starts after a space.
+  EXPECT_EQ(FitSuffix("are you ready", 9, w), 4u);
+  // "u ready" fits seven: the cut moves on to the next word.
+  EXPECT_EQ(FitSuffix("are you ready", 7, w), 8u);
+  // One long word: at a character.
+  EXPECT_EQ(FitSuffix("supercalifragilistic", 6, w), 14u);
+  // Half of a two-byte e acute and "s" fit two: the cut stays after the e.
+  EXPECT_EQ(FitSuffix("caf\xC3\xA9s", 2, w), 5u);
+  EXPECT_EQ(FitSuffix("ab", 0, w), 2u);
+}
+
+TEST(OrcaUXNameTags, SelectedSmashControlsSurviveAStaleAccountTiltProfile)
+{
+  FakeBrawl host, joiner;
+  auto tilt = FakeBrawl::CONTROLS;
+  tilt[8] = 0;  // C-stick: Attack (Tilt), instead of the default Smash action (5).
+  for (auto* memory : {&host, &joiner})
+  {
+    GameMadeTag(*memory, 40, u"SMASH");
+    memory->Join(0);
+    memory->Join(1);
+    Wear(*memory, 1, 40);
+  }
+  for (int frame = 0; frame < 60; ++frame)
+  {
+    ApplyNameTags(host, {{0, "host", false}, {1, "friend", true, Profile(1, tilt)}});
+    ApplyNameTags(joiner, {{0, "host", true}, {1, "friend", false, Profile(1, tilt)}});
+    EXPECT_EQ(TagLayout(host, 40), FakeBrawl::CONTROLS);
+    EXPECT_EQ(host.bytes, joiner.bytes);
+  }
+  host.W32(FakeBrawl::SCENE, 0x806ff300);  // Outside character select: no writes.
+  host.recording = true;
+  ApplyNameTags(host, {{1, "friend", true, Profile(1, tilt)}});
+  EXPECT_TRUE(host.written.empty());
+}
+
+class OrcaUXHostUI : public OrcaUXOverlayDraw
+{
+protected:
+  void SetUp() override
+  {
+    OrcaUXOverlayDraw::SetUp();
+    const char* was = std::getenv("YOUGAME_STDIO");
+    m_had_stdio = was != nullptr;
+    m_stdio = was ? was : "";
+    SetStdio("1");
+    Orca::Bridge::ResetForTests();
+    Orca::Bridge::SetWriter(+[](const std::string&) {});
+    m_lines = std::make_unique<StatusLines>("");
+    ASSERT_TRUE(m_lines->Ok());
+    YgOrb::Current().Apply({}, YgOrb::NowMs());
+    YgOrb::Menu().Close();
+    LocalPadStopped();
+    Pad(0);
+    m_lines->Take();
+  }
+
+  void TearDown() override
+  {
+    LocalPadStopped();
+    Pad(0);
+    YgOrb::Current().Apply({}, YgOrb::NowMs());
+    m_lines.reset();
+    Orca::Bridge::SetWriter(nullptr);
+    Orca::Bridge::ResetForTests();
+    SetStdio(m_had_stdio ? m_stdio.c_str() : nullptr);
+    OrcaUXOverlayDraw::TearDown();
+  }
+
+  static void SetStdio(const char* value)
+  {
+#ifdef _WIN32
+    _putenv_s("YOUGAME_STDIO", value ? value : "");
+#else
+    if (value)
+      setenv("YOUGAME_STDIO", value, 1);
+    else
+      unsetenv("YOUGAME_STDIO");
+#endif
+  }
+
+  static u16 Pad(u16 buttons)
+  {
+    GCPadStatus pad{};
+    pad.button = buttons;
+    return FilterLocalPad(pad, true, true).button;
+  }
+
+  static int HostVertices()
+  {
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(640, 480);
+    io.DeltaTime = 1.0f / 60;
+    ImGui::NewFrame();
+    YgOrb::DrawHostControls(ImGui::GetForegroundDrawList(), YgOrb::HostView(YgOrb::NowMs()));
+    ImGui::Render();
+    return ImGui::GetDrawData()->TotalVtxCount;
+  }
+
+  std::unique_ptr<StatusLines> m_lines;
+  bool m_had_stdio = false;
+  std::string m_stdio;
+};
+
+TEST_F(OrcaUXHostUI, WithoutAgreementTheOrbAndShortcutKeepTheirLegacyPaths)
+{
+  using namespace YgOrb;
+  ASSERT_TRUE(Orca::Bridge::Ready());
+  EXPECT_TRUE(Orca::Status::OfferedCaps().ends_with(" record hostui"));
+  for (const char* caps : {"", "yougame", "yougame talk"})
+  {
+    SCOPED_TRACE(caps);
+    Orca::Status::SetAppCaps(caps);
+    ASSERT_FALSE(HostEnabled());
+    Current().Apply({}, NowMs());
+    EXPECT_FALSE(HostView(NowMs()).on);  // No bridge-created default orb.
+    Current().Apply(*ParseOrb("orb 16 16 40 1 0 0"), NowMs());
+    EXPECT_TRUE(HostView(NowMs()).on);  // The app still controls the original orb.
+    EXPECT_TRUE(Current().Hit(36, 36));
+    EXPECT_FALSE(HitControls(36, 36));  // macOS keeps passing clicks to the app.
+    EXPECT_FALSE(HitControls(84, 36));  // No feedback hit box.
+    EXPECT_FALSE(ClickControls(36, 36));  // Windows falls through to its `orca orb` path.
+    ToggleHostMenu();  // The host-menu stdin entry point.
+    EXPECT_FALSE(Menu().At().open);
+    for (const HostKey key : {HostKey::Feedback, HostKey::Menu, HostKey::Next, HostKey::Select})
+      EXPECT_FALSE(HandleHostKey(key));
+    Menu().FeedbackFinished(NowMs() - 5001);
+    for (int row = 0; row < HOST_ROWS; ++row)
+      ActivateHost(static_cast<HostAction>(row));
+    EXPECT_TRUE(Menu().FeedbackDue(NowMs())) << "No screenshot request or cooldown without hostui";
+    Menu().FeedbackFinished(-5000);
+    EXPECT_EQ(m_lines->Take(), "");  // No host, feedback or Controls output.
+    EXPECT_EQ(HostVertices(), 0);  // Neither delta nor menu is drawn.
+
+    EXPECT_EQ(Pad(PAD_BUTTON_UP), PAD_BUTTON_UP);
+    EXPECT_EQ(Pad(PAD_BUTTON_UP | PAD_BUTTON_START), 0);
+    EXPECT_FALSE(Menu().At().open);
+    EXPECT_EQ(Pad(0), 0);
+    const bool talk = Orca::Status::Cap(Orca::Status::TALK_CAP);
+    EXPECT_EQ(m_lines->Take(), talk ? "orca overlay down pad\norca overlay up pad\n" :
+                                    "orca orb\n");
+    // The overlay keyboard press/release is independent of hostui.
+    OverlayKey::Press keys(OverlayKey::Source::Keys);
+    EXPECT_EQ(keys.Down(talk), talk ? "orca overlay down keys" : "orca orb");
+    EXPECT_EQ(keys.Up(), talk ? "orca overlay up keys" : "");
+  }
+}
+
+TEST_F(OrcaUXHostUI, AgreementEnablesTheNativeMenuAndHostActions)
+{
+  using namespace YgOrb;
+  Orca::Status::SetAppCaps("yougame talk hostui");
+  ASSERT_TRUE(HostEnabled());
+  EXPECT_TRUE(HostView(NowMs()).on);
+  EXPECT_FALSE(Current().At(NowMs()).on);
+  EXPECT_TRUE(HitControls(36, 36));
+  EXPECT_TRUE(HitControls(84, 36));
+  EXPECT_GT(HostVertices(), 0);  // Delta is visible before opening the menu.
+  EXPECT_TRUE(ClickControls(36, 36));
+  ASSERT_TRUE(Menu().At().open);
+  EXPECT_TRUE(HitControls(100, 80));
+  EXPECT_GT(HostVertices(), 0);
+  EXPECT_TRUE(HandleHostKey(HostKey::Next));
+  EXPECT_TRUE(HandleHostKey(HostKey::Select));
+  EXPECT_FALSE(Menu().At().open);
+  for (const HostAction action : {HostAction::VolumeDown, HostAction::Mute,
+                                HostAction::ExitFullscreen, HostAction::Leave, HostAction::Controls})
+    ActivateHost(action);
+  EXPECT_EQ(m_lines->Take(), "orca host volume-up\norca host volume-down\norca host mute\n"
+                            "orca host exit-fullscreen\norca host leave\norca orb\n");
+  EXPECT_EQ(Pad(PAD_BUTTON_UP | PAD_BUTTON_START), 0);
+  EXPECT_TRUE(Menu().At().open);
+  EXPECT_EQ(Pad(0), 0);
+  EXPECT_EQ(m_lines->Take(), "");  // Native shortcut consumes its whole press.
+  EXPECT_EQ(Pad(PAD_BUTTON_B), PAD_BUTTON_B);
+  EXPECT_FALSE(Menu().At().open);
+}
+
+TEST_F(OrcaUXHostUI, LaterCapsReplaceTheAgreementIncludingDuringAShortcutPress)
+{
+  using namespace YgOrb;
+  Orca::Status::SetAppCaps("talk");
+  Pad(PAD_BUTTON_UP | PAD_BUTTON_START);
+  EXPECT_EQ(m_lines->Take(), "orca overlay down pad\n");
+  Orca::Status::SetAppCaps("talk hostui");
+  ASSERT_TRUE(HostEnabled());
+  Pad(0);
+  EXPECT_EQ(m_lines->Take(), "orca overlay up pad\n");  // Finish the original legacy press.
+  Pad(PAD_BUTTON_UP | PAD_BUTTON_START);
+  ASSERT_TRUE(Menu().At().open);
+  EXPECT_EQ(m_lines->Take(), "");
+  Orca::Status::SetAppCaps("talk");
+  EXPECT_FALSE(Menu().At().open);
+  EXPECT_FALSE(HostEnabled());
+  EXPECT_FALSE(HostView(NowMs()).on);
+  EXPECT_FALSE(HitControls(36, 36));
+  EXPECT_FALSE(ClickControls(36, 36));
+  EXPECT_EQ(HostVertices(), 0);
+  ToggleHostMenu();
+  ActivateHost(HostAction::Feedback);
+  ActivateHost(HostAction::Mute);
+  Pad(0);
+  EXPECT_EQ(m_lines->Take(), "");  // No unmatched legacy release for a native press.
+  Pad(PAD_BUTTON_UP | PAD_BUTTON_START);
+  Pad(0);
+  EXPECT_EQ(m_lines->Take(), "orca overlay down pad\norca overlay up pad\n");
+  Orca::Status::SetAppCaps("talk hostui");
+  ASSERT_TRUE(HostEnabled());
+  EXPECT_FALSE(Menu().At().open);
+  ToggleHostMenu();
+  EXPECT_TRUE(Menu().At().open);
+  // Even off/on caps with no intervening UI poll discard the old menu.
+  Orca::Status::SetAppCaps("talk");
+  Orca::Status::SetAppCaps("talk hostui");
+  EXPECT_FALSE(Menu().At().open);
+}
+
+TEST(OrcaUXYgOrb, HostMenuUsesTheCornerControllerNavigation)
+{
+  using namespace Orca::UX::YgOrb;
+  HostMenu menu;
+  EXPECT_FALSE(menu.Pad(PAD_BUTTON_A, false));
+  EXPECT_FALSE(menu.At().open);
+  EXPECT_FALSE(menu.Pad(PAD_BUTTON_UP | PAD_BUTTON_START, true));
+  ASSERT_TRUE(menu.At().open);
+  EXPECT_EQ(menu.At().selected, 0);  // Feedback is reachable first.
+  EXPECT_FALSE(menu.Pad(0, false));
+  EXPECT_EQ(menu.Pad(PAD_BUTTON_A, false), HostAction::Feedback);
+  EXPECT_FALSE(menu.At().open);
+  menu.Toggle();
+  menu.Pad(0, false);
+  menu.Pad(PAD_BUTTON_DOWN, false);
+  EXPECT_EQ(menu.At().selected, 1);
+  menu.Pad(PAD_BUTTON_DOWN, false);  // A hold never advances twice.
+  EXPECT_EQ(menu.At().selected, 1);
+  menu.Pad(0, false);
+  EXPECT_EQ(menu.Pad(PAD_BUTTON_A, false), HostAction::VolumeUp);
+  menu.Toggle();
+  menu.Pad(PAD_BUTTON_B, false);
+  EXPECT_FALSE(menu.At().open);
+  menu.Toggle();
+  menu.Move(-1, false);
+  EXPECT_EQ(menu.Move(0, true), HostAction::Controls);
+  EXPECT_EQ(HostLine(HostAction::VolumeUp), "orca host volume-up");
+  EXPECT_EQ(HostLine(HostAction::VolumeDown), "orca host volume-down");
+  EXPECT_EQ(HostLine(HostAction::Mute), "orca host mute");
+  EXPECT_EQ(HostLine(HostAction::ExitFullscreen), "orca host exit-fullscreen");
+  EXPECT_EQ(HostLine(HostAction::Leave), "orca host leave");
+}
+
+TEST(OrcaUXYgOrb, FeedbackWaitsForCompletionAndThenFiveSeconds)
+{
+  using namespace Orca::UX::YgOrb;
+  HostMenu menu;
+  ASSERT_TRUE(menu.FeedbackDue(0));
+  EXPECT_FALSE(menu.FeedbackDue(100000));  // Still encoding.
+  menu.FeedbackFinished(100000);
+  EXPECT_FALSE(menu.FeedbackDue(104999));
+  EXPECT_TRUE(menu.FeedbackDue(105000));
+  menu.FeedbackFinished(105001);
+  EXPECT_FALSE(menu.FeedbackDue(110000));
+  for (int n = 0; n < 10; ++n)
+    EXPECT_TRUE(menu.HostDue(0));
+  EXPECT_FALSE(menu.HostDue(999));
+  EXPECT_TRUE(menu.HostDue(1000));
+}
+
+TEST(OrcaUXYgOrb, FeedbackPublishesACompletePngBeforeReturningItsLine)
+{
+  using namespace Orca::UX::YgOrb;
+  const std::string dir = File::CreateTempDir();
+  ASSERT_FALSE(dir.empty());
+  Common::ScopeGuard cleanup([&] { File::DeleteDirRecursively(dir); });
+  const std::string directory = dir + "/", name = "feedback-test.png";
+  const std::string final = directory + name, temp = final + ".tmp";
+  const std::array<u8, 4> pixel{255, 64, 32, 255};
+  ASSERT_TRUE(Common::ConvertRGBAToRGBAndSavePNG(temp, pixel.data(), 1, 1, 4, 6));
+  EXPECT_FALSE(File::Exists(final));
+  EXPECT_EQ(PublishFeedback(directory, name, true), "orca feedback feedback-test.png");
+  EXPECT_FALSE(File::Exists(temp));
+  File::IOFile png(final, "rb");
+  std::array<u8, 8> signature{};
+  ASSERT_TRUE(png.ReadBytes(signature.data(), signature.size()));
+  EXPECT_EQ(signature, (std::array<u8, 8>{137, 80, 78, 71, 13, 10, 26, 10}));
+  EXPECT_GT(png.GetSize(), signature.size());
+  ASSERT_TRUE(png.Close());
+  ASSERT_TRUE(File::Delete(final));
+  ASSERT_TRUE(Common::ConvertRGBAToRGBAndSavePNG(temp, pixel.data(), 1, 1, 4, 6));
+  EXPECT_FALSE(PublishFeedback(directory, name, false));
+  EXPECT_FALSE(File::Exists(temp));
+  EXPECT_FALSE(File::Exists(final));
+  EXPECT_FALSE(PublishFeedback(directory, name, true));  // Missing capture never emits a line.
+  for (const std::string& invalid : std::array<std::string, 5>{
+           "../frame.png", "dir/frame.png", "a b.png", ".png", std::string(65, 'a') + ".png"})
+    EXPECT_FALSE(PublishFeedback(directory, invalid, true));
+}
+
+TEST(OrcaUXYgOrb, FeedbackRejectsAnUnavailableRenderer)
+{
+  using namespace Orca::UX::YgOrb;
+  using namespace Common::Log;
+  class CaptureLog final : public LogListener
+  {
+  public:
+    explicit CaptureLog(std::string& text) : m_text(text) {}
+    void Log(LogLevel, const char* message) override { m_text += message; }
+
+  private:
+    std::string& m_text;
+  };
+  class MemoryLayer final : public Config::ConfigLayerLoader
+  {
+  public:
+    MemoryLayer() : ConfigLayerLoader(Config::LayerType::Base) {}
+    void Load(Config::Layer*) override {}
+    void Save(Config::Layer*) override {}
+  };
+  const std::string dir = File::CreateTempDir();
+  ASSERT_FALSE(dir.empty());
+  const std::string old_user = File::GetUserPath(D_USER_IDX);
+  const char* old_stdio = std::getenv("YOUGAME_STDIO");
+  const bool had_stdio = old_stdio != nullptr;
+  const std::string saved_stdio = old_stdio ? old_stdio : "";
+  std::string logs;
+  const auto set_stdio = [](const char* value) {
+#ifdef _WIN32
+    _putenv_s("YOUGAME_STDIO", value ? value : "");
+#else
+    if (value)
+      setenv("YOUGAME_STDIO", value, 1);
+    else
+      unsetenv("YOUGAME_STDIO");
+#endif
+  };
+  Common::ScopeGuard cleanup([&] {
+    LogManager::Shutdown();
+    Config::Shutdown();
+    Orca::Bridge::SetWriter(nullptr);
+    Orca::Bridge::ResetForTests();
+    set_stdio(had_stdio ? saved_stdio.c_str() : nullptr);
+    File::SetUserPath(D_USER_IDX, old_user);
+    File::DeleteDirRecursively(dir);
+  });
+  File::SetUserPath(D_USER_IDX, dir + "/");
+  Config::Init();
+  Config::AddLayer(std::make_unique<MemoryLayer>());
+  Config::SetCurrent(LOGGER_VERBOSITY, LogLevel::LWARNING);
+  LogManager::Init();
+  auto& logger = *LogManager::GetInstance();
+  logger.SetEnable(LogType::VIDEO, true);
+  logger.EnableListener(LogListener::CONSOLE_LISTENER, false);
+  logger.RegisterListener(LogListener::LOG_WINDOW_LISTENER, std::make_unique<CaptureLog>(logs));
+  logger.EnableListener(LogListener::LOG_WINDOW_LISTENER, true);
+  set_stdio("1");
+  Orca::Bridge::ResetForTests();
+  StatusLines lines("hostui");
+  ASSERT_TRUE(lines.Ok());
+  EXPECT_FALSE(HostEnabled());
+  ActivateHost(HostAction::Feedback);
+  EXPECT_EQ(lines.Take(), "");
+  EXPECT_NE(logs.find("Feedback request rejected: host controls unavailable"), std::string::npos);
+  Orca::Bridge::SetWriter(+[](const std::string&) {});
+  ASSERT_TRUE(HostEnabled());
+  ASSERT_FALSE(g_frame_dumper);
+  ActivateHost(HostAction::Feedback);
+  EXPECT_EQ(lines.Take(), "");
+  EXPECT_NE(logs.find("Feedback request rejected: renderer unavailable"), std::string::npos);
+  EXPECT_TRUE(std::filesystem::is_empty(dir));
+}
+
+TEST(OrcaUXYgOrb, FeedbackRejectsStartingStoppingAndFailedRenderers)
+{
+  const std::string dir = File::CreateTempDir();
+  ASSERT_FALSE(dir.empty());
+  Common::ScopeGuard cleanup([&] { File::DeleteDirRecursively(dir); });
+  const std::string path = dir + "/feedback.png.tmp";
+  ScreenshotRequestGate requests;
+  int completions = 0;
+  const auto completed = [&](bool saved) {
+    EXPECT_FALSE(saved);
+    ++completions;
+  };
+  EXPECT_FALSE(requests.Request(Core::State::Running, path, completed));
+  auto dumper = std::make_unique<FrameDumper>();
+  // Allocation alone does not publish the renderer: initialization can still fail.
+  EXPECT_FALSE(requests.Request(Core::State::Running, path, completed));
+  dumper.reset();
+  EXPECT_FALSE(requests.Request(Core::State::Running, path, completed));
+
+  dumper = std::make_unique<FrameDumper>();
+  requests.SetRenderer(dumper.get());
+  for (const auto state : {Core::State::Uninitialized, Core::State::Starting, Core::State::Stopping})
+    EXPECT_FALSE(requests.Request(state, path, completed));
+  EXPECT_EQ(completions, 0);
+  ASSERT_TRUE(requests.Request(Core::State::Paused, path, completed));
+  EXPECT_FALSE(requests.Request(Core::State::Running, path, completed));  // Busy.
+  requests.SetRenderer(nullptr);
+  EXPECT_FALSE(requests.Request(Core::State::Running, path, completed));
+  dumper.reset();  // No XFB arrived; cancellation must still complete exactly once.
+  EXPECT_EQ(completions, 1);
+  EXPECT_TRUE(std::filesystem::is_empty(dir));
+}
+
+TEST(OrcaUXYgOrb, FeedbackRequestsCanRaceRendererTeardown)
+{
+  const std::string dir = File::CreateTempDir();
+  ASSERT_FALSE(dir.empty());
+  Common::ScopeGuard cleanup([&] { File::DeleteDirRecursively(dir); });
+  ScreenshotRequestGate requests;
+  const std::string path = dir + "/feedback.png.tmp";
+  std::atomic<int> accepted{0}, cancelled{0}, attempts{0};
+  std::atomic<bool> done{false};
+  const auto completed = [&](bool saved) {
+    EXPECT_FALSE(saved);
+    ++cancelled;
+  };
+  auto dumper = std::make_unique<FrameDumper>();
+  requests.SetRenderer(dumper.get());
+  ASSERT_TRUE(requests.Request(Core::State::Running, path, completed));
+  ++accepted;
+  std::thread requester([&] {
+    while (!done.load())
+    {
+      if (requests.Request(Core::State::Running, path, completed))
+        ++accepted;
+      ++attempts;
+      std::this_thread::yield();
+    }
+  });
+  while (attempts.load() == 0)
+    std::this_thread::yield();
+  for (int iteration = 0; iteration < 100; ++iteration)
+  {
+    requests.SetRenderer(nullptr);
+    dumper.reset();
+    dumper = std::make_unique<FrameDumper>();
+    requests.SetRenderer(dumper.get());
+    std::this_thread::yield();
+  }
+  requests.SetRenderer(nullptr);
+  dumper.reset();
+  done = true;
+  requester.join();
+  EXPECT_GT(attempts.load(), 0);
+  EXPECT_EQ(accepted.load(), cancelled.load());
+  EXPECT_TRUE(std::filesystem::is_empty(dir));
 }

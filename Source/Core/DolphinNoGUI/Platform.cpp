@@ -27,13 +27,14 @@
 #include "Core/Orca/Session/Online.h"
 #include "Core/Orca/Status.h"
 #include "Core/Orca/UX/Chat.h"
-#include "Core/Orca/UX/NameTags.h"
-#include "Core/Orca/UX/OnlineMenu.h"
+#include "Core/Orca/Games/Brawl/NameTags.h"
 #include "Core/Orca/UX/Overlay.h"
-#include "Core/Orca/UX/Queue.h"
+#include "Core/Orca/UX/QueueApp.h"
+#include "Core/Orca/UX/Search.h"
 #include "Core/Orca/UX/SetEnd.h"
 #include "Core/Orca/UX/YgOrb.h"
 #include "Core/Rollback/OnlineMatch.h"
+#include "Core/Rollback/ReplayStream.h"
 #include "Core/System.h"
 #include "VideoCommon/FrameDumper.h"
 #include "VideoCommon/Present.h"
@@ -171,7 +172,7 @@ void Platform::NotifyFirstFrame(int width, int height, double fps)
 
 void Platform::EmbedTeardown()
 {
-  if (!m_embed.enabled)
+  if (!IsEmbedded())
     return;
   EmbedSetFocus(false);
   EmbedSetVisible(false);
@@ -180,6 +181,7 @@ void Platform::EmbedTeardown()
 void Platform::SetEmbed(const Embed::Options& options)
 {
   m_embed = options;
+  m_embed_result = Embed::Result(options.enabled && !options.adopted);
   m_embed_rect_known = options.enabled;
   // If --rect was too small, the platform creates the view hidden (Embed.h).
   m_embed_too_small = options.too_small;
@@ -206,15 +208,38 @@ void Platform::ApplyEmbedView()
       VideoCommon::LayoutHint{r.w, r.h, v.x - r.x, v.y - r.y, v.w, v.h});
 }
 
+void Platform::EmbedSucceeded()
+{
+  m_embed_result.Decide();
+}
+
+void Platform::EmbedFallback(std::string_view reason)
+{
+  m_embed_result.Decide(reason);
+  m_embed_fallback = true;
+}
+
+void Platform::TraceEmbedRect(const Embed::Rect& requested) const
+{
+  if (!IsEmbedded() || !Embed::TraceEnabled())
+    return;
+  if (const auto actual = EmbedGetBounds())
+    Embed::Trace(requested, *actual);
+}
+
 void Platform::ProcessEmbedCommands()
 {
   if (!m_embed.enabled && !m_test_commands)
     return;
   {
+    // A mod's builtin offers its caps only once its guards have held (Status::CapsSettled): until
+    // then "ready" and the caps before it wait. Never in legacy mode.
+    const bool settled = Orca::Status::CapsSettled();
     std::optional<std::string> ready;
     {
       std::lock_guard lock(m_ready_lock);
-      ready.swap(m_ready_line);
+      if (settled)
+        ready.swap(m_ready_line);
       if (ready)
         m_ready_sent = true;
     }
@@ -224,11 +249,23 @@ void Platform::ProcessEmbedCommands()
       // Prints nothing outside a session.
       Orca::Status::PrintCaps();
       Embed::Out(*ready);
+      if (const auto result = m_embed_result.TakeLine(true))
+        Embed::Out(*result);
       // The activity lines may start now (Orca/Activity.h, HoldUntilReady), and so may the speed
       // lines (Orca/Perf.h).
       Orca::Activity::Ready();
       Orca::Perf::Ready();
     }
+    if (const auto result = m_embed_result.TakeLine(m_ready_sent))
+      Embed::Out(*result);
+    // Test commands: the caps once the boot chose its profile and they are settled.
+    if (m_test_caps_pending && settled)
+    {
+      m_test_caps_pending = false;
+      Orca::Status::PrintCaps();
+    }
+    // An offer that changed since (a builtin's guards failing after they held): printed again.
+    Orca::Status::UpdateCaps();
   }
 
   auto& system = Core::System::GetInstance();
@@ -257,7 +294,7 @@ void Platform::ProcessEmbedCommands()
     {
       std::string rest;
       std::getline(in, rest);
-      if (const std::optional<Embed::Rect> rect = Embed::ParseRect(rest))
+      if (const std::optional<Embed::Rect> rect = Embed::ParseRect(rest, false))
       {
         // A rect too small for the game hides it at its last size instead (Embed.h).
         const bool too_small = Embed::TooSmall(*rect);
@@ -277,6 +314,7 @@ void Platform::ProcessEmbedCommands()
           m_embed_too_small = too_small;
           ApplyEmbedVisible();
         }
+        TraceEmbedRect(*rect);
       }
     }
     else if (cmd == "view")
@@ -294,12 +332,14 @@ void Platform::ProcessEmbedCommands()
       {
         m_embed_view.reset();
         ApplyEmbedView();
+        TraceEmbedRect(m_embed.rect);
       }
       else if (const std::optional<Embed::Rect> view = Embed::ParseRect(rest);
                view && !Embed::TooSmall(*view))
       {
         m_embed_view = *view;
         ApplyEmbedView();
+        TraceEmbedRect(*view);
       }
       else
       {
@@ -378,6 +418,30 @@ void Platform::ProcessEmbedCommands()
       else
         Embed::Out("unsupported music");
     }
+    else if (cmd == "replay")
+    {
+      if (!Orca::Status::Cap(Orca::Status::REPLAY_CAP) ||
+          !Rollback::ReplayStream::Command(line))
+        Embed::Out("unsupported replay");
+    }
+    else if (cmd == "record")
+    {
+      // "record on|off|auto": whether this player's match streams to the room for watchers and
+      // the saved replay (Orca::Online::RecordWanted). "auto" records ranked rooms only.
+      std::string value, more;
+      in >> value;
+      if ((value == "on" || value == "off" || value == "auto") && !(in >> more) &&
+          Orca::Status::Cap(Orca::Status::RECORD_CAP))
+      {
+        Orca::Online::SetRecordChoice(value == "on"  ? Orca::Online::RecordChoice::On :
+                                      value == "off" ? Orca::Online::RecordChoice::Off :
+                                                       Orca::Online::RecordChoice::Auto);
+      }
+      else
+      {
+        Embed::Out("unsupported record");
+      }
+    }
     else if (cmd == "gfx")
     {
       // "gfx <key> <value>": a live change to one of the player's drawing-only graphics settings,
@@ -439,7 +503,7 @@ void Platform::ProcessEmbedCommands()
       // The app's search ended without a match: stop showing the search and un-ready the player
       // on the queue's character select (Start searches again).
       Orca::UX::Search::End();
-      Orca::UX::Queue::ClearReady();
+      Orca::UX::QueueApp::ClearReady();
     }
     else if (cmd == "queue")
     {
@@ -450,11 +514,11 @@ void Platform::ProcessEmbedCommands()
       int rating = 0;
       const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), rating);
       if (what == "rating" && value == "-")
-        Orca::UX::Queue::SetOwnRating(-1);
+        Orca::UX::QueueApp::SetOwnRating(-1);
       else if (what == "rating" && error == std::errc{} && end == value.data() + value.size() &&
                rating >= 0 && rating <= 0xFFFE)
       {
-        Orca::UX::Queue::SetOwnRating(rating);
+        Orca::UX::QueueApp::SetOwnRating(rating);
         // After a set, this is the new rating; the end-of-set panel counts up to it (UX/SetEnd.h).
         Orca::UX::SetEnd::Current().QueueRating(rating, Orca::UX::SetEnd::NowMs());
       }
@@ -537,6 +601,16 @@ void Platform::ProcessEmbedCommands()
       else
         Embed::Out("unsupported chat");
     }
+    else if (cmd == "feedback")
+    {
+      // The app sends this shortcut only from its focused view; Orca never polls for it.
+      if (Orca::Status::Cap(Orca::Status::HOSTUI_CAP))
+        Orca::UX::YgOrb::ActivateHost(Orca::UX::YgOrb::HostAction::Feedback);
+    }
+    else if (cmd == "host-menu")
+    {
+      Orca::UX::YgOrb::ToggleHostMenu();
+    }
     else if (cmd == "orb")
     {
       // Draws the YouGame button where the page's own sits under Orca (UX/YgOrb.h).
@@ -553,6 +627,16 @@ void Platform::ProcessEmbedCommands()
         Orca::UX::YgOrb::Show(std::move(*notice));
       else
         Embed::Out("unsupported notice");
+    }
+    else if (cmd == "talk")
+    {
+      // Hold-to-talk's row beside the YouGame button, replaced by each line, with the app's "talk"
+      // cap (UX/YgOrb.h). Players' words are never printed or logged.
+      std::optional<Orca::UX::YgOrb::Talk> talk = Orca::UX::YgOrb::ParseTalk(line);
+      if (talk && Orca::Status::Cap(Orca::Status::TALK_CAP))
+        Orca::UX::YgOrb::SetTalk(std::move(*talk));
+      else
+        Embed::Out("unsupported talk");
     }
     else if (cmd == "test-shot" && Orca::GetEnv("ORCA_TEST_COMMANDS") == "1")
     {

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cstdio>
 #include <functional>
@@ -13,9 +14,19 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
 #include <gtest/gtest.h>
 #include <picojson.h>
 
+#include "Common/Timer.h"
 #include "Core/Orca/Session/DirectLink.h"
 #include "Core/Orca/Session/YouGameRoom.h"
 
@@ -348,6 +359,134 @@ TEST(OrcaDirectLink, TwoOrcasLinkAndRebuild)
   }
 }
 
+// A networking fix for Windows: an oversized datagram is dropped, the link stays up.
+// macOS/Linux silently truncate the datagram, so this passes there with upstream libjuice too.
+TEST(OrcaDirectLink, AnOversizedDatagramLeavesTheLinkUp)
+{
+  Mesh mesh(2);
+  ASSERT_TRUE(mesh.WaitFor([&] { return mesh.AllUp(); })) << mesh.Stats(1, 0).reason;
+  mesh.At(0).link->Send("before from a");
+  mesh.At(1).link->Send("before from b");
+  ASSERT_TRUE(mesh.WaitFor([&] {
+    return Count(mesh.At(1).received, "before from a") == 1 &&
+           Count(mesh.At(0).received, "before from b") == 1;
+  }));
+  const std::array<int, 2> generations{mesh.Stats(0, 1).generation,
+                                      mesh.Stats(1, 0).generation};
+  const std::string local = mesh.Stats(1, 0).test_local_address;
+  const auto colon = local.rfind(':');
+  ASSERT_NE(colon, std::string::npos) << local;
+  unsigned short port = 0;
+  const auto parsed = std::from_chars(local.data() + colon + 1, local.data() + local.size(), port);
+  ASSERT_EQ(parsed.ec, std::errc{});
+  ASSERT_EQ(parsed.ptr, local.data() + local.size());
+  ASSERT_NE(port, 0);
+
+#ifdef _WIN32
+  WSADATA data{};
+  ASSERT_EQ(WSAStartup(MAKEWORD(2, 2), &data), 0);
+  struct UdpSocket
+  {
+    SOCKET fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    ~UdpSocket()
+    {
+      if (fd != INVALID_SOCKET)
+        closesocket(fd);
+      WSACleanup();
+    }
+  } udp;
+  ASSERT_NE(udp.fd, INVALID_SOCKET);
+#else
+  struct UdpSocket
+  {
+    int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    ~UdpSocket()
+    {
+      if (fd >= 0)
+        close(fd);
+    }
+  } udp;
+  ASSERT_GE(udp.fd, 0);
+#endif
+  sockaddr_in destination{};
+  destination.sin_family = AF_INET;
+  destination.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  destination.sin_port = htons(port);
+  const std::array<char, 9000> junk{};
+  for (const int size : {5000, 5000, 5000, 9000})
+  {
+    ASSERT_EQ(sendto(udp.fd, junk.data(), size, 0,
+                     reinterpret_cast<const sockaddr*>(&destination), sizeof(destination)),
+              size);
+  }
+
+  const auto until = std::chrono::steady_clock::now() + 2s;
+  do
+  {
+    mesh.Pump();
+    ASSERT_EQ(mesh.Stats(0, 1).generation, generations[0]);
+    ASSERT_EQ(mesh.Stats(1, 0).generation, generations[1]);
+    ASSERT_EQ(mesh.Stats(1, 0).kind, LinkKind::Direct);
+    ASSERT_TRUE(mesh.AllUp());
+    std::this_thread::sleep_for(5ms);
+  } while (std::chrono::steady_clock::now() < until);
+
+  mesh.At(0).link->Send("after from a");
+  mesh.At(1).link->Send("after from b");
+  ASSERT_TRUE(mesh.WaitFor([&] {
+    return Count(mesh.At(1).received, "after from a") == 1 &&
+           Count(mesh.At(0).received, "after from b") == 1;
+  }));
+  EXPECT_EQ(mesh.Stats(0, 1).generation, generations[0]);
+  EXPECT_EQ(mesh.Stats(1, 0).generation, generations[1]);
+  EXPECT_EQ(mesh.Stats(0, 1).kind, LinkKind::Direct);
+  EXPECT_EQ(mesh.Stats(1, 0).kind, LinkKind::Direct);
+}
+
+// Six loopback pairs, including recipient-specific input fan-out.
+TEST(OrcaDirectLink, FourFriendsSendOnlyToTheRequestedSeat)
+{
+  Mesh mesh(4);
+  ASSERT_TRUE(mesh.WaitFor([&] { return mesh.AllUp(); }));
+  for (int from = 0; from < 4; ++from)
+  {
+    for (int to = 0; to < 4; ++to)
+    {
+      if (from != to)
+        mesh.At(from).link->Send("pair " + std::to_string(from) + " " + std::to_string(to), to);
+    }
+  }
+  ASSERT_TRUE(mesh.WaitFor([&] {
+    for (int to = 0; to < 4; ++to)
+      if (mesh.At(to).received.size() != 3)
+        return false;
+    return true;
+  }));
+  for (int to = 0; to < 4; ++to)
+  {
+    for (int from = 0; from < 4; ++from)
+    {
+      for (int recipient = 0; recipient < 4; ++recipient)
+      {
+        if (from != recipient)
+          EXPECT_EQ(Count(mesh.At(to).received,
+                          "pair " + std::to_string(from) + " " + std::to_string(recipient)),
+                    recipient == to ? 1 : 0);
+      }
+    }
+  }
+  mesh.At(0).link->RemovePeer(mesh.At(3).id);
+  mesh.At(3).link->RemovePeer(mesh.At(0).id);
+  ASSERT_TRUE(mesh.WaitFor([&] { return !mesh.Up(0, 3) && !mesh.Up(3, 0); }));
+  EXPECT_TRUE(mesh.Up(0, 1));
+  EXPECT_TRUE(mesh.Up(0, 2));
+  EXPECT_TRUE(mesh.Up(1, 3));
+  EXPECT_TRUE(mesh.Up(2, 3));
+  mesh.At(0).link->Send("remaining pair", 1);
+  ASSERT_TRUE(mesh.WaitFor([&] { return Count(mesh.At(1).received, "remaining pair") == 1; }));
+  EXPECT_EQ(Count(mesh.At(2).received, "remaining pair"), 0);
+}
+
 // Three Orcas: a link per pair, each packet to both others.
 TEST(OrcaDirectLink, ThreeOrcasLinkEveryPair)
 {
@@ -394,11 +533,30 @@ TEST(OrcaDirectLink, BlockedOrTurnOnlyStaysOnTheRelay)
 // trip of 120 ms on the link.
 TEST(OrcaDirectLink, TestDelayCoversTheLinkBothWays)
 {
+  // The link thread releases held datagrams on its own wake-ups. Orca asks Windows for 1 ms timers
+  // once emulation starts (SystemTimers); without that, each of the four holds can overshoot by a
+  // 15.6 ms tick. A no-op elsewhere.
+  Common::Timer::IncreaseResolution();
+  struct Restore
+  {
+    ~Restore() { Common::Timer::RestoreResolution(); }
+  } restore;
   Mesh mesh(2, [](DirectOptions& o, int) { o.net_delay_ms = 30; });
-  ASSERT_TRUE(mesh.WaitFor([&] { return mesh.AllUp() && mesh.Stats(0, 1).rtt_ms >= 0; }));
-  ASSERT_TRUE(mesh.WaitFor([&] { return mesh.Stats(0, 1).rtt_ms >= 110; }, 3s))
-      << mesh.Stats(0, 1).rtt_ms;
-  EXPECT_LE(mesh.Stats(0, 1).rtt_ms, 160);
+  ASSERT_TRUE(mesh.WaitFor([&] { return mesh.AllUp(); }));
+  // The median of about ten keepalive round trips (one each 200 ms), not the first one alone: one
+  // late wake-up on a busy machine is not the delay.
+  ASSERT_TRUE(mesh.WaitFor([&] { return mesh.Stats(0, 1).received >= 12; }))
+      << mesh.Stats(0, 1).received;
+  const int rtt = mesh.Stats(0, 1).rtt_ms;
+  // Under 110: the delay is missing on one way. Windows' ceiling leaves room for a test process
+  // the PC runs at below-normal priority next to other work.
+#ifdef _WIN32
+  constexpr int CEILING_MS = 200;
+#else
+  constexpr int CEILING_MS = 160;
+#endif
+  EXPECT_GE(rtt, 110);
+  EXPECT_LE(rtt, CEILING_MS);
 }
 
 // A peer sending far faster than an honest one (one a frame; while it stalls, one every 4 ms) gets
@@ -524,4 +682,62 @@ TEST(OrcaDirectLink, AFailedIceMintBacksOff)
   EXPECT_EQ(mesh.Stats(0, 1).builds, 4);
   EXPECT_EQ(mints[0].load(), 1);
   EXPECT_EQ(mints[1].load(), 1);
+}
+
+TEST(OrcaDirectLink, ScheduledBlackoutDropsBothWaysWithoutDeliveringLater)
+{
+  const auto from = std::chrono::steady_clock::now() + 2s;
+  const auto until = from + 2s;
+  Mesh mesh(2, [&](DirectOptions& options, int node) {
+    if (node == 0)
+      options.blackout = std::pair(from, until);
+  });
+  ASSERT_TRUE(mesh.WaitFor([&] { return mesh.AllUp(); }, 1500ms));
+  mesh.At(0).link->Send("before");
+  ASSERT_TRUE(mesh.WaitFor([&] { return Count(mesh.At(1).received, "before") == 1; }, 400ms));
+  ASSERT_TRUE(mesh.WaitFor([&] { return std::chrono::steady_clock::now() >= from + 50ms; }, 2s));
+  mesh.At(0).link->Send("dark-out");
+  mesh.At(1).link->Send("dark-in");
+  ASSERT_TRUE(mesh.WaitFor([&] { return std::chrono::steady_clock::now() >= until + 100ms; }, 3s));
+  mesh.At(0).link->Send("after-out");
+  mesh.At(1).link->Send("after-in");
+  ASSERT_TRUE(mesh.WaitFor([&] {
+    return Count(mesh.At(0).received, "after-in") == 1 &&
+           Count(mesh.At(1).received, "after-out") == 1;
+  }));
+  EXPECT_EQ(Count(mesh.At(0).received, "dark-in"), 0);
+  EXPECT_EQ(Count(mesh.At(1).received, "dark-out"), 0);
+}
+
+extern "C" int OrcaTestTurnStart(const char* address);
+extern "C" void OrcaTestTurnStop();
+TEST(OrcaDirectLink, FourFriendsExerciseAllSixTurnPairs)
+{
+  const int port = OrcaTestTurnStart("127.0.0.1");
+  ASSERT_GT(port, 0);
+  struct Cleanup
+  {
+    ~Cleanup() { OrcaTestTurnStop(); }
+  } cleanup;
+  Mesh mesh(4, [&](DirectOptions& options, int) {
+    options.force = "turn";
+    options.ice.turn_host = "127.0.0.1";
+    options.ice.turn_port = static_cast<u16>(port);
+    options.ice.turn_user = "orca-fixture";
+    options.ice.turn_pass = "orca-fixture-only";
+  });
+  ASSERT_TRUE(mesh.WaitFor([&] { return mesh.AllUp(); }, 20s));
+  for (int from = 0; from < 4; ++from)
+    for (int to = 0; to < 4; ++to)
+      if (from != to)
+      {
+        EXPECT_EQ(mesh.Stats(from, to).kind, LinkKind::Turn);
+        mesh.At(from).link->Send("turn " + std::to_string(from), to);
+      }
+  EXPECT_TRUE(mesh.WaitFor([&] {
+    for (int seat = 0; seat < 4; ++seat)
+      if (mesh.At(seat).received.size() != 3)
+        return false;
+    return true;
+  }));
 }

@@ -151,3 +151,99 @@ TEST(OrcaCrashNote, ReadThrowInfoWithoutTypesIsEmpty)
   EXPECT_TRUE(Orca::CrashNote::ReadThrowInfo(nullptr, image.data()).decorated.empty());
   EXPECT_TRUE(Orca::CrashNote::ReadThrowInfo(image.data(), nullptr).decorated.empty());
 }
+
+TEST(OrcaCrashNote, FixedLineCutsToFitAndStaysTerminated)
+{
+  char out[8];
+  Orca::CrashNote::FixedLine line(out, sizeof(out));
+  line << "abc" << "defghij";
+  EXPECT_EQ(line.Length(), 7u);
+  EXPECT_STREQ(out, "abcdefg");
+  line.Hex(0xFF);
+  EXPECT_STREQ(out, "abcdefg");
+
+  char hex[40];
+  Orca::CrashNote::FixedLine digits(hex, sizeof(hex));
+  digits.Hex(0x887A0006, 8) << " ";
+  digits.Hex(0x10) << " ";
+  digits.Hex(0) << " ";
+  digits.Hex(0x6, 8) << " ";
+  digits.Dec(0) << " ";
+  digits.Dec(4242);
+  EXPECT_STREQ(hex, "0x887A0006 0x10 0x0 0x00000006 0 4242");
+
+  char wide[24];
+  Orca::CrashNote::FixedLine full(wide, sizeof(wide));
+  full.Hex(0xFFFFFFFFFFFFFFFFull);
+  EXPECT_STREQ(wide, "0xFFFFFFFFFFFFFFFF");
+
+  // Nothing to write into: nothing written, no crash.
+  Orca::CrashNote::FixedLine none(nullptr, 0);
+  none << "text";
+  EXPECT_EQ(none.Length(), 0u);
+}
+
+TEST(OrcaCrashNote, FaultNamesOnlyTheFatalCodes)
+{
+  EXPECT_STREQ(Orca::CrashNote::FaultName(0xC0000005), "access violation");
+  EXPECT_STREQ(Orca::CrashNote::FaultName(0x80000003), "breakpoint");
+  EXPECT_STREQ(Orca::CrashNote::FaultName(0xC00000FD), "stack overflow");
+  // A C++ throw (the throw reporter's), thread naming and OutputDebugString are left alone.
+  EXPECT_EQ(Orca::CrashNote::FaultName(0xE06D7363), nullptr);
+  EXPECT_EQ(Orca::CrashNote::FaultName(0x406D1388), nullptr);
+  EXPECT_EQ(Orca::CrashNote::FaultName(0x40010006), nullptr);
+}
+
+TEST(OrcaCrashNote, FaultLineNamesTheModuleOffsetAndGraphicsDevice)
+{
+  // The 0.3.39 crashes: an access violation a moment after the device hung.
+  Orca::CrashNote::Fault fault;
+  fault.code = 0xC0000005;
+  fault.address = 0x7FFA12345678;
+  fault.module = "nvwgf2umx.dll";
+  fault.offset = 0x1A2B3C;
+  fault.has_access = true;
+  fault.access_kind = 0;
+  fault.access_address = 0x10;
+  fault.thread = 4242;
+  fault.graphics = "lost (D3D11: device hung, 0x887A0006) at a 16x16x1 texture";
+  char out[512];
+  const size_t length = Orca::CrashNote::FormatFault(out, sizeof(out), fault);
+  EXPECT_EQ(std::string(out, length),
+            "Orca: exception 0xC0000005 (access violation reading 0x10) at nvwgf2umx.dll+0x1A2B3C "
+            "on thread 4242; graphics device: lost (D3D11: device hung, 0x887A0006) at a 16x16x1 "
+            "texture");
+
+  // A write in JIT code (no module), before any graphics device.
+  fault.module = {};
+  fault.access_kind = 1;
+  fault.access_address = 0;
+  fault.graphics = {};
+  Orca::CrashNote::FormatFault(out, sizeof(out), fault);
+  EXPECT_STREQ(out, "Orca: exception 0xC0000005 (access violation writing 0x0) at 0x7FFA12345678 "
+                    "(in no module) on thread 4242; graphics device: none");
+
+  // Said by the CPU thread's vectored handler as it was raised: tagged, since a driver may still
+  // catch it and the run go on.
+  fault.first_chance = true;
+  Orca::CrashNote::FormatFault(out, sizeof(out), fault);
+  EXPECT_STREQ(out, "Orca: exception 0xC0000005 (access violation writing 0x0) (first chance) at "
+                    "0x7FFA12345678 (in no module) on thread 4242; graphics device: none");
+  fault.first_chance = false;
+
+  // A failed assert's breakpoint (the 0x80000003 exits): no access.
+  Orca::CrashNote::Fault breakpoint;
+  breakpoint.code = 0x80000003;
+  breakpoint.module = "Orca.exe";
+  breakpoint.offset = 0x4F00;
+  breakpoint.thread = 7;
+  breakpoint.graphics = "D3D11 running";
+  Orca::CrashNote::FormatFault(out, sizeof(out), breakpoint);
+  EXPECT_STREQ(out, "Orca: exception 0x80000003 (breakpoint) at Orca.exe+0x4F00 on thread 7; "
+                    "graphics device: D3D11 running");
+
+  // Cut to fit a small buffer, still terminated.
+  char small[16];
+  EXPECT_EQ(Orca::CrashNote::FormatFault(small, sizeof(small), breakpoint), 15u);
+  EXPECT_STREQ(small, "Orca: exception");
+}

@@ -33,6 +33,9 @@ SLUG = os.environ.get("FAKE_SLUG", "orca-test"); LOG = os.environ.get("FAKE_LOG"
 # FAKE_COOKIE (a signed-in session's cookie header) and FAKE_TICKET_SLUG (a live Orca listing): real
 # tickets, as the app gets them. FAKE_NO_LEAVE=1: the page never sends Leave.
 COOKIE = os.environ.get("FAKE_COOKIE", ""); TICKET_SLUG = os.environ.get("FAKE_TICKET_SLUG", "")
+# FAKE_ORCA_BUILD: the "orca build <version> [<commit>]" the page names in a real ticket (the site's
+# protocol floor refuses a listing's Orca ticket with no build, 409 orca_outdated; lib/orca-protocol.ts).
+ORCA_BUILD = os.environ.get("FAKE_ORCA_BUILD", "0.3.34").split()
 SITE = os.environ.get("FAKE_SITE", "https://yougame.co"); NO_LEAVE = os.environ.get("FAKE_NO_LEAVE") == "1"
 # FAKE_TICKET_DROP_FIRST=1: the first mpTicket gets no reply (the connection just closes), as when
 # the page's ticket never comes back.
@@ -126,7 +129,8 @@ class H(BaseHTTPRequestHandler):
             if COOKIE:
                 # A signed-in player's ticket for a real listing (the keyframe store refuses dev tickets).
                 body = {"slug": TICKET_SLUG, "player_id": pid, "players": msg["players"], "mode": msg["mode"],
-                        "room": msg["room"], "lobby": msg["lobby"]}
+                        "room": msg["room"], "lobby": msg["lobby"],
+                        "orca_build": {"version": ORCA_BUILD[0], "commit": ORCA_BUILD[1] if len(ORCA_BUILD) > 1 else None}}
                 headers["cookie"] = COOKIE
                 headers["origin"] = SITE
             else:

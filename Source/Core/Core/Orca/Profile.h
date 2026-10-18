@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <string>
@@ -11,6 +12,7 @@
 
 #include "Common/CommonTypes.h"
 #include "Common/Config/Config.h"
+#include "Core/Orca/Mod.h"
 
 namespace PowerPC
 {
@@ -87,6 +89,9 @@ struct Profile
   // Set at boot: the game ID Dolphin gave the booted file (a loader's comes from its file name).
   // Its game settings INIs apply while the loader runs, the disc's after.
   std::string boot_game_id;
+  // Mod mode (ORCA_MOD_DIR, Core/Orca/Mod.h): the bundle this profile was read from. Unset for a
+  // legacy profile (Data/Sys/Orca/<name>.ini), whose sessions run exactly as before mods.
+  std::optional<Mod::ModInfo> mod;
 
   bool IsLauncher() const { return !launcher_hash.empty(); }
 };
@@ -124,6 +129,12 @@ void PrioritizeThread(LatencyThread thread);
 //                            (default: always); queued traffic is delivered after, in order.
 //                            ~M for G1-G2 makes gaps random with mean M ms.
 //                            Implies ORCA_TEST_NET_DELAY_MS.
+//   ORCA_TEST_BLACKOUT=S1-S2  drop direct packets both ways from S1 to S2 s after the room
+//                            opened; silently detach the room socket and fail every reconnect
+//                            as a network error until S2. No traffic is queued by this hook.
+//   ORCA_TEST_BLACKOUT_ROOM_AFTER=N  restore the room N s BEFORE the direct path (0 by default).
+//                            For a 15 s blackout, N=12 brings the room back after 3 s.
+//                            Both hooks require ORCA_SESSION=1; BLACKOUT marks the test key.
 //   ORCA_TEST_NET_UPLINK=D+J[/S1-S2]  outgoing messages wait D ms plus a deterministic 0..J ms,
 //                            order kept (a slow, bursty uplink), from S1 to S2 s after the room
 //                            opened. Implies ORCA_TEST_NET_DELAY_MS.
@@ -149,10 +160,30 @@ void PrioritizeThread(LatencyThread thread);
 //                            port 1 won. Same value in both processes.
 // Not in TestOverridesActive, since it can't change the game:
 //   ORCA_TEST_SHADER_WAIT_MS=N  the boot's shader wait (WaitForBootCompile) gives up after N ms.
+// Scripted pads, including the stdio test driver before its first snapshot arrives.
+bool HarnessInputActive();
+// Adds the optional room/app report marker; normal play preserves every byte.
+std::string HarnessReport(std::string json);
 int TestPads();
 bool TestSkipRender();
 std::optional<int> TestNetDelayMs();
 int TestNetJitterMs();
+struct TestBlackout
+{
+  int from_s = 0;
+  int to_s = 0;
+  int room_before_s = 0;
+  bool DirectBlocked(std::chrono::steady_clock::duration elapsed) const
+  {
+    return elapsed >= std::chrono::seconds(from_s) && elapsed < std::chrono::seconds(to_s);
+  }
+  bool RoomBlocked(std::chrono::steady_clock::duration elapsed) const
+  {
+    return elapsed >= std::chrono::seconds(from_s) &&
+           elapsed < std::chrono::seconds(to_s - room_before_s);
+  }
+};
+std::optional<TestBlackout> TestBlackoutConfig();
 struct TestNetSpikes
 {
   int gap_min_ms = 0;
@@ -201,11 +232,29 @@ std::optional<Profile> LoadProfile(const std::string& game_id, std::optional<u16
 std::optional<Profile> LoadProfileFrom(const std::string& sys_directory, const std::string& game_id,
                                        std::optional<u16> revision, std::string* error);
 
+// Mod mode: the profile a bundle's mod.json makes (Core/Orca/Mod.h), after checking its tree.json
+// (the hash of the list, every file there at its size). Anything malformed refuses (nullopt).
+std::optional<Profile> LoadModProfile(const std::string& dir, std::string* error);
+// Mod mode, a flat bundle: the profile its verified mod.json makes (Core/Orca/Bundle.h).
+std::optional<Profile> LoadFlatProfile(const Mod::FlatBundle& bundle, std::string* error);
+// Mod mode's boot checks: a loader boot runs exactly the bundle's launcher with the mod's disc in the
+// drive (`default_disc`); a disc boot (`executable_path` null) runs the mod's disc (`boot_game_id`,
+// `boot_revision`); `wrong_disc` says a refusal was the disc's. A mod with an SD card gets its image built or reused (ORCA_SD_CACHE), and
+// `profile->sd_image_path` names it.
+bool PrepareModBoot(Profile* profile, const std::string* executable_path,
+                    const std::string& default_disc, const std::string& boot_game_id,
+                    u16 boot_revision, std::string* error, bool* wrong_disc);
+
 // ORCA_PROFILE: the launcher profile for a session that boots an executable; empty when unset.
 std::string LauncherProfileName();
 
 // XXH3-128 of a file as 32 lowercase hex digits; empty when it can't be read.
 std::string HashFile(const std::string& path);
+
+// Why DiscIO::CreateDisc gave nothing for `disc_path`, as the end of an error line: no path, a file
+// that won't open or read (with the system's own reason), one cut short, or one that isn't a disc
+// image. The app opens the disc before every run but never reads it, so a crash report needs this.
+std::string DiscOpenProblem(const std::string& disc_path);
 
 // A launcher profile's boot checks: the executable at `executable_path`, the disc at `disc_path`
 // and the SD image must match the profile. On success sets `profile->sd_image_path`; on failure,

@@ -860,7 +860,23 @@ void Jit64::Jit(u32 em_address, bool clear_cache_and_retry_on_failure)
     u8* far_start = m_far_code.GetWritableCodePtr();
 
     JitBlock* b = blocks.AllocateBlock(em_address);
-    if (DoJit(em_address, b, nextPC))
+    const bool compiled = DoJit(em_address, b, nextPC);
+    if (!compiled && m_compiling_from_hook)
+    {
+      // Orca: never clear the cache under the hook's caller (JitBase::CompileFromHook). Drop the
+      // unfinished block and what its partial code registered; that code is in free space.
+      blocks.DiscardUnfinalizedBlock(*b);
+      const auto in_partial_code = [&](const u8* p) {
+        return (p >= near_start && p < GetCodeEnd()) ||
+               (p >= far_start && p < m_far_code.GetCodeEnd());
+      };
+      std::erase_if(m_back_patch_info, [&](const auto& kv) { return in_partial_code(kv.first); });
+      std::erase_if(m_exception_handler_at_loc,
+                    [&](const auto& kv) { return in_partial_code(kv.first); });
+      m_hook_compile_dropped = true;
+      return;
+    }
+    if (compiled)
     {
       // Code generation succeeded.
 
@@ -886,6 +902,11 @@ void Jit64::Jit(u32 em_address, bool clear_cache_and_retry_on_failure)
 #endif
       return;
     }
+  }
+  else if (m_compiling_from_hook)
+  {
+    m_hook_compile_dropped = true;  // no free code region: as above, never clear here
+    return;
   }
 
   if (clear_cache_and_retry_on_failure)

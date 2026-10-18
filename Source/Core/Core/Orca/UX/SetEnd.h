@@ -117,7 +117,7 @@ struct Panel
   float scale = 1;  // entrance animation
   bool operator==(const Panel&) const = default;
 };
-// After the set, on the results screen: how to leave ("Hold Z to leave") and the hold's progress.
+// After the set, on the results screen: how to leave ("Hold B to leave") and the hold's progress.
 struct Hint
 {
   std::string text;
@@ -190,7 +190,7 @@ public:
   // After the set, the opponent left the room: "<name> left".
   void OpponentLeftAfterSet(double now);
   // After the set, each frame on the results screen: whether to show the leave hint, whether the
-  // opponent is gone (Start also leaves), and how far Z has been held (0..1).
+  // opponent is gone (Start also leaves), and how far B has been held (0..1).
   void LeaveHint(bool shown, bool opponent_gone, float progress);
   // After the set, this player is leaving the room. The opponent leaving is no longer news.
   void LeavingSetRoom(double now);

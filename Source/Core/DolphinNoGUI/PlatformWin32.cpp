@@ -8,6 +8,7 @@
 #include "Core/Core.h"
 #include "Core/Orca/Sandbox.h"
 #include "Core/Orca/Status.h"
+#include "Core/Orca/UX/OverlayKey.h"
 #include "Core/Orca/UX/YgOrb.h"
 #include "Core/System.h"
 
@@ -17,6 +18,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <dwmapi.h>
+#include <string>
+#include <string_view>
 #include <windowsx.h>
 
 #include "VideoCommon/Present.h"
@@ -24,6 +27,13 @@
 
 namespace
 {
+// Prints a line from Orca/UX/OverlayKey.h, if any.
+void OutKey(std::string_view line)
+{
+  if (!line.empty())
+    Embed::Out(std::string(line));
+}
+
 class PlatformWin32 final : public Platform
 {
 public:
@@ -36,6 +46,7 @@ public:
   WindowSystemInfo GetWindowSystemInfo() const override;
 
 protected:
+  std::optional<Embed::WindowBounds> EmbedGetBounds() const override;
   void EmbedSetRect(const Embed::Rect& rect) override;
   void EmbedSetVisible(bool visible) override;
   void EmbedSetFocus(bool focus) override;
@@ -61,6 +72,10 @@ private:
   bool m_embed_visible = true;
   // The app's "focus" / "blur": whether the game gets input. On by default, as on macOS.
   bool m_embed_focus = true;
+  // Modifiers come only from this window's messages; never query system keyboard state.
+  bool m_shift_down = false;
+  bool m_control_down = false;
+  bool m_alt_down = false;
 
   int m_window_x = Config::Get(Config::MAIN_RENDER_WINDOW_XPOS);
   int m_window_y = Config::Get(Config::MAIN_RENDER_WINDOW_YPOS);
@@ -183,16 +198,22 @@ bool PlatformWin32::CreateRenderWindow()
     if (!m_hwnd)
     {
       fprintf(stderr, "Orca: CreateWindowEx under the app's window failed (%lu)\n", GetLastError());
-      return false;
+      EmbedFallback(!parent ? "no-parent" : !IsWindow(parent) ? "parent-gone" : "setparent");
+      return CreateRenderWindow();
     }
     m_embed_visible = !m_embed.too_small;  // Hidden until a big enough rect (Embed.h).
     if (m_embed_visible)
+    {
       ShowWindow(m_hwnd, SW_SHOWNA);
+      if (IsWindowVisible(m_hwnd))
+        EmbedSucceeded();
+    }
     UpdateEmbedFocus();
     return true;
   }
 
-  m_hwnd = CreateWindowEx(WS_EX_CLIENTEDGE, WINDOW_CLASS_NAME, _T("Orca"), WS_OVERLAPPEDWINDOW,
+  // Standalone: the caption is the name players see (the embedded windows above keep "Orca").
+  m_hwnd = CreateWindowEx(WS_EX_CLIENTEDGE, WINDOW_CLASS_NAME, _T("YG Dolphin"), WS_OVERLAPPEDWINDOW,
                           m_window_x < 0 ? CW_USEDEFAULT : m_window_x,
                           m_window_y < 0 ? CW_USEDEFAULT : m_window_y, m_window_width,
                           m_window_height, nullptr, nullptr, GetModuleHandle(nullptr), this);
@@ -307,21 +328,47 @@ void PlatformWin32::KeepAdoptedPlaced()
   SetWindowPos(m_hwnd, HWND_TOP, r.x, r.y, r.w, r.h, SWP_NOACTIVATE);
 }
 
+std::optional<Embed::WindowBounds> PlatformWin32::EmbedGetBounds() const
+{
+  RECT rect{};
+  if (!GetWindowRect(m_hwnd, &rect))
+    return std::nullopt;
+  return Embed::WindowBounds{static_cast<double>(rect.left), static_cast<double>(rect.top),
+                             static_cast<double>(rect.right - rect.left),
+                             static_cast<double>(rect.bottom - rect.top),
+                             GetDpiForWindow(m_hwnd) / 96.0};
+}
+
 void PlatformWin32::EmbedSetRect(const Embed::Rect& r)
 {
-  SetWindowPos(m_hwnd, HWND_TOP, r.x, r.y, r.w, r.h,
-               SWP_NOACTIVATE | (m_embed_visible ? SWP_SHOWWINDOW : SWP_NOREDRAW));
+  if (!IsEmbedded())
+    return;
+  if (SetWindowPos(m_hwnd, HWND_TOP, r.x, r.y, r.w, r.h,
+                   SWP_NOACTIVATE | (m_embed_visible ? SWP_SHOWWINDOW : SWP_NOREDRAW)) &&
+      IsWindowVisible(m_hwnd))
+  {
+    EmbedSucceeded();
+  }
 }
 
 void PlatformWin32::EmbedSetVisible(bool visible)
 {
+  if (!IsEmbedded())
+    return;
+  // A hidden window gets no key-up: a Shift+Tab press still down ends here.
+  if (!visible)
+    OutKey(Orca::UX::OverlayKey::Keys().Cancel());
   m_embed_visible = visible;
   ShowWindow(m_hwnd, visible ? SW_SHOWNA : SW_HIDE);
+  if (IsWindowVisible(m_hwnd))
+    EmbedSucceeded();
   UpdateEmbedFocus();
 }
 
 void PlatformWin32::EmbedSetFocus(bool focus)
 {
+  if (!IsEmbedded())
+    return;
   m_embed_focus = focus;
   UpdateEmbedFocus();
 }
@@ -330,6 +377,8 @@ void PlatformWin32::EmbedSetFocus(bool focus)
 // the app's window is in the foreground, the game is shown, and the app's last word was "focus".
 void PlatformWin32::UpdateEmbedFocus()
 {
+  if (!EmbedResultDecided() && IsWindowVisible(m_hwnd))
+    EmbedSucceeded();
   const HWND root = GetAncestor(m_hwnd, GA_ROOT);
   m_window_focus = m_embed_visible && m_embed_focus && root && GetForegroundWindow() == root;
 }
@@ -348,6 +397,17 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
                                const LPARAM lParam)
 {
   PlatformWin32* platform = reinterpret_cast<PlatformWin32*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+  if (platform && (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP ||
+                   msg == WM_SYSKEYUP))
+  {
+    const bool down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+    switch (wParam)
+    {
+    case VK_SHIFT: platform->m_shift_down = down; break;
+    case VK_CONTROL: platform->m_control_down = down; break;
+    case VK_MENU: platform->m_alt_down = down; break;
+    }
+  }
   switch (msg)
   {
   case WM_NCCREATE:
@@ -377,26 +437,68 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
   break;
 
   case WM_KEYDOWN:
+    // The embedded app owns keyboard focus and relays feedback / host-menu on stdin.
+    if (!platform->IsEmbedded() && !(lParam & (1 << 30)))
+    {
+      namespace Orb = Orca::UX::YgOrb;
+      std::optional<Orb::HostKey> key;
+      switch (wParam)
+      {
+      case VK_F8: key = Orb::HostKey::Feedback; break;
+      case VK_UP:
+      case VK_LEFT: key = Orb::HostKey::Previous; break;
+      case VK_DOWN:
+      case VK_RIGHT: key = Orb::HostKey::Next; break;
+      case VK_RETURN: key = Orb::HostKey::Select; break;
+      case VK_ESCAPE: key = Orb::HostKey::Close; break;
+      case VK_TAB:
+        if (platform->m_shift_down)
+          key = Orb::HostKey::Menu;
+        break;
+      }
+      if (key && Orb::HandleHostKey(*key))
+        return 0;
+    }
     if (platform->IsEmbedded())
     {
       // Ignore auto-repeat, so a held F11 doesn't toggle full screen over and over.
       if (lParam & (1 << 30))
         break;
-      // Forward the keys the page cares about, since it can't see them here. Shift+Tab opens the
-      // YouGame overlay, the same as clicking the YouGame button.
+      // Forward the keys the page cares about, since it can't see them here. Shift+Tab is
+      // YouGame's overlay key: "orca orb" opens the overlay, the same as clicking the YouGame
+      // button; with the app's "talk" cap its press and release go instead, and holding it talks
+      // (Orca/UX/OverlayKey.h).
       if (wParam == VK_ESCAPE)
         Embed::Out("key escape");
       else if (wParam == VK_F11)
         Embed::Out("key fullscreen");
-      else if (wParam == VK_TAB && (GetKeyState(VK_SHIFT) & 0x8000) &&
-               !(GetKeyState(VK_CONTROL) & 0x8000) && !(GetKeyState(VK_MENU) & 0x8000))
-        Embed::Out("orca orb");
+      else if (wParam == VK_TAB && platform->m_shift_down && !platform->m_control_down &&
+               !platform->m_alt_down)
+        OutKey(Orca::UX::OverlayKey::Keys().Down(Orca::Status::Cap(Orca::Status::TALK_CAP)));
     }
     else if (wParam == VK_ESCAPE)
     {
       platform->RequestShutdown();
     }
     break;
+
+  // The end of a Shift+Tab press: Tab or Shift let go.
+  case WM_KEYUP:
+    if (platform && platform->IsEmbedded() && (wParam == VK_TAB || wParam == VK_SHIFT))
+      OutKey(Orca::UX::OverlayKey::Keys().Up());
+    return DefWindowProc(hwnd, msg, wParam, lParam);
+
+  // The keyboard went elsewhere, so a Shift+Tab press still down never sees its key-up here.
+  case WM_KILLFOCUS:
+    if (platform)
+    {
+      platform->m_shift_down = false;
+      platform->m_control_down = false;
+      platform->m_alt_down = false;
+    }
+    if (platform && platform->IsEmbedded())
+      OutKey(Orca::UX::OverlayKey::Keys().Cancel());
+    return DefWindowProc(hwnd, msg, wParam, lParam);
 
   // When embedded, Alt and F10 are game keys, so don't let them open the app's window menu.
   // Alt+F4 still closes the app.
@@ -420,6 +522,10 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
   case WM_LBUTTONDOWN:
   case WM_RBUTTONDOWN:
   case WM_MBUTTONDOWN:
+    if (msg == WM_LBUTTONDOWN &&
+        Orca::UX::YgOrb::ClickControls(static_cast<float>(GET_X_LPARAM(lParam)),
+                                      static_cast<float>(GET_Y_LPARAM(lParam))))
+      return 0;
     if (platform && platform->IsEmbedded())
     {
       const bool orb = msg == WM_LBUTTONDOWN &&

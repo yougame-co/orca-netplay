@@ -74,11 +74,14 @@ void DrawButton(ImDrawList* dl, const Model::View& view)
   const float k = p.size / 40, alpha = ButtonAlpha(p);
   const ImVec2 c(p.x + p.size / 2, p.y + p.size / 2);
   Yg::RoundLogo(dl, ImVec2(p.x, p.y), p.size, alpha);
-  // Blink: a white ring grows from the disc's edge to 2.1x its size and fades.
+  // Blink: a white ring grows from the disc's edge to 2.1x its size and fades. Listening: the same
+  // ring in voice green, over and over.
   if (view.ring >= 0)
   {
     const float scale = 1 + 1.1f * view.ring;
-    dl->AddCircle(c, (p.size / 2 - k) * scale, Rgba(255, 255, 255, 0.95f * (1 - view.ring)), 48,
+    const float fade = 0.95f * (1 - view.ring);
+    dl->AddCircle(c, (p.size / 2 - k) * scale,
+                  view.listening ? Rgba(43, 166, 64, fade) : Rgba(255, 255, 255, fade), 48,
                   2 * k * scale);
   }
   // Held seat: an amber dot at the bottom right.
@@ -104,6 +107,32 @@ void DrawButton(ImDrawList* dl, const Model::View& view)
   }
 }
 
+void DrawHostControls(ImDrawList* dl, const Model::View& view)
+{
+  if (!HostEnabled())
+    return;
+  const Place p = ScaledPlace(view.place, view.view_width, ImGui::GetIO().DisplaySize.x);
+  const float k = p.size / 40;
+  const ImVec2 min(p.x + 48 * k, p.y), max(p.x + 88 * k, p.y + p.size);
+  dl->AddRectFilled(min, max, Rgba(30, 30, 30, 0.9f), 8 * k);
+  Yg::Text(dl, ImVec2(min.x + 10 * k, min.y + 7 * k), 24 * k, IM_COL32_WHITE, "Δ");
+  const HostMenu::View menu = Menu().At();
+  if (!menu.open)
+    return;
+  const float top = p.y + 48 * k;
+  dl->AddRectFilled(ImVec2(p.x, top), ImVec2(p.x + 240 * k, top + HOST_ROWS * 32 * k),
+                    Rgba(20, 20, 20, 0.97f), 8 * k);
+  for (int row = 0; row < HOST_ROWS; ++row)
+  {
+    const float y = top + row * 32 * k;
+    if (row == menu.selected)
+      dl->AddRectFilled(ImVec2(p.x, y), ImVec2(p.x + 240 * k, y + 32 * k),
+                        Rgba(90, 90, 90, 0.8f), 6 * k);
+    Yg::Text(dl, ImVec2(p.x + 12 * k, y + 7 * k), 16 * k, IM_COL32_WHITE,
+             HostLabel(static_cast<HostAction>(row)));
+  }
+}
+
 namespace
 {
 // Notices as last copied out by Model::Lines. Video thread only.
@@ -113,6 +142,14 @@ struct NoticeCache
   std::vector<Model::Entry> entries;
 };
 NoticeCache s_notices;
+
+// Hold-to-talk's row as last copied out by Model::TalkRow. Video thread only.
+struct TalkCache
+{
+  std::uint64_t generation = 0;
+  Model::TalkEntry entry;
+};
+TalkCache s_talk;
 
 // Small cache of avatar colours and initials, so names aren't converted every frame. Video thread
 // only.
@@ -154,7 +191,7 @@ Pill PillFor(float k)
 {
   Pill m;
   m.k = k;
-  m.pad_left = 54 * k;
+  m.pad_left = (HostEnabled() ? 102 : 54) * k;
   m.pad_right = 12 * k;
   m.pad_y = 7 * k;
   m.gap = 6 * k;
@@ -186,6 +223,20 @@ std::pair<std::string_view, bool> OneLine(std::string_view text, float px, float
   while (!head.empty() && head.back() == ' ')
     head.remove_suffix(1);
   return {head, true};
+}
+
+// Fits `text` on one line keeping its end (live words: the newest). Returns the kept suffix and
+// whether it was cut (draw "…" before it).
+std::pair<std::string_view, bool> TailLine(std::string_view text, float px, float width)
+{
+  const auto measure = [px](std::string_view t) { return Yg::TextWidth(t, px); };
+  if (measure(text) <= width)
+    return {text, false};
+  const float room = std::max(0.0f, width - measure(ELLIPSIS));
+  std::string_view tail = text.substr(FitSuffix(text, room, measure));
+  while (!tail.empty() && tail.front() == ' ')
+    tail.remove_prefix(1);
+  return {tail, true};
 }
 
 // A chat message wrapped to at most two lines.
@@ -249,9 +300,17 @@ struct RowLayout
   // `a` is the name (empty for toasts), `b` the text.
   std::string_view a, b;
   bool cut = false;
+  bool head_cut = false;  // "…" before `b`: live words keep their end
   bool name_cut = false;
   TwoLines body;  // chat text
 };
+
+// Talk rows that keep the end of their text: the mic is open, or the words are being sent.
+bool LiveWords(const PillRow& r)
+{
+  return r.type == PillRow::Type::Talk &&
+         (r.talk == Talk::Phase::Listen || r.talk == Talk::Phase::Send);
+}
 }  // namespace
 
 Kit::Box DrawPill(ImDrawList* dl, const Model::View& view, std::span<const PillRow> rows,
@@ -262,6 +321,18 @@ Kit::Box DrawPill(ImDrawList* dl, const Model::View& view, std::span<const PillR
     return none;
   if (view.generation != s_notices.generation)
     s_notices.generation = Current().Lines(s_notices.generation, &s_notices.entries);
+  if (view.talk_generation != s_talk.generation)
+    s_talk.generation = Current().TalkRow(s_talk.generation, &s_talk.entry);
+  const Talk& talk = s_talk.entry.talk;
+  const PillRow talk_row{PillRow::Type::Talk,
+                         talk.name,
+                         talk.text,
+                         {},
+                         {},
+                         Kind::Join,
+                         TalkAlpha(talk, s_talk.entry.at, now_ms),
+                         s_talk.entry.at,
+                         talk.phase};
   // Gather visible rows: the caller's, then the notices.
   std::array<PillRow, 16> all;
   std::size_t n = 0;
@@ -278,7 +349,7 @@ Kit::Box DrawPill(ImDrawList* dl, const Model::View& view, std::span<const PillR
     all[n++] = PillRow{PillRow::Type::Notice, e.notice.name, e.notice.text, e.notice.key,
                        e.notice.verb, e.notice.kind, a, e.at};
   }
-  if (n == 0)
+  if (n == 0 && talk_row.alpha <= 0)
     return none;
   // Stable insertion sort by arrival time; there are only a few rows.
   for (std::size_t i = 1; i < n; ++i)
@@ -286,7 +357,13 @@ Kit::Box DrawPill(ImDrawList* dl, const Model::View& view, std::span<const PillR
     for (std::size_t j = i; j > 0 && all[j - 1].at > all[j].at; --j)
       std::swap(all[j - 1], all[j]);
   }
-  const std::size_t first = n > PILL_ROWS ? n - PILL_ROWS : 0;
+  // The newest PILL_ROWS, then the talk row, which keeps its place below them.
+  std::array<const PillRow*, PILL_ROWS + 1> shown;
+  std::size_t shown_n = 0;
+  for (std::size_t i = n > PILL_ROWS ? n - PILL_ROWS : 0; i < n; ++i)
+    shown[shown_n++] = &all[i];
+  if (talk_row.alpha > 0)
+    shown[shown_n++] = &talk_row;
 
   const Place p = ScaledPlace(view.place, view.view_width, ImGui::GetIO().DisplaySize.x);
   const Pill m = PillFor(p.size / 40);
@@ -297,22 +374,22 @@ Kit::Box DrawPill(ImDrawList* dl, const Model::View& view, std::span<const PillR
 
   // Only the newest row with an action shows its hint.
   const PillRow* hint = nullptr;
-  for (std::size_t i = first; i < n; ++i)
+  for (std::size_t i = 0; i < shown_n; ++i)
   {
-    if (!all[i].key.empty() && !all[i].verb.empty())
-      hint = &all[i];
+    if (!shown[i]->key.empty() && !shown[i]->verb.empty())
+      hint = shown[i];
   }
   const float key_w = hint ? Yg::TextWidth(hint->key, m.key_px) + 2 * m.key_pad : 0;
   const float hint_w = hint ? m.hint_gap + key_w + 5 * m.k + Yg::TextWidth(hint->verb, m.verb_px) : 0;
   const float words_room =
       std::max(60 * m.k, max_w - m.pad_left - m.pad_right - hint_w - m.avatar - m.avatar_gap);
 
-  std::array<RowLayout, PILL_ROWS> laid;
+  std::array<RowLayout, PILL_ROWS + 1> laid;
   std::size_t count = 0;
   float content_h = 0, content_w = 0, alpha = 0;
-  for (std::size_t i = first; i < n; ++i)
+  for (std::size_t i = 0; i < shown_n; ++i)
   {
-    const PillRow& r = all[i];
+    const PillRow& r = *shown[i];
     RowLayout l;
     l.row = &r;
     float words = 0;
@@ -335,18 +412,23 @@ Kit::Box DrawPill(ImDrawList* dl, const Model::View& view, std::span<const PillR
     }
     else
     {
-      // A notice is "<name> <text>" on one line; a toast is text only.
-      const bool named = r.type == PillRow::Type::Notice;
+      // A notice or talk row is "<name> <text>" on one line; a toast is text only.
+      const bool named = r.type != PillRow::Type::Toast;
       const auto [nm, nm_cut] =
           named ? OneLine(r.name, m.name_px, words_room / 2) : std::pair<std::string_view, bool>{};
       const float name_w =
           named ? Yg::TextWidth(nm, m.name_px) + (nm_cut ? Yg::TextWidth(ELLIPSIS, m.name_px) : 0) : 0;
       const float space = named ? Yg::TextWidth(" ", m.text_px) : 0;
-      const auto [said, cut] = OneLine(r.text, m.text_px, std::max(20 * m.k, words_room - name_w - space));
+      const float room = std::max(20 * m.k, words_room - name_w - space);
+      const auto [said, cut] =
+          LiveWords(r) ? TailLine(r.text, m.text_px, room) : OneLine(r.text, m.text_px, room);
       l.a = nm;
       l.name_cut = nm_cut;
       l.b = said;
-      l.cut = cut;
+      if (LiveWords(r))
+        l.head_cut = cut;
+      else
+        l.cut = cut;
       words = name_w + space + Yg::TextWidth(said, m.text_px) +
               (cut ? Yg::TextWidth(ELLIPSIS, m.text_px) : 0);
       l.height = std::max(m.avatar, m.text_px * m.line);
@@ -401,6 +483,25 @@ Kit::Box DrawPill(ImDrawList* dl, const Model::View& view, std::span<const PillR
       {
         Yg::Logo(dl, ImVec2(c.x - r_av, c.y - r_av), m.avatar, a);
       }
+      else if (r.type == PillRow::Type::Talk)
+      {
+        // Who it goes to: a green ring while the mic is open or the words go, a green tick once
+        // sent, greyed when nothing was sent.
+        if (LiveWords(r))
+          dl->AddCircle(c, r_av + 3 * m.k, Rgba(43, 166, 64, a), 32, 2 * m.k);
+        DrawAvatar(dl, c, r_av, r.name, r.talk == Talk::Phase::Error ? 0.45f * a : a);
+        if (r.talk == Talk::Phase::Sent)
+        {
+          const ImVec2 mark(c.x + r_av * 0.75f, c.y + r_av * 0.75f);
+          const float s = 3 * m.k, t = std::max(1.0f, 1.6f * m.k);
+          dl->AddCircleFilled(mark, 9 * m.k, Rgba(15, 23, 42, a), 16);
+          dl->AddCircleFilled(mark, 7 * m.k, Rgba(43, 166, 64, a), 16);
+          dl->AddLine(ImVec2(mark.x - s, mark.y), ImVec2(mark.x - s / 3, mark.y + s * 0.7f),
+                      Rgba(255, 255, 255, a), t);
+          dl->AddLine(ImVec2(mark.x - s / 3, mark.y + s * 0.7f),
+                      ImVec2(mark.x + s, mark.y - s * 0.7f), Rgba(255, 255, 255, a), t);
+        }
+      }
       else
       {
         // Avatar marks: green ring for voice or call, amber ring for away, greyed for leave,
@@ -431,6 +532,11 @@ Kit::Box DrawPill(ImDrawList* dl, const Model::View& view, std::span<const PillR
         x += TextWithEllipsis(dl, ImVec2(x, ty + (m.text_px - m.name_px) * 0.6f), m.name_px,
                               Yg::Ink(a), l.a, l.name_cut) +
              Yg::TextWidth(" ", m.text_px);
+      }
+      if (l.head_cut)
+      {
+        Yg::Text(dl, ImVec2(x, ty), m.text_px, Yg::Ink2(a), ELLIPSIS);
+        x += Yg::TextWidth(ELLIPSIS, m.text_px);
       }
       TextWithEllipsis(dl, ImVec2(x, ty), m.text_px, Yg::Ink2(a), l.b, l.cut);
     }

@@ -15,6 +15,7 @@
 #include "Common/Crypto/HMAC.h"
 #include "Common/Logging/Log.h"
 #include "Common/NandPaths.h"
+#include "Common/Network.h"
 #include "Common/Projection.h"
 #include "Common/SettingsHandler.h"
 #include "Common/StringUtil.h"
@@ -174,13 +175,13 @@ NetKDRequestDevice::NetKDRequestDevice(EmulationKernel& ios, const std::string& 
 
   // Orca: no wall-clock scheduled mail or downloads in a rollback session (they would touch the NAND
   // from a host thread at host-dependent times).
-  if (!Orca::SessionActive())
+  if (!Common::OfflineReplay() && !Orca::SessionActive())
     m_scheduler_timer_thread = std::thread([this] { SchedulerTimer(); });
 }
 
 std::optional<IPCReply> NetKDRequestDevice::RefuseInSession(const IOCtlRequest& request)
 {
-  if (!Orca::SessionActive())
+  if (!Common::OfflineReplay() && !Orca::SessionActive())
     return std::nullopt;
   INFO_LOG_FMT(IOS_WC24, "NET_KD_REQ: refused in an Orca session (ioctl {:#x})", request.request);
   if (request.buffer_out != 0 && request.buffer_out % 4 == 0 && request.buffer_out_size >= 4)

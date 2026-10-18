@@ -70,7 +70,7 @@ DiscCheck CheckDisc(const std::string& path, std::string_view game_id)
 
   const std::unique_ptr<DiscIO::VolumeDisc> volume = DiscIO::CreateDisc(path);
   if (!volume)
-    return refuse("That file isn't a disc image Orca can read.");
+    return refuse("That file isn't a disc image YG Dolphin can read.");
 
   AliasRevision(*volume);
   const DiscIO::Partition partition = volume->GetGamePartition();
@@ -90,12 +90,13 @@ DiscCheck CheckDisc(const std::string& path, std::string_view game_id)
       return DiscCheck{false, "profile", error};
     if (revision == BRAWL_REV1)
     {
-      return refuse("That Brawl disc is Rev 1 but not an unmodified copy of it. Orca plays "
+      return refuse("That Brawl disc is Rev 1 but not an unmodified copy of it. YG Dolphin plays "
                     "unmodified USA Rev 1 and Rev 2 discs, so both players have the same game.");
     }
-    return refuse(fmt::format("That Brawl disc is revision {}; Orca plays the USA Rev 1 and Rev 2 "
-                              "discs, so both players have the same game.",
-                              revision));
+    return refuse(
+        fmt::format("That Brawl disc is revision {}; YG Dolphin plays the USA Rev 1 and Rev 2 "
+                    "discs, so both players have the same game.",
+                    revision));
   }
   return DiscCheck{true, {}, {}};
 }

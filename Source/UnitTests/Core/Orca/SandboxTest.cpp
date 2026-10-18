@@ -19,6 +19,9 @@
 #include <picojson.h>
 
 #ifndef _WIN32
+#ifdef __APPLE__
+#include <sandbox.h>
+#endif
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -897,4 +900,53 @@ TEST(OrcaLive, StdioBridgeMirrorsTheRoomAndTakesLeave)
   EXPECT_NE(rooms.back().find("\"code\":\"" + room + "\""), std::string::npos) << rooms.back();
   EXPECT_TRUE(app.Problems().empty()) << app.Problems().front();
   EXPECT_GE(Bridge::GetStats().replies, 3u);
+}
+
+#ifdef __APPLE__
+TEST(OrcaSandboxDeathTest, PackJailRecognizesAnAppliedProcessSandbox)
+{
+  // Apply a fixture profile only in the test's child; the parent's sandbox is unchanged.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  EXPECT_EXIT(
+      {
+        char* error = nullptr;
+        const int result = sandbox_init("(version 1)(allow default)(deny network*)", 0, &error);
+        if (error)
+          sandbox_free_error(error);
+        _exit(result == 0 && Sandbox::PackJailed() ? 0 : 1);
+      },
+      ::testing::ExitedWithCode(0), "");
+#pragma clang diagnostic pop
+}
+#endif
+
+TEST(OrcaEmbed, ResultWaitsForReadyAndKeepsFirstDecision)
+{
+  Embed::Result result(true);
+  EXPECT_FALSE(result.TakeLine(true));
+  result.Decide();
+  EXPECT_FALSE(result.TakeLine(false));
+  result.Decide("parent-gone");
+  EXPECT_EQ(result.TakeLine(true), "orca embed ok");
+  EXPECT_FALSE(result.TakeLine(true));
+  result.Decide("track-failed");
+  EXPECT_FALSE(result.TakeLine(true));
+}
+
+TEST(OrcaEmbed, FailureFormatsAndAdoptedSilence)
+{
+  for (const char* reason : {"parent-gone", "setparent", "no-parent", "track-failed"})
+  {
+    Embed::Result result(true);
+    result.Decide(reason);
+    EXPECT_FALSE(result.TakeLine(false));
+    result.Decide();
+    EXPECT_EQ(result.TakeLine(true), std::string("orca embed failed ") + reason);
+    EXPECT_FALSE(result.TakeLine(true));
+  }
+  Embed::Result adopted;
+  adopted.Decide();
+  adopted.Decide("setparent");
+  EXPECT_FALSE(adopted.TakeLine(true));
 }

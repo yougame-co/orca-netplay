@@ -17,7 +17,7 @@
 
 #include "Common/FileUtil.h"
 #include "Core/Orca/UX/GamePatches.h"
-#include "Core/Orca/UX/NameTags.h"
+#include "Core/Orca/Engine/GuestMemory.h"
 
 using namespace Orca::UX;
 

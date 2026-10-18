@@ -690,11 +690,10 @@ dolphin_find_optional_system_library_pkgconfig(SPNG spng spng::spng Externals/li
 message(STATUS "Using static FreeSurround from Externals")
 add_subdirectory(Externals/FreeSurround)
 
-if (APPLE OR WIN32)
-  message(STATUS "Using ed25519 from Externals")
-  add_subdirectory(Externals/ed25519)
-  include_directories(Externals/ed25519)
-endif()
+# The updater's (macOS and Windows), and Orca's flat bundle signatures (Core/Orca/Bundle.cpp).
+message(STATUS "Using ed25519 from Externals")
+add_subdirectory(Externals/ed25519)
+include_directories(Externals/ed25519)
 
 if(ENABLE_CUBEB)
   dolphin_find_optional_system_library(CUBEB Externals/cubeb)

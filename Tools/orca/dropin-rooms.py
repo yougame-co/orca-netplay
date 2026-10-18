@@ -10,9 +10,8 @@
 # 3. The friend leaves while it catches up (the host's keyframe is 25 s old, from a prepare-join, so
 #    the friend replays 25 s of its game): it leaves at once ("left"), and the host hears a plain
 #    leave, not a stall. Then it joins the host's fresh room: "friend-joined" once it plugs in.
-# 4. The host's connection drops mid-match (the test-only "test-drop-room"): the host says so,
-#    reconnects to the same room (its player id comes back into its held seat), and the friend,
-#    whose host left, plays on ("host-left", then "no-room": it is on port 2) and joins it again.
+# 4. The host's room socket drops mid-match (the test-only "test-drop-room"): it reconnects
+#    in the background to the same room and seat. The friend retains its session and room.
 #    Then the app's Stop on the host, "leave" and "quit" at once: the friend hears it within ~1 s.
 # 5. Both behind a fake app bridge (Tools/orca/fake_bridge.py), the friend joining from an invite:
 #    the host's page sends Leave. The host's page is told the room is empty, then shown the host's
@@ -61,6 +60,13 @@ import threading
 import time
 import urllib.request
 
+if len(sys.argv) > 1 and sys.argv[1] == "--doubles":
+    import runpy
+    doubles = os.path.join(os.path.dirname(os.path.abspath(__file__)), "doubles-rooms.py")
+    sys.argv = [doubles, *sys.argv[2:]]
+    runpy.run_path(doubles, run_name="__main__")
+    sys.exit(0)
+
 if len(sys.argv) < 3:
     sys.exit("usage: dropin-rooms.py <nogui> <disc> [--only rooms,page,home,lobby,guest,rejoin,stay]")
 BIN, DISC = sys.argv[1], sys.argv[2]
@@ -97,6 +103,7 @@ class Orca:
             "PATH": os.environ["PATH"],
             "ORCA_SESSION": "1",
             "ORCA_TEST_COMMANDS": "1",
+            "ORCA_TEST_ROOM_DROP": "1",
             "ORCA_TEST_DEV_GAME": "orca-dropin-test",
             "ORCA_TEST_KEYFRAME_DIR": os.path.join(WORK, "kf"),
             "ORCA_NAME": name,
@@ -277,24 +284,21 @@ if run_step("rooms"):
     host.alive()
     friend.alive()
 
-    # 4. The host's connection drops: it says so, reconnects to the same room, the friend plays on.
+    # 4. The host's room socket reconnects while the session and room stay together.
     mark = host.log_size()
-    since, after = len(friend.seen), friend.log_size()
+    friend_from = len(friend.seen)
+    host_from = len(host.seen)
     host.send("test-drop-room")
-    line = host.expect("orca error network", 20)
-    if "test drop" not in line:
-        fail(f"the host's error doesn't say why: {line}")
-    again = host.wait_log(r"Drop-in: hosting room ([a-z0-9]+) again", 40, after=mark).group(1)
+    host.expect("orca state room-away self", 20)
+    host.expect("orca state room-back self", 90)
+    again = host.wait_log(r"in room ([a-z0-9]+) on seat", 10, after=mark).group(1)
     if again != fresh:
-        fail(f"the host reopened {again}, not its room {fresh}")
-    friend.expect("orca state host-left", 30, forbid=("orca error internal",))
-    friend.home_or_no_room(10, after, since)
-    time.sleep(3)
-    friend.send(f"join {fresh}")
-    host.expect("orca state friend-joining", 60)
-    friend.expect("orca state playing", 120)
-    host.expect("orca state friend-joined", 60)
+        fail(f"the host recovered {again}, not its room {fresh}")
     time.sleep(10)
+    for peer, since in ((host, host_from), (friend, friend_from)):
+        for line in peer.seen[since:]:
+            if line.startswith(("orca error", "orca state host-left", "orca state no-room")):
+                fail(f"{peer.name}: room-only recovery ended the game: {line}")
     for o in orcas:
         o.alive()
     sent = time.time()

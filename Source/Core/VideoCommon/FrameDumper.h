@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <functional>
+#include <mutex>
+
 #include "Common/CommonTypes.h"
 #include "Common/Event.h"
 #include "Common/Flag.h"
@@ -15,6 +18,10 @@
 class AbstractStagingTexture;
 class AbstractTexture;
 class AbstractFramebuffer;
+namespace Core
+{
+enum class State;
+}
 
 class FrameDumper
 {
@@ -30,7 +37,8 @@ public:
                         const MathUtil::Rectangle<int>& src_rect,
                         const MathUtil::Rectangle<int>& target_rect, u64 ticks, int frame_number);
 
-  void SaveScreenshot(std::string filename);
+  // Completion runs after the PNG is closed, on the dump thread. Busy requests are rejected.
+  bool SaveScreenshot(std::string filename, std::function<void(bool)> completed = {});
 
   bool IsFrameDumping() const;
   int GetRequiredResolutionLeastCommonMultiple() const;
@@ -98,8 +106,25 @@ private:
   Common::Event m_screenshot_completed;
   std::mutex m_screenshot_lock;
   std::string m_screenshot_name;
+  std::function<void(bool)> m_screenshot_callback;
 
   Common::EventHook m_frame_end_handle;
 };
 
 extern std::unique_ptr<FrameDumper> g_frame_dumper;
+
+// Host-thread screenshot entry point. Publish only after renderer initialization succeeds;
+// detach before any renderer teardown. Detaching waits for in-flight requests, so the dumper
+// stays alive throughout SaveScreenshot without exposing its global owner to the host thread.
+class ScreenshotRequestGate
+{
+public:
+  void SetRenderer(FrameDumper* dumper);
+  bool Request(Core::State state, std::string filename, std::function<void(bool)> completed);
+
+private:
+  std::mutex m_mutex;
+  FrameDumper* m_dumper = nullptr;
+};
+
+ScreenshotRequestGate& ScreenshotRequests();

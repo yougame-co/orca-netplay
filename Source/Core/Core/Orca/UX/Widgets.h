@@ -27,7 +27,7 @@ constexpr float TITLE_SIZE = 10.0f;   // VICTORY / DEFEAT
 constexpr float HEADING_SIZE = 5.0f;  // "bo disconnected", "YOU WON"
 constexpr float LINE_SIZE = 3.4f;     // "2-0 vs bo"
 constexpr float SMALL_SIZE = 2.8f;    // "Rating updating…"
-constexpr float HINT_SIZE = 3.2f;     // "Hold Z to leave"
+constexpr float HINT_SIZE = 3.2f;     // "Hold B to leave"
 constexpr float NUMBER_SIZE = 6.5f;   // rating
 constexpr float COUNTDOWN_SIZE = 6.0f;  // countdown digits
 
@@ -65,7 +65,7 @@ ImVec2 DeltaBadge(ImDrawList* dl, float left, float centre_y, float unit, int de
 // The badge's size, for layout.
 ImVec2 DeltaBadgeSize(float unit, int delta);
 
-// A hint ("Hold Z to leave") with a bar that fills with `progress` (0..1). Returns its size.
+// A hint ("Hold B to leave") with a bar that fills with `progress` (0..1). Returns its size.
 ImVec2 Hint(ImDrawList* dl, float centre_x, float top, float unit, std::string_view text,
             float progress, float alpha);
 

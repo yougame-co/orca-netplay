@@ -65,6 +65,7 @@ struct DirectStats
   int rtt_ms = -1;
   // Candidate types of the selected pair, local/remote ("host/host"; "" until selected).
   std::string pair;
+  std::string test_local_address;
   int generation = 0;
   u64 sent = 0;
   u64 received = 0;
@@ -105,6 +106,9 @@ struct DirectOptions
   // this long (plus 0..jitter) on the way out and again on the way in.
   std::optional<int> net_delay_ms;
   int net_jitter_ms = 0;
+  // Scheduled packet drops, sharing the room's clock; independent of delay and test-direct.
+  std::optional<std::pair<std::chrono::steady_clock::time_point,
+                          std::chrono::steady_clock::time_point>> blackout;
 };
 
 // Options from the environment; nullopt when ORCA_DIRECT=0 (relay only).
@@ -130,7 +134,8 @@ public:
 
   // Starts the link thread. It binds a throwaway UDP socket at once, so a firewall prompt (Windows
   // Defender Firewall) appears now, in the lobby, rather than when a friend arrives mid-game.
-  void Start(DirectOptions options);
+  // False when file playback disables networking, or the thread is already started.
+  bool Start(DirectOptions options);
   // A player of this game (it said hello with our compatibility key and supports direct links). The
   // lower connection id of the pair offers; the other answers.
   void AddPeer(const std::string& id, int slot);
@@ -147,9 +152,9 @@ public:
 
   // ---- Any thread ----
 
-  // Sends to every peer with an open link, immediately on the caller's thread (never takes the
-  // room's locks). At most MAX_PAYLOAD bytes.
-  void Send(const std::string& payload);
+  // Sends to every peer with an open link, or just `seat` when nonnegative, immediately on the
+  // caller's thread (never takes the room's locks). At most MAX_PAYLOAD bytes.
+  void Send(const std::string& payload, int seat = -1);
   // Packets received since the last call.
   std::vector<Received> Receive();
   // How each peer's link is doing (nullopt: not a peer).

@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "Core/Orca/Profile.h"
+
+#include "Core/Orca/Status.h"
 #include "Core/Orca/Session/Online.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -17,6 +20,7 @@
 #include <xxh3.h>
 
 #include "Common/CPUDetect.h"
+#include "Common/CommonFuncs.h"
 #include "Common/FileUtil.h"
 #include "Common/Hash.h"
 #include "Common/IOFile.h"
@@ -114,6 +118,11 @@ void ForEachUniversalSetting(F&& f)
   f(Config::MAIN_ALLOW_SD_WRITES, false);
   f(Config::MAIN_WII_SD_CARD_ENABLE_FOLDER_SYNC, false);
   f(Config::MAIN_BLUETOOTH_PASSTHROUGH_ENABLED, false);
+  // No USB keyboard and no real USB device handed to the guest. The session's device budget
+  // (IOS::HLE::SessionAllowsDevice) keeps the USB devices closed anyway; these keep a player's
+  // Dolphin.ini from asking for them.
+  f(Config::MAIN_WII_KEYBOARD, false);
+  f(Config::MAIN_USB_PASSTHROUGH_DEVICES, std::string());
   f(Config::MAIN_OVERRIDE_REGION_SETTINGS, true);
   // The console region a DOL boots as (the Project+ launcher). Dolphin otherwise takes it from the
   // host locale, so two machines could boot different regions and diverge from the first frame.
@@ -178,6 +187,9 @@ void ForEachUniversalSetting(F&& f)
   // VSync adds 2-19 ms of display latency with no pacing gain (a composited window never tears)
   // and, below 60 Hz, would slow the game: always off in a session, whatever GFX.ini says.
   f(Config::GFX_VSYNC, false);
+  // The JIT vertex loaders: the session's vertex bounds (VertexLoaderManager::IndexedReadsFit)
+  // assume what they read, and the software loader reads a skipped vertex's position too.
+  f(Config::GFX_VERTEX_LOADER_TYPE, VertexLoaderType::Native);
   f(Config::GFX_HACK_EFB_ACCESS_ENABLE, false);
   f(Config::GFX_HACK_BBOX_ENABLE, false);
   f(Config::GFX_HACK_EFB_EMULATE_FORMAT_CHANGES, false);
@@ -329,6 +341,18 @@ bool SessionActive()
   return EnvIs("ORCA_SESSION", "1");
 }
 
+bool HarnessInputActive()
+{
+  return !GetEnv("YG_INPUT").empty() || EnvIs("ORCA_TEST_COMMANDS", "1");
+}
+
+std::string HarnessReport(std::string json)
+{
+  if (HarnessInputActive() && !json.empty() && json.back() == '}')
+    json.insert(json.size() - 1, ",\"harness\":true");
+  return json;
+}
+
 int TestPads()
 {
   return SessionActive() && EnvIs("ORCA_TEST_PADS", "4") ? 4 : 0;
@@ -350,6 +374,30 @@ std::optional<int> TestNetDelayMs()
                                                             std::nullopt;
   }
   return std::clamp(std::atoi(value.c_str()), 0, 1000);
+}
+
+std::optional<TestBlackout> TestBlackoutConfig()
+{
+  if (!SessionActive())
+    return std::nullopt;
+  const std::string value = GetEnv("ORCA_TEST_BLACKOUT");
+  const auto dash = value.find('-');
+  if (dash == std::string::npos)
+    return std::nullopt;
+  const auto number = [](std::string_view text, int* out) {
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), *out);
+    return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size() && *out >= 0;
+  };
+  TestBlackout blackout;
+  if (!number(std::string_view(value).substr(0, dash), &blackout.from_s) ||
+      !number(std::string_view(value).substr(dash + 1), &blackout.to_s) ||
+      blackout.to_s <= blackout.from_s)
+    return std::nullopt;
+  const std::string before = GetEnv("ORCA_TEST_BLACKOUT_ROOM_AFTER");
+  if (!before.empty() && (!number(before, &blackout.room_before_s) ||
+                          blackout.room_before_s > blackout.to_s - blackout.from_s))
+    return std::nullopt;
+  return blackout;
 }
 
 std::optional<TestNetSpikes> TestNetSpikesConfig()
@@ -489,6 +537,7 @@ std::optional<u32> TestFxcFlags()
 bool TestOverridesActive()
 {
   return TestPads() != 0 || TestSkipRender() || TestNetDelayMs().has_value() ||
+         TestBlackoutConfig().has_value() ||
          TestSnapshotEvery() != 0 || TestFullSnapshots() || TestNoAfp() ||
          TestCpuCore().has_value() || !TestGateSpec().empty() || !TestQueueSpec().empty() ||
          !TestCharOrderSpec().empty() || !TestQueuePickSpec().empty();
@@ -520,6 +569,8 @@ void SetActiveProfile(std::optional<Profile> profile)
 {
   s_active_profile = std::move(profile);
   s_boot_frames = 0;
+  Mod::ResetGuards();
+  Status::ResetOnline();
   s_kept_code.clear();
   if (s_active_profile)
   {
@@ -634,7 +685,7 @@ std::optional<Profile> LoadProfileFrom(const std::string& sys_directory, const s
   File::OpenFStream(in, path, std::ios_base::in);
   if (!in)
   {
-    *error = fmt::format("Orca has no profile for {} ({})", game_id, path);
+    *error = fmt::format("YG Dolphin has no profile for {} ({})", game_id, path);
     return std::nullopt;
   }
 
@@ -778,8 +829,8 @@ std::optional<Profile> LoadProfileFrom(const std::string& sys_directory, const s
   }
   if (revision && *profile_revision != *revision)
   {
-    *error = fmt::format("This disc is {} revision {}; Orca's profile is for revision {}", game_id,
-                         *revision, *profile_revision);
+    *error = fmt::format("This disc is {} revision {}; YG Dolphin's profile is for revision {}",
+                         game_id, *revision, *profile_revision);
     return std::nullopt;
   }
   profile.revision = *profile_revision;
@@ -843,6 +894,56 @@ std::string HashFile(const std::string& path)
   return ok ? fmt::format("{:016x}{:016x}", hash.high64, hash.low64) : std::string{};
 }
 
+// The system's reason for the last failed open or read. On Windows that's its own code and words
+// (a full disk, OneDrive not running, a sharing violation), which the C library folds into one
+// errno; the number keeps a report readable when Windows answers in the player's language.
+static std::string LastFileError()
+{
+#ifdef _WIN32
+  const unsigned long code = _doserrno;
+  if (code != 0)
+    return fmt::format("{} (error {})", StripWhitespace(Common::GetWin32ErrorString(code)), code);
+#endif
+  return Common::LastStrerrorString();
+}
+
+std::string DiscOpenProblem(const std::string& disc_path)
+{
+  if (disc_path.empty())
+    return "no disc is set";
+  // Shared like DiscIO's own open (CreateBlobReader), so another program holding the image open
+  // isn't blamed for a failure it didn't cause.
+#ifdef _WIN32
+  // LastFileError reads the CRT's last Windows code: clear it, so an older failure isn't reported.
+  _doserrno = 0;
+#endif
+  File::IOFile file(disc_path, "rb", File::SharedAccess::ReadWrite);
+  if (!file.IsOpen())
+    return fmt::format("its disc won't open: {}", LastFileError());
+  u8 head[4];
+#ifdef _WIN32
+  _doserrno = 0;
+#endif
+  if (!file.ReadBytes(head, sizeof(head)))
+  {
+    if (std::feof(file.GetHandle()))
+      return "its disc file is cut short";
+    // A file Windows has to fetch first (a OneDrive copy kept online only) fails here.
+    return fmt::format("its disc won't read: {}", LastFileError());
+  }
+  // Only a plain extension goes in: the app passes a native path, and on Windows SplitPath doesn't
+  // split at a backslash, so a name without one would hand back part of a folder's name.
+  std::string path = disc_path;
+  UnifyPathSeparators(path);
+  std::string extension;
+  SplitPath(path, nullptr, nullptr, &extension);
+  const bool plain = extension.size() >= 2 && extension.size() <= 6 &&
+                     std::all_of(extension.begin() + 1, extension.end(),
+                                 [](unsigned char c) { return std::isalnum(c) != 0; });
+  return fmt::format("its disc file ({}, {} bytes) isn't a disc image Orca reads",
+                     plain ? extension : "no plain extension", file.GetSize());
+}
+
 bool PrepareLauncherBoot(Profile* profile, const std::string& executable_path,
                          const std::string& disc_path, std::string* error)
 {
@@ -857,8 +958,8 @@ bool PrepareLauncherBoot(Profile* profile, const std::string& executable_path,
       disc_path.empty() ? nullptr : DiscIO::CreateDisc(disc_path);
   if (!disc)
   {
-    *error = fmt::format("Orca: profile {} boots {} from the drive, and no disc is set",
-                         profile->game_id, profile->disc);
+    *error = fmt::format("Orca: profile {} boots {} from the drive, and {}", profile->game_id,
+                         profile->disc, DiscOpenProblem(disc_path));
     return false;
   }
   // The boot inserts the disc with the same alias (Boot.cpp).

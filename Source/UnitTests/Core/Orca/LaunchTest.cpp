@@ -11,12 +11,16 @@
 #include <unistd.h>
 #endif
 
+#include <OptionParser.h>
 #include <gtest/gtest.h>
 
+#include "Common/Config/Config.h"
 #include "Common/FileUtil.h"
 #include "Common/StringUtil.h"
+#include "Core/Config/MainSettings.h"
 #include "Core/Orca/Launch.h"
 #include "Core/Orca/Profile.h"
+#include "UICommon/CommandLineParse.h"
 
 namespace
 {
@@ -132,6 +136,48 @@ TEST(OrcaLaunch, ReadsTheFileNextToTheApp)
 #endif
 
   File::DeleteDirRecursively(dir);
+}
+
+// A launcher's disc that won't open says why, so a crash report tells a full disk or a OneDrive
+// copy Windows can't fetch from a file that isn't a disc image.
+TEST(OrcaLaunch, SaysWhyTheDiscDidNotOpen)
+{
+  EXPECT_EQ(Orca::DiscOpenProblem(""), "no disc is set");
+  const std::string dir = File::CreateTempDir();
+  const std::string gone = Orca::DiscOpenProblem(dir + "/gone.iso");
+  EXPECT_TRUE(gone.starts_with("its disc won't open: ")) << gone;
+#ifndef _WIN32
+  // A folder opens here and then won't read (Windows refuses the open instead).
+  const std::string folder = Orca::DiscOpenProblem(dir);
+  EXPECT_TRUE(folder.starts_with("its disc won't read: ")) << folder;
+#endif
+  const std::string short_file = dir + "/short.iso";
+  ASSERT_TRUE(File::WriteStringToFile(short_file, "ab"));
+  EXPECT_EQ(Orca::DiscOpenProblem(short_file), "its disc file is cut short");
+  const std::string text = dir + "/notes.txt";
+  ASSERT_TRUE(File::WriteStringToFile(text, std::string(64, 'x')));
+  EXPECT_EQ(Orca::DiscOpenProblem(text),
+            "its disc file (.txt, 64 bytes) isn't a disc image Orca reads");
+  // No extension of its own: nothing of the name goes in.
+  const std::string odd = dir + "/Super Smash Bros. Brawl (USA)";
+  ASSERT_TRUE(File::WriteStringToFile(odd, std::string(64, 'x')));
+  EXPECT_EQ(Orca::DiscOpenProblem(odd),
+            "its disc file (no plain extension, 64 bytes) isn't a disc image Orca reads");
+  File::DeleteDirRecursively(dir);
+}
+
+// The app passes a launcher's disc as -C Dolphin.Core.DefaultISO=<path>: a path holding '=' arrives
+// whole instead of cut at its first '='.
+TEST(OrcaLaunch, DiscPathWithEqualsArrivesWhole)
+{
+  Config::Init();
+  const auto parser =
+      CommandLineParse::CreateParser(CommandLineParse::ParserOptions::OmitGUIOptions);
+  CommandLineParse::ParseArguments(parser.get(),
+                                   {"-C", "Dolphin.Core.DefaultISO=/games/brawl=rev2.iso"});
+  EXPECT_EQ(Config::Get(Config::LayerType::CommandLine, Config::MAIN_DEFAULT_ISO),
+            "/games/brawl=rev2.iso");
+  Config::Shutdown();
 }
 
 // Profile.h jit_clear_frame: the JIT is cleared once per boot, at the end of that frame (the first

@@ -4,6 +4,7 @@
 #include "Core/Orca/Session/Keyframe.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
@@ -29,16 +30,15 @@
 #include "Common/FileUtil.h"
 #include "Common/IOFile.h"
 #include "Common/Logging/Log.h"
+#include "Common/Network.h"
 #include "Core/Orca/Profile.h"
 
 namespace Orca::Net
 {
 namespace
 {
-// ORP2 contains controller inputs and typed UI events; legacy machine images are rejected. Builds
-// with another layout of it have another UX compat version, so they never meet. ORP2 added each
-// frame's seed (ReplayFrame::seed).
-constexpr char MAGIC[4] = {'O', 'R', 'P', '2'};
+// ORP3 adds name-free tag assignment events. Legacy machine images are rejected.
+constexpr char MAGIC[4] = {'O', 'R', 'P', '3'};
 constexpr int WINDOW_LOG = 26;
 constexpr int LEVEL = 3;
 // Sanity limit per section (MEM2 is 64 MB; a Wii NAND is at most 512 MB).
@@ -319,6 +319,22 @@ bool WriteReplayFrame(Writer& w, const ReplayFrame& frame)
     w.U32(frame.header->room);
   }
   w.U32(frame.clear_ready);
+  w.U32(frame.tag_assignments ? static_cast<u32>(frame.tag_assignments->size()) + 1 : 0);
+  if (frame.tag_assignments)
+  {
+    if (frame.tag_assignments->size() > MAX_SEATS)
+      return false;
+    u32 assigned = 0;
+    for (const auto& tag : *frame.tag_assignments)
+    {
+      if (tag.port < 0 || tag.port >= MAX_SEATS || tag.slot < 0 || tag.slot >= 120 ||
+          (assigned & (1u << tag.port)))
+        return false;
+      assigned |= 1u << tag.port;
+      w.U32(static_cast<u32>(tag.port | tag.slot << 2 | int{tag.created} << 9 |
+                             int{tag.controls} << 10));
+    }
+  }
   w.U32(frame.menu_exit);
   w.U32(frame.seed);
   return true;
@@ -363,6 +379,25 @@ bool ReadReplayFrame(Reader& r, ReplayFrame* frame)
   if (!r.U32(&clear) || clear > 1)
     return false;
   frame->clear_ready = clear != 0;
+  u32 assignments;
+  if (!r.U32(&assignments) || assignments > MAX_SEATS + 1)
+    return false;
+  if (assignments)
+  {
+    frame->tag_assignments.emplace();
+    u32 assigned = 0;
+    for (u32 i = 1; i < assignments; ++i)
+    {
+      u32 tag;
+      if (!r.U32(&tag) || (tag & ~0x7ffu) || ((tag >> 2) & 127) >= 120 ||
+          (assigned & (1u << (tag & 3))))
+        return false;
+      assigned |= 1u << (tag & 3);
+      frame->tag_assignments->push_back({static_cast<int>(tag & 3),
+                                       static_cast<int>((tag >> 2) & 127),
+                                       bool(tag & 0x200), bool(tag & 0x400)});
+    }
+  }
   u32 menu_exit;
   if (!r.U32(&menu_exit) || (menu_exit != 0 && !ValidMenuExit(menu_exit)))
     return false;
@@ -376,7 +411,7 @@ bool ReadReplayFrame(Reader& r, ReplayFrame* frame)
 
 // The smallest a frame's record can be: pads, a port count, the header and clear-ready flags, the
 // menu exit, the seed.
-constexpr size_t MIN_FRAME_BYTES = sizeof(Pads) + 5 * 4;
+constexpr size_t MIN_FRAME_BYTES = sizeof(Pads) + 6 * 4;
 // Magic, the frame count, the first frame, the origin and target hashes.
 constexpr size_t PREAMBLE_BYTES = 4 + 4 + 4 + 8 + 8;
 }  // namespace
@@ -484,6 +519,357 @@ bool UnpackKeyframe(const std::vector<u8>& blob, int* frame, ReplayArchive* repl
   {
     return false;
   }
+}
+
+namespace
+{
+constexpr char STREAM_MAGIC[4] = {'Y', 'G', 'R', 'S'};
+constexpr char CHUNK_MAGIC[4] = {'Y', 'G', 'R', 'C'};
+// The container's version: the preamble, the header and the chunk framing. The rooms Worker
+// (rooms/src/replay-stream.ts) and the site (api/replays/orca, tournament-replay-body.ts) refuse
+// any other, so it changes only together with them. 0.3.46 raised it with the frame layout and no
+// recording reached a server.
+constexpr u32 STREAM_VERSION = 1;
+// The layout of the frames inside the chunks, written as the header's "v" for tools: 2 is ORP3,
+// with tag assignments. The reader doesn't check it: the site rebuilds a tournament download's
+// header with "v":1, and the compat key (it carries the git revision) already keeps builds apart.
+constexpr u32 FRAME_LAYOUT = 2;
+constexpr u32 MAX_STREAM_HEADER = 16u << 10;
+// A chunk holds at most a minute of frames and 8 MB compressed.
+constexpr u32 MAX_CHUNK_FRAMES = 3600;
+constexpr u32 MAX_CHUNK_BYTES = 8u << 20;
+// Magic, first frame, frame count, live frame, checksum count, payload size, then the XXH3 of all
+// of those and the payload: every byte of a chunk is covered.
+constexpr size_t CHUNK_FIELDS = 4 + 4 + 4 + 4 + 4 + 4;
+constexpr size_t CHUNK_PREAMBLE = CHUNK_FIELDS + 8;
+
+u64 ChunkHash(const u8* fields, const u8* payload, size_t size)
+{
+  XXH3_state_t* state = XXH3_createState();
+  if (!state)
+    return 0;
+  XXH3_64bits_reset(state);
+  XXH3_64bits_update(state, fields, CHUNK_FIELDS);
+  XXH3_64bits_update(state, payload, size);
+  const u64 hash = XXH3_64bits_digest(state);
+  XXH3_freeState(state);
+  return hash;
+}
+constexpr size_t STREAM_PREAMBLE = 4 + 4 + 4;
+
+void PutU32(std::vector<u8>* out, u32 v)
+{
+  const auto* p = reinterpret_cast<const u8*>(&v);
+  out->insert(out->end(), p, p + sizeof(v));
+}
+void PutU64(std::vector<u8>* out, u64 v)
+{
+  const auto* p = reinterpret_cast<const u8*>(&v);
+  out->insert(out->end(), p, p + sizeof(v));
+}
+u32 GetU32(const u8* p)
+{
+  u32 v;
+  std::memcpy(&v, p, sizeof(v));
+  return v;
+}
+u64 GetU64(const u8* p)
+{
+  u64 v;
+  std::memcpy(&v, p, sizeof(v));
+  return v;
+}
+}  // namespace
+
+std::vector<u8> PackReplayStreamHeader(const ReplayStreamInfo& info)
+{
+  picojson::object o;
+  o["v"] = picojson::value(static_cast<double>(FRAME_LAYOUT));
+  o["compat"] = picojson::value(info.compat);
+  o["build"] = picojson::value(info.build);
+  o["game"] = picojson::value(info.game_id);
+  o["origin_hash"] = picojson::value(fmt::format("{:016x}", info.origin_hash));
+  o["first_frame"] = picojson::value(static_cast<double>(info.first_frame));
+  o["segment"] = picojson::value(static_cast<double>(info.segment));
+  o["room"] = picojson::value(info.room);
+  o["seat_labels"] = picojson::value(info.seat_labels);
+  const std::string json = picojson::value(o).serialize();
+  std::vector<u8> out(STREAM_MAGIC, STREAM_MAGIC + sizeof(STREAM_MAGIC));
+  PutU32(&out, STREAM_VERSION);
+  PutU32(&out, static_cast<u32>(json.size()));
+  out.insert(out.end(), json.begin(), json.end());
+  return out;
+}
+
+std::vector<u8> PackReplayChunk(const ReplayChunk& chunk, bool history_start)
+{
+  try
+  {
+    if (chunk.first < 0 || chunk.frames.empty() || chunk.frames.size() > MAX_CHUNK_FRAMES ||
+        static_cast<size_t>(chunk.first) + chunk.frames.size() > MAX_REPLAY_FRAMES)
+      return {};
+    Writer w;
+    for (size_t i = 0; i < chunk.frames.size(); ++i)
+    {
+      const ReplayFrame& frame = chunk.frames[i];
+      // A seed or a menu exit belongs only to a history's first frame (as in PackKeyframe).
+      if (!(history_start && i == 0) && (frame.menu_exit != 0 || frame.seed != 0))
+        return {};
+      if (!WriteReplayFrame(w, frame))
+        return {};
+    }
+    for (const auto& [frame, hash] : chunk.checksums)
+    {
+      w.U32(static_cast<u32>(frame));
+      w.U64(hash);
+    }
+    std::vector<u8> payload(ZSTD_compressBound(w.out.size()));
+    const size_t size =
+        ZSTD_compress(payload.data(), payload.size(), w.out.data(), w.out.size(), LEVEL);
+    if (ZSTD_isError(size) || size > MAX_CHUNK_BYTES)
+      return {};
+    payload.resize(size);
+    std::vector<u8> out(CHUNK_MAGIC, CHUNK_MAGIC + sizeof(CHUNK_MAGIC));
+    PutU32(&out, static_cast<u32>(chunk.first));
+    PutU32(&out, static_cast<u32>(chunk.frames.size()));
+    PutU32(&out, static_cast<u32>(std::max(chunk.live, 0)));
+    PutU32(&out, static_cast<u32>(chunk.checksums.size()));
+    PutU32(&out, static_cast<u32>(payload.size()));
+    PutU64(&out, ChunkHash(out.data(), payload.data(), payload.size()));
+    out.insert(out.end(), payload.begin(), payload.end());
+    return out;
+  }
+  catch (const std::exception&)
+  {
+    return {};
+  }
+}
+
+std::vector<u8> PackReplayStream(const ReplayStreamInfo& info, const ReplayArchive& replay,
+                                 const std::map<int, u64>& checksums)
+{
+  std::vector<u8> out = PackReplayStreamHeader(info);
+  const int last = replay.EndFrame();
+  for (size_t start = 0; start < replay.frames.size(); start += MAX_CHUNK_FRAMES)
+  {
+    ReplayChunk chunk;
+    chunk.first = replay.first_frame + static_cast<int>(start);
+    chunk.live = last;
+    const size_t end = std::min(start + MAX_CHUNK_FRAMES, replay.frames.size());
+    chunk.frames.assign(replay.frames.begin() + static_cast<std::ptrdiff_t>(start),
+                        replay.frames.begin() + static_cast<std::ptrdiff_t>(end));
+    const int chunk_end = replay.first_frame + static_cast<int>(end);
+    for (auto it = checksums.upper_bound(chunk.first); it != checksums.end() && it->first <= chunk_end;
+         ++it)
+    {
+      chunk.checksums.emplace_back(it->first, it->second);
+    }
+    const std::vector<u8> bytes = PackReplayChunk(chunk, start == 0);
+    if (bytes.empty())
+      return {};
+    out.insert(out.end(), bytes.begin(), bytes.end());
+  }
+  return out;
+}
+
+void ReplayStreamReader::Resume()
+{
+  m_pending.clear();
+  m_resuming = true;
+}
+
+bool ReplayStreamReader::Feed(const u8* data, size_t size, std::string* error)
+{
+  if (m_failed)
+  {
+    *error = "the replay stream already failed";
+    return false;
+  }
+  m_pending.insert(m_pending.end(), data, data + size);
+  m_bytes += size;
+  if (!Parse(error))
+  {
+    m_failed = true;
+    return false;
+  }
+  return true;
+}
+
+bool ReplayStreamReader::Parse(std::string* error)
+{
+  size_t pos = 0;
+  const auto fail = [error](const char* why) {
+    *error = why;
+    return false;
+  };
+  try
+  {
+    if (!m_info || m_resuming)
+    {
+      if (m_pending.size() < STREAM_PREAMBLE)
+        return true;
+      if (std::memcmp(m_pending.data(), STREAM_MAGIC, sizeof(STREAM_MAGIC)) != 0)
+        return fail(m_info ? "the match's stream moved to another history" : "not a replay stream");
+      const u32 version = GetU32(m_pending.data() + 4);
+      const u32 size = GetU32(m_pending.data() + 8);
+      if (version != STREAM_VERSION)
+        return fail(m_info ? "the match's stream moved to another history" :
+                             "a replay stream of another version");
+      if (size > MAX_STREAM_HEADER)
+        return fail("the replay's header is too large");
+      if (m_pending.size() < STREAM_PREAMBLE + size)
+        return true;
+      pos = STREAM_PREAMBLE + size;
+      picojson::value value;
+      const std::string json(m_pending.begin() + STREAM_PREAMBLE,
+                             m_pending.begin() + STREAM_PREAMBLE + size);
+      if (!picojson::parse(value, json).empty() || !value.is<picojson::object>())
+        return fail(m_info ? "the match's stream moved to another history" :
+                             "the replay's header isn't valid");
+      const picojson::object& o = value.get<picojson::object>();
+      const auto text = [&o](const char* key) -> std::optional<std::string> {
+        const auto it = o.find(key);
+        if (it == o.end() || !it->second.is<std::string>())
+          return std::nullopt;
+        return it->second.get<std::string>();
+      };
+      const auto number = [&o](const char* key) -> std::optional<double> {
+        const auto it = o.find(key);
+        if (it == o.end() || !it->second.is<double>())
+          return std::nullopt;
+        return it->second.get<double>();
+      };
+      // Another build's stream is refused before anything else of it is read.
+      if (!m_info && !m_compat.empty() && text("compat") != m_compat)
+        return fail("the replay was recorded by another build");
+      ReplayStreamInfo info;
+      const auto compat = text("compat"), build = text("build"), game = text("game"),
+                 origin = text("origin_hash"), room = text("room");
+      const auto first = number("first_frame"), segment = number("segment");
+      if (!compat || !build || !game || !origin || origin->size() != 16 || !first || *first < 0 ||
+          *first > MAX_REPLAY_FRAMES || !segment || *segment < 0)
+      {
+        return fail(m_info ? "the match's stream moved to another history" :
+                             "the replay's header is incomplete");
+      }
+      if (const auto labels = o.find("seat_labels"); labels != o.end())
+      {
+        if (!labels->second.is<bool>())
+          return fail("the replay's seat label flag isn't valid");
+        info.seat_labels = labels->second.get<bool>();
+      }
+      info.compat = *compat;
+      info.build = *build;
+      info.game_id = *game;
+      info.room = room.value_or("");
+      info.origin_hash = std::strtoull(origin->c_str(), nullptr, 16);
+      info.first_frame = static_cast<int>(*first);
+      info.segment = static_cast<u32>(*segment);
+      if (m_info)
+      {
+        // The same history: everything but the writer's own segment count, which moves on when
+        // a recorder drops back into its match through a keyframe (its history rebuilt from the
+        // host's). That it is the same match is then proven frame by frame on the overlap.
+        if (info.compat != m_info->compat || info.build != m_info->build ||
+            info.game_id != m_info->game_id || info.origin_hash != m_info->origin_hash ||
+            info.first_frame != m_info->first_frame || info.room != m_info->room ||
+            info.seat_labels != m_info->seat_labels)
+        {
+          return fail("the match's stream moved to another history");
+        }
+        ++m_resumes;
+      }
+      else
+      {
+        m_archive = {};
+        m_archive.origin_hash = info.origin_hash;
+        m_archive.first_frame = info.first_frame;
+        m_info = std::move(info);
+      }
+      m_resuming = false;
+      m_segment_end = m_archive.first_frame;
+    }
+    while (m_pending.size() - pos >= CHUNK_PREAMBLE)
+    {
+      const u8* p = m_pending.data() + pos;
+      if (std::memcmp(p, CHUNK_MAGIC, sizeof(CHUNK_MAGIC)) != 0)
+        return fail("the replay has a damaged chunk");
+      const u32 first = GetU32(p + 4), count = GetU32(p + 8), live = GetU32(p + 12),
+                checks = GetU32(p + 16), size = GetU32(p + 20);
+      const u64 hash = GetU64(p + 24);
+      if (count == 0 || count > MAX_CHUNK_FRAMES || size > MAX_CHUNK_BYTES ||
+          checks > count + 1 || static_cast<u64>(first) + count > MAX_REPLAY_FRAMES)
+        return fail("the replay has a damaged chunk");
+      if (static_cast<int>(first) != m_segment_end)
+        return fail("the replay's frames don't follow on");
+      if (m_pending.size() - pos - CHUNK_PREAMBLE < size)
+        break;  // the rest of this chunk hasn't arrived yet
+      const u8* payload = p + CHUNK_PREAMBLE;
+      if (ChunkHash(p, payload, size) != hash)
+        return fail("the replay has a damaged chunk");
+      const auto raw_size = ZSTD_getFrameContentSize(payload, size);
+      if (raw_size == ZSTD_CONTENTSIZE_ERROR || raw_size == ZSTD_CONTENTSIZE_UNKNOWN ||
+          raw_size > MAX_RAW)
+        return fail("the replay has a damaged chunk");
+      std::vector<u8> raw(raw_size);
+      ZSTD_DCtx* dctx = ZSTD_createDCtx();
+      if (!dctx)
+        return fail("out of memory");
+      ZSTD_DCtx_setParameter(dctx, ZSTD_d_windowLogMax, WINDOW_LOG);
+      const size_t got = ZSTD_decompressDCtx(dctx, raw.data(), raw.size(), payload, size);
+      ZSTD_freeDCtx(dctx);
+      if (ZSTD_isError(got) || got != raw.size())
+        return fail("the replay has a damaged chunk");
+      Reader r(raw);
+      for (u32 i = 0; i < count; ++i)
+      {
+        ReplayFrame next;
+        if (!ReadReplayFrame(r, &next))
+          return fail("the replay has a damaged frame");
+        const int frame = static_cast<int>(first + i);
+        if (const ReplayFrame* previous = m_archive.At(frame))
+        {
+          if (next.pads != previous->pads || *next.ports != *previous->ports ||
+              next.header != previous->header || next.clear_ready != previous->clear_ready ||
+              next.menu_exit != previous->menu_exit || next.seed != previous->seed ||
+              next.tag_assignments != previous->tag_assignments)
+            return fail("the match's stream changed");
+          continue;
+        }
+        if (frame != m_archive.first_frame && (next.menu_exit != 0 || next.seed != 0))
+          return fail("the replay has a damaged frame");
+        if (!ChargeMetadata(next, m_archive.frames.empty() ? nullptr : &m_archive.frames.back(),
+                            &m_metadata_budget))
+          return fail("the replay's player names and controls are too large");
+        if (!m_archive.frames.empty() && *m_archive.frames.back().ports == *next.ports)
+          next.ports = m_archive.frames.back().ports;
+        m_archive.frames.push_back(std::move(next));
+      }
+      for (u32 i = 0; i < checks; ++i)
+      {
+        u32 frame;
+        u64 value;
+        if (!r.U32(&frame) || !r.U64(&value) || frame < first || frame > first + count)
+          return fail("the replay has a damaged checksum");
+        const auto [it, inserted] = m_checksums.emplace(static_cast<int>(frame), value);
+        if (!inserted && it->second != value)
+          return fail("the match's stream changed");
+      }
+      if (!r.AtEnd())
+        return fail("the replay has a damaged chunk");
+      pos += CHUNK_PREAMBLE + size;
+      m_segment_end = static_cast<int>(first + count);
+      ++m_chunks;
+      if (live <= MAX_REPLAY_FRAMES)
+        m_live = std::max(m_live, static_cast<int>(live));
+    }
+  }
+  catch (const std::exception&)
+  {
+    return fail("the replay couldn't be read");
+  }
+  m_pending.erase(m_pending.begin(), m_pending.begin() + static_cast<std::ptrdiff_t>(pos));
+  return true;
 }
 
 
@@ -789,7 +1175,7 @@ public:
 
   void Delete(const std::string& id) override
   {
-    if (!ValidReplayId(id))
+    if (Common::OfflineReplay() || !ValidReplayId(id))
       return;
     // Best effort, off the caller's thread (the CPU thread calls this right after a load); the
     // site's cleanup catches anything missed. Copy the ticket now, since the room may be gone when
@@ -834,6 +1220,11 @@ private:
   bool WithRetries(std::string* error,
                    const std::function<void(const std::string&, const std::string&, Result*)>& op)
   {
+    if (Common::OfflineReplay())
+    {
+      *error = "network off for file replay";
+      return false;
+    }
     t_last_refusal.clear();
     bool fresh = false;
     for (int attempt = 0; attempt < ATTEMPTS; ++attempt)
@@ -961,6 +1352,12 @@ private:
                         const std::atomic<bool>* cancel)
   {
     Result result;
+    if (Common::OfflineReplay())
+    {
+      result.error = "network off for file replay";
+      result.final = true;
+      return result;
+    }
     CURL* curl = curl_easy_init();
     if (!curl)
     {

@@ -933,6 +933,9 @@ bool WiiSockMan::IsSocketBlocking(s32 wii_fd) const
 
 s32 WiiSockMan::NewSocket(s32 af, s32 type, s32 protocol)
 {
+  if (Common::OfflineReplay())
+    return -SO_EACCES;
+
   if (af == 2)
   {
     // AF_INET == 2 is true on all systems I've seen,

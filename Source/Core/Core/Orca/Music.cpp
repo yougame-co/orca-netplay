@@ -9,6 +9,7 @@
 
 #include "Common/Logging/Log.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/UX/UX.h"
 
 namespace Orca::Music
 {
@@ -36,10 +37,11 @@ void PutBE16(u8* out, s32 value)
 
 bool Supported()
 {
-  const Orca::Profile* profile = Orca::ActiveProfile();
-  if (!profile)
-    return false;
-  return (profile->IsLauncher() ? profile->disc : profile->game_id) == "RSBE01";
+  // Keep the Brawl-disc music switch for builtin-less packs, as before module selection.
+  const auto* profile = ActiveProfile();
+  const bool brawl_disc = profile &&
+      (profile->IsLauncher() ? profile->disc : profile->game_id) == "RSBE01";
+  return brawl_disc || Orca::UX::Game().Describe().music;
 }
 
 bool On()

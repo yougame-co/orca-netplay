@@ -82,10 +82,10 @@ public:
 
   // Keyframes for mid-game joins. Capture writes what Save would into `image`; call it from the
   // frame-boundary hook. `stop_journal` stops the NAND journal the capture
-  // started, for callers with no ring to undo to. LoadImage loads an image from another machine as
-  // `frame`; the NAND must already match it.
+  // started, for callers with no ring to undo to. LoadMachineImage (not LoadImage: windows.h
+  // renames that) loads an image from another machine as `frame`; the NAND must already match it.
   static bool Capture(Core::System& system, MachineImage* image, bool stop_journal);
-  bool LoadImage(Core::System& system, MachineImage image, s64 frame);
+  bool LoadMachineImage(Core::System& system, MachineImage image, s64 frame);
 
 private:
   // `redisplay` shows the snapshot's frame again: true for keyframes, false for rollbacks.

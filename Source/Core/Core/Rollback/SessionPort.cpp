@@ -13,6 +13,7 @@
 #include "Core/Orca/Session/PadCodec.h"
 #include "Core/Orca/Session/Replay.h"
 #include "Core/Rollback/Diag.h"
+#include "Core/Rollback/OnlineMatch.h"
 #include "Core/System.h"
 
 namespace Rollback
@@ -116,7 +117,7 @@ void RingPort::SetCatchingUp(bool catching_up)
 bool RingPort::LoadImage(MachineImage image, int frame)
 {
   m_saved_since_run = -1;
-  return m_ring.LoadImage(m_system, std::move(image), frame);
+  return m_ring.LoadMachineImage(m_system, std::move(image), frame);
 }
 
 void RingPort::SetResimulating(bool resimulating)
@@ -147,8 +148,14 @@ Orca::Net::Step StepSession(Orca::Net::Session& session, Orca::Net::Game& game, 
                             const std::function<bool()>& stopping,
                             std::chrono::microseconds stall_wait,
                             std::chrono::milliseconds give_up_after, bool* gave_up,
-                            std::chrono::nanoseconds* waited_time)
+                            std::chrono::nanoseconds* waited_time,
+                            const std::function<bool(std::chrono::steady_clock::time_point)>&
+                                hold_silence,
+                            OnlineMatch::StallBudget* stall_budget,
+                            const std::function<bool(std::chrono::steady_clock::time_point)>&
+                                room_recovering)
 {
+  const auto step_start = std::chrono::steady_clock::now();
   Orca::Net::Pad local_pad = sample_local();
   bool waited = false;
   // From the end of the first call that said wait or stall to the start of the last call.
@@ -158,6 +165,13 @@ Orca::Net::Step StepSession(Orca::Net::Session& session, Orca::Net::Game& game, 
       *waited_time += until - *wait_from;
   };
   std::optional<std::chrono::steady_clock::time_point> held_since;
+  std::optional<std::chrono::steady_clock::time_point> stall_start;
+  const auto finish = [&](Orca::Net::Step result) {
+    if (stall_budget)
+      stall_budget->FinishStep(stall_start, std::chrono::steady_clock::now(), session.InputStalled(),
+                               result.kind != Orca::Net::StepKind::Ended);
+    return result;
+  };
   std::chrono::steady_clock::time_point last_poll;
   // Whether this call has held the emulator longer than give_up_after. A gap of over a second
   // between polls means this process was suspended (e.g. the computer slept), not that the other
@@ -169,6 +183,25 @@ Orca::Net::Step StepSession(Orca::Net::Session& session, Orca::Net::Game& game, 
     last_poll = now;
     if (give_up_after.count() <= 0 || now - *held_since <= give_up_after)
       return false;
+    if (hold_silence && hold_silence(now))
+    {
+      if (stall_budget)
+        stall_budget->ObserveRecovery(true);
+      return false;
+    }
+    if (gave_up)
+      *gave_up = true;
+    return true;
+  };
+  const auto budget_too_long = [&](std::chrono::steady_clock::time_point now,
+                                   std::chrono::steady_clock::time_point since) {
+    if (!stall_budget || !stall_budget->Poll(now, since, room_recovering && room_recovering(now)))
+      return false;
+    WARN_LOG_FMT(ROLLBACK,
+                 "Online: held on the other players for {} s of the last {} s: they count "
+                 "as silent",
+                 OnlineMatch::StallBudget::STALL_BUDGET.count(),
+                 OnlineMatch::StallBudget::STALL_WINDOW.count());
     if (gave_up)
       *gave_up = true;
     return true;
@@ -186,10 +219,11 @@ Orca::Net::Step StepSession(Orca::Net::Session& session, Orca::Net::Game& game, 
     {
       // Time sync: this machine is ahead. Hold one frame, then pace from now so the throttle
       // doesn't race to make up the held frame.
-      if (stopping() || held_too_long())
+      if (stopping() || budget_too_long(std::chrono::steady_clock::now(), step_start) ||
+          held_too_long())
       {
         end_wait(std::chrono::steady_clock::now());
-        return {Orca::Net::StepKind::Ended, step.frame};
+        return finish({Orca::Net::StepKind::Ended, step.frame});
       }
       std::this_thread::sleep_for(FRAME_PERIOD);
       waited = true;
@@ -202,12 +236,15 @@ Orca::Net::Step StepSession(Orca::Net::Session& session, Orca::Net::Game& game, 
       end_wait(call_start);
       if (waited)
         game.ResetPacing();
-      return step;
+      return finish(step);
     }
-    if (stopping() || held_too_long())
+    const auto poll_time = std::chrono::steady_clock::now();
+    if (!stall_start)
+      stall_start = step_start;
+    if (stopping() || budget_too_long(poll_time, *stall_start) || held_too_long())
     {
       end_wait(std::chrono::steady_clock::now());
-      return {Orca::Net::StepKind::Ended, step.frame};
+      return finish({Orca::Net::StepKind::Ended, step.frame});
     }
     if (stall_wait.count() > 0)
       std::this_thread::sleep_for(stall_wait);

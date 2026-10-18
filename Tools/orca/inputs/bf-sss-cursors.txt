@@ -4,8 +4,8 @@
 #   ORCA_SESSION=1 ORCA_TEST_QUEUE=ranked ORCA_TEST_SET_RULES=1,8 ORCA_UX_TEST_NAMES=ada,bo \
 #   YG_INPUT=<this> YG_SYNCTEST=7 YG_SYNCTEST_FROM=1700 YG_EXIT_AFTER=<frames> \
 #   dolphin-emu-nogui -p headless -v Null -e <disc>
-# Each cursor starts on the Random bar (port 1 at -2, -18; port 2 at 9, -18) and moves 1.625 a frame
-# at full tilt.
+# Each cursor starts just above the Random bar (port 1 at -2, -16.5; port 2 at 9, -16.5) and moves
+# 1.625 a frame at full tilt.
 # Game 1: both cursors move at once (port 1 up onto Battlefield, port 2 up and right onto
 # Smashville); port 2 proposes Smashville with A; port 1 strikes Battlefield with X; port 2 moves
 # onto Yoshi's Island and strikes it while port 1 moves onto the page button and turns the page
@@ -26,23 +26,23 @@
 @scSelctCharacter:1 173 176 1 A
 @scSelctCharacter:1 193 196 2 A
 @scSelctCharacter:1 233 236 1 START
-# Game 1. Port 1: 21 frames up (y 16.1, Battlefield). Port 2: 9 frames up-right, 1 more up (23.6,
-# -1.75: Smashville).
+# Game 1. Port 1: 21 frames up (y 17.6, Battlefield). Port 2: 9 frames up-right, 1 more up (23.6,
+# -0.25: Smashville).
 @scSelStage:1 40 60 1 SY=255
 @scSelStage:1 40 48 2 SX=255 SY=255
 @scSelStage:1 49 49 2 SY=255
 @scSelStage:1 64 66 2 A
 @scSelStage:1 70 72 1 X
-# Port 2: 4 frames up-left, 11 left (-0.75, 4.75: Yoshi's Island), then X. Port 1 at the same time:
-# 13 frames down-right, 9 down (19.1, -19.5: the page button), then A.
+# Port 2: 4 frames up-left, 11 left (-0.75, 6.25: Yoshi's Island), then X. Port 1 at the same time:
+# 13 frames down-right, 9 down (19.1, -18.1: the page button), then A.
 @scSelStage:1 80 83 2 SX=0 SY=255
 @scSelStage:1 84 94 2 SX=0
 @scSelStage:1 100 102 2 X
 @scSelStage:1 80 92 1 SX=255 SY=0
 @scSelStage:1 93 101 1 SY=0
 @scSelStage:1 110 112 1 A
-# The Melee page: port 1 2 frames up-right, 5 up (22.35, -8.1: Pokemon Stadium), A. Port 2 8 frames
-# down-right, 6 right (22.0, -8.25), A: agreed.
+# The Melee page: port 1 2 frames up-right, 5 up (22.4, -6.75: Pokemon Stadium), A. Port 2 8 frames
+# down-right, 6 right (22.0, -6.75), A: agreed.
 @scSelStage:1 140 141 1 SX=255 SY=255
 @scSelStage:1 142 146 1 SY=255
 @scSelStage:1 155 157 1 A
@@ -63,8 +63,8 @@
 @scSelctCharacter:2 150 153 1 A
 @scSelctCharacter:2 100 133 2 SY=255
 @scSelctCharacter:2 160 163 2 A
-# Port 2 (the loser): 7 frames up-left, 14 up (-2.4, 16.1: Battlefield), A. Port 1 (the winner): Y
-# (no ban), 21 frames up (-2, 16.1: Battlefield), A: agreed.
+# Port 2 (the loser): 7 frames up-left, 14 up (-2.4, 17.6: Battlefield), A. Port 1 (the winner): Y
+# (no ban), 21 frames up (-2, 17.6: Battlefield), A: agreed.
 @scSelStage:2 40 46 2 SX=0 SY=255
 @scSelStage:2 47 60 2 SY=255
 @scSelStage:2 70 72 2 A

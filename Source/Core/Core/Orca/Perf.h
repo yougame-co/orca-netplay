@@ -265,6 +265,7 @@ struct Info
 {
   std::string backend;  // the active backend's config name (D3D, D3D12, Vulkan, OGL, Metal)
   std::string gpu;      // the graphics card it uses
+  std::string driver;   // its driver version, where the backend reads one (D3D, D3D12); else empty
   std::vector<std::string> adapters;
   int adapter = 0;
   std::string cpu;
@@ -276,7 +277,8 @@ struct Info
 // NAME_CHARS characters.
 std::string CleanName(std::string_view name);
 // The lines' JSON, without the "orca perf " prefix. Each fits LINE_BYTES with the prefix: the info
-// line drops the CPU name, then adapters past the first, if it would not.
+// line drops the CPU name, then adapters past the first, if it would not. The info line has "drv"
+// (the driver version) after "gpu" only when it is known.
 std::string InfoJson(const Info& info);
 std::string WindowJson(const Window& window);
 std::string AutoJson(double cap);

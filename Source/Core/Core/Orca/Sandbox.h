@@ -45,6 +45,9 @@ bool AddressAllowed(NetMode mode, std::string_view address);
 
 // Inside the app's sandbox: an AppContainer on Windows, or a launch that set ORCA_NET.
 bool Jailed();
+// Flat packs require an OS-confirmed jail: an AppContainer token on Windows, an applied process
+// sandbox on macOS. Legacy launch switches keep their existing meaning in Jailed().
+bool PackJailed();
 
 // Dolphin's own GameCube adapter code (libusb, UsbDk on Windows, IOKit on a Mac). Never in a
 // session: the app's controller helper owns the adapter and sends its ports in the snapshots, and
@@ -66,15 +69,15 @@ bool OsKeyboardAllowed(Os os, bool session, bool stdio);
 // Error codes (orca error <code> <sentence>), with their sentences for the player.
 inline constexpr const char* EMBED_ERROR = "sandbox_embed";
 inline constexpr const char* EMBED_SENTENCE =
-    "Orca couldn't open in the YouGame window. Try again.";
+    "YG Dolphin couldn't open in the YouGame window. Try again.";
 inline constexpr const char* DISC_ERROR = "sandbox_disc";
 inline constexpr const char* DISC_SENTENCE =
-    "Orca can't read this disc where it is. Copy it into a folder of yours, such as Documents, "
+    "YG Dolphin can't read this disc where it is. Copy it into a folder of yours, such as Documents, "
     "and choose the copy.";
 inline constexpr const char* DENIED_ERROR = "sandbox_denied";
 inline constexpr const char* DENIED_SENTENCE =
-    "Orca isn't allowed into its own folder, so it didn't start. Reset Orca's files from YouGame's "
-    "Help menu, then press Play again.";
+    "YG Dolphin isn't allowed into its own folder, so it didn't start. In YouGame's Help menu, reset "
+    "its files, then press Play again.";
 
 // Opening `path` to read fails for lack of permission (ERROR_ACCESS_DENIED, EACCES or EPERM), the
 // way a sandbox refuses a file it wasn't given.

@@ -370,11 +370,14 @@ bool VideoBackendBase::InitializeShared(std::unique_ptr<AbstractGfx> gfx,
   g_shader_cache->InitializeShaderCache();
   system.GetCustomResourceManager().Initialize();
 
+  ScreenshotRequests().SetRenderer(g_frame_dumper.get());
   return true;
 }
 
 void VideoBackendBase::ShutdownShared()
 {
+  // Wait out host screenshot requests before destroying any renderer components.
+  ScreenshotRequests().SetRenderer(nullptr);
   // Orca: the overlay's own textures go first, while their device is alive. A texture kept past
   // the backend keeps its device, and the driver's threads, alive after the backend has unloaded
   // the graphics library they call back into.

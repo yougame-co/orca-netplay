@@ -9,6 +9,7 @@
 
 #include "Common/CommonTypes.h"
 #include "Core/Orca/Session/Events.h"
+#include "Core/Orca/UX/Controllers.h"
 #include "InputCommon/GCPadStatus.h"
 
 // The local player's controller, read from the YouGame desktop app. The app's helper reads
@@ -21,12 +22,20 @@
 // reading again.
 namespace Orca::UX
 {
-struct Snapshot;
-
 // The pad for this frame, or nullopt to fall back to Pad::GetStatus(0). CPU thread only.
 // Neutral while the window is unfocused. `for_frame` marks the per-frame read that feeds the
 // input-age stats.
 std::optional<GCPadStatus> LocalPad(bool for_frame = false);
+
+// The app device the newest `for_frame` read took the local pad from: the adapter's physical port
+// or the standard pad's index in the app's snapshot. nullopt when that read had no app device
+// (Dolphin's own input), or before one. Any thread. For the game's rumble (UX/Rumble.h).
+struct LocalDevice
+{
+  PadSource source;
+  int index;
+};
+std::optional<LocalDevice> LastLocalDevice();
 
 // Starts the stream when running under the app: on the stdio bridge (YOUGAME_STDIO=1,
 // Orca/Bridge.h) the app's snapshots arrive on stdin, otherwise from the loopback bridge

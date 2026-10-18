@@ -6,6 +6,7 @@
 #include "Common/Assert.h"
 
 #include "VideoBackends/D3D/D3DBase.h"
+#include "VideoBackends/D3DCommon/DeviceLost.h"
 
 namespace DX11
 {
@@ -55,7 +56,8 @@ std::unique_ptr<DXShader> DXShader::CreateFromBytecode(ShaderStage stage, Binary
   {
     ComPtr<ID3D11VertexShader> vs;
     HRESULT hr = D3D::device->CreateVertexShader(bytecode.data(), bytecode.size(), nullptr, &vs);
-    ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to create vertex shader: {}", DX11HRWrap(hr));
+    ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a vertex shader"),
+               "Failed to create vertex shader: {}", DX11HRWrap(hr));
     if (FAILED(hr))
       return nullptr;
 
@@ -66,7 +68,8 @@ std::unique_ptr<DXShader> DXShader::CreateFromBytecode(ShaderStage stage, Binary
   {
     ComPtr<ID3D11GeometryShader> gs;
     HRESULT hr = D3D::device->CreateGeometryShader(bytecode.data(), bytecode.size(), nullptr, &gs);
-    ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to create geometry shader: {}", DX11HRWrap(hr));
+    ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a geometry shader"),
+               "Failed to create geometry shader: {}", DX11HRWrap(hr));
     if (FAILED(hr))
       return nullptr;
 
@@ -78,7 +81,8 @@ std::unique_ptr<DXShader> DXShader::CreateFromBytecode(ShaderStage stage, Binary
   {
     ComPtr<ID3D11PixelShader> ps;
     HRESULT hr = D3D::device->CreatePixelShader(bytecode.data(), bytecode.size(), nullptr, &ps);
-    ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to create pixel shader: {}", DX11HRWrap(hr));
+    ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a pixel shader"),
+               "Failed to create pixel shader: {}", DX11HRWrap(hr));
     if (FAILED(hr))
       return nullptr;
 
@@ -90,7 +94,8 @@ std::unique_ptr<DXShader> DXShader::CreateFromBytecode(ShaderStage stage, Binary
   {
     ComPtr<ID3D11ComputeShader> cs;
     HRESULT hr = D3D::device->CreateComputeShader(bytecode.data(), bytecode.size(), nullptr, &cs);
-    ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to create compute shader: {}", DX11HRWrap(hr));
+    ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a compute shader"),
+               "Failed to create compute shader: {}", DX11HRWrap(hr));
     if (FAILED(hr))
       return nullptr;
 

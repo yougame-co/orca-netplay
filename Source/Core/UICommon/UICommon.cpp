@@ -23,6 +23,7 @@
 #include "Common/Logging/LogManager.h"
 #include "Common/MathUtil.h"
 #include "Common/MsgHandler.h"
+#include "Common/Network.h"
 
 #include "Core/Config/MainSettings.h"
 #include "Core/ConfigLoaders/BaseConfigLoader.h"
@@ -44,6 +45,7 @@
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 #include "InputCommon/GCAdapter.h"
+#include "InputCommon/LocalInput.h"
 
 #include "UICommon/DiscordPresence.h"
 
@@ -140,6 +142,10 @@ void Init()
   g_Config.Init();
   Discord::Init();
   Common::Log::LogManager::Init();
+  if (InputCommon::LocalInputDisabled())
+    NOTICE_LOG_FMT(COMMON, "local input off (ORCA_NO_LOCAL_INPUT)");
+  if (Common::OfflineReplay())
+    NOTICE_LOG_FMT(COMMON, "replay offline (file source): network off");
   VideoBackendBase::ActivateBackend(Config::Get(Config::MAIN_GFX_BACKEND));
   Statistics::Init();
 

@@ -50,7 +50,7 @@ class CPUThreadGuard;
 // every other frame-hook writer.
 namespace Orca::UX
 {
-class GuestMemory;  // NameTags.h
+class GuestMemory;  // Core/Orca/Engine/GuestMemory.h
 
 // One `when` line: (word & mask) == value, or != when `equal` is false. Unmapped addresses
 // never hold.

@@ -8,6 +8,7 @@
 #include "Core/Config/MainSettings.h"
 #include "Core/Core.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/UX/YgOrb.h"
 #include "Core/State.h"
 #include "Core/System.h"
 #include "VideoCommon/EFBInterface.h"
@@ -117,12 +118,12 @@
 @implementation EmbedWindow
 - (BOOL)canBecomeKeyWindow
 {
-  return NO;
+  return ([self styleMask] & NSWindowStyleMaskTitled) != 0;
 }
 
 - (BOOL)canBecomeMainWindow
 {
-  return NO;
+  return ([self styleMask] & NSWindowStyleMaskTitled) != 0;
 }
 @end
 
@@ -154,6 +155,7 @@ public:
   WindowSystemInfo GetWindowSystemInfo() const override;
 
 protected:
+  std::optional<Embed::WindowBounds> EmbedGetBounds() const override;
   void EmbedSetRect(const Embed::Rect& rect) override;
   void EmbedSetVisible(bool visible) override;
   void EmbedSetFocus(bool focus) override;
@@ -188,6 +190,7 @@ private:
   // Embed mode.
   bool m_embed_visible = true;      // "show" / "hide"
   bool m_embed_focus = true;        // "focus" / "blur"
+  bool m_embed_placed = false;
   bool m_embed_on_screen = false;   // Ordered in, over the parent.
   // When the parent left the window list. Stop after a grace period: a new window, or one moving
   // between Spaces, can be missing from the list for a moment.
@@ -267,7 +270,7 @@ bool PlatformMacOS::Init()
   [m_window makeKeyAndOrderFront:NSApp];
   [m_window makeMainWindow];
   [NSApp activateIgnoringOtherApps:YES];
-  [m_window setTitle:@"Orca"];
+  [m_window setTitle:@"YG Dolphin"];
   ObserveOcclusion();
 
   SetupMenu();
@@ -362,7 +365,10 @@ bool PlatformMacOS::InitEmbedded()
                                               backing:NSBackingStoreBuffered
                                                 defer:NO];
   if (m_window == nil)
-    return false;
+  {
+    EmbedFallback("track-failed");
+    return Init();
+  }
   [m_window setReleasedWhenClosed:NO];
   [m_window setOpaque:YES];
   [m_window setBackgroundColor:[NSColor blackColor]];
@@ -375,7 +381,7 @@ bool PlatformMacOS::InitEmbedded()
                                   NSWindowCollectionBehaviorFullScreenAuxiliary |
                                   NSWindowCollectionBehaviorIgnoresCycle |
                                   NSWindowCollectionBehaviorTransient];
-  [m_window setTitle:@"Orca"];
+  [m_window setTitle:@"YG Dolphin"];
   m_window_delegate = [[WindowDelegate alloc] init];
   [m_window setDelegate:m_window_delegate];
   [[m_window contentView] setWantsLayer:YES];
@@ -385,22 +391,36 @@ bool PlatformMacOS::InitEmbedded()
   // A window the app just created may not be in the window list yet.
   while (TrackParent() && m_parent_missing_since)
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  if (!IsEmbedded())
+    return true;
   if (!IsRunning())
-  {
-    fprintf(stderr, "Orca: --parent %llu is not a window on this screen\n", m_embed.parent);
     return false;
-  }
   ObserveOcclusion();
   return true;
 }
 
+std::optional<Embed::WindowBounds> PlatformMacOS::EmbedGetBounds() const
+{
+  @autoreleasepool
+  {
+    if (!m_window)
+      return std::nullopt;
+    const NSRect frame = [m_window frame];
+    return Embed::WindowBounds{frame.origin.x, frame.origin.y, frame.size.width, frame.size.height,
+                               [m_window backingScaleFactor]};
+  }
+}
+
 void PlatformMacOS::EmbedSetRect(const Embed::Rect&)
 {
-  TrackParent();
+  if (IsEmbedded())
+    TrackParent();
 }
 
 void PlatformMacOS::EmbedSetVisible(bool visible)
 {
+  if (!IsEmbedded())
+    return;
   m_embed_visible = visible;
   TrackParent();
   UpdateSurfaceVisible();
@@ -408,6 +428,8 @@ void PlatformMacOS::EmbedSetVisible(bool visible)
 
 void PlatformMacOS::EmbedSetFocus(bool focus)
 {
+  if (!IsEmbedded())
+    return;
   m_embed_focus = focus;
   TrackParent();
 }
@@ -484,6 +506,27 @@ bool PlatformMacOS::TrackParent()
         m_parent_missing_since = now;
       if (now - *m_parent_missing_since < std::chrono::seconds(2))
         return true;
+      if (!m_embed_placed)
+      {
+        EmbedFallback("parent-gone");
+        // Keep the same render surface even if this happens after a hidden boot.
+        [m_window setStyleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                               NSWindowStyleMaskResizable];
+        [m_window setIgnoresMouseEvents:NO];
+        [m_window setCollectionBehavior:NSWindowCollectionBehaviorDefault];
+        [m_window setFrame:NSMakeRect(m_window_x, m_window_y, m_window_width, m_window_height)
+                   display:YES];
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        [m_window makeKeyAndOrderFront:NSApp];
+        [m_window makeMainWindow];
+        [[NSNotificationCenter defaultCenter] addObserver:NSApp
+                                                selector:@selector(shutdown)
+                                                    name:NSWindowWillCloseNotification
+                                                  object:m_window];
+        SetupMenu();
+        ObserveOcclusion();
+        return false;
+      }
       if (IsRunning())
         fprintf(stderr, "Orca: the app's window %u is gone, stopping\n", parent);
       Stop();
@@ -550,6 +593,11 @@ bool PlatformMacOS::TrackParent()
         [m_window orderWindow:NSWindowAbove relativeTo:static_cast<NSInteger>(parent)];
         m_embed_on_screen = true;
       }
+      if ([m_window isVisible])
+      {
+        m_embed_placed = true;
+        EmbedSucceeded();
+      }
     }
     else if (m_embed_on_screen)
     {
@@ -582,6 +630,17 @@ void PlatformMacOS::ProcessEvents()
 {
   @autoreleasepool
   {
+    // Intercept only our host buttons; the rest of an embedded view keeps passing through.
+    if (IsEmbedded())
+    {
+      NSView* view = [m_window contentView];
+      const NSPoint point = [view convertPoint:[m_window mouseLocationOutsideOfEventStream]
+                                      fromView:nil];
+      const NSPoint pixel = [view convertPointToBacking:point];
+      const NSRect bounds = [view convertRectToBacking:[view bounds]];
+      const bool hit = Orca::UX::YgOrb::HitControls(pixel.x, bounds.size.height - pixel.y);
+      [m_window setIgnoresMouseEvents:!hit];
+    }
     // When embedded, poll at 120 Hz so the window follows the app's window smoothly.
     NSDate* expiration = [NSDate dateWithTimeIntervalSinceNow:IsEmbedded() ? 1.0 / 120 : 1];
     NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
@@ -589,7 +648,38 @@ void PlatformMacOS::ProcessEvents()
                                            inMode:NSDefaultRunLoopMode
                                           dequeue:YES];
 
-    if (event)
+    bool handled = false;
+    if (event && [event window] == m_window)
+    {
+      namespace Orb = Orca::UX::YgOrb;
+      if ([event type] == NSEventTypeLeftMouseDown)
+      {
+        NSView* view = [m_window contentView];
+        const NSPoint point = [view convertPoint:[event locationInWindow] fromView:nil];
+        const NSPoint pixel = [view convertPointToBacking:point];
+        const NSRect bounds = [view convertRectToBacking:[view bounds]];
+        handled = Orb::ClickControls(pixel.x, bounds.size.height - pixel.y);
+      }
+      // The embedded app owns keyboard focus and relays feedback / host-menu on stdin.
+      else if (!IsEmbedded() && [event type] == NSEventTypeKeyDown && ![event isARepeat])
+      {
+        switch ([event keyCode])
+        {
+        case kVK_F8: handled = Orb::HandleHostKey(Orb::HostKey::Feedback); break;
+        case kVK_UpArrow:
+        case kVK_LeftArrow: handled = Orb::HandleHostKey(Orb::HostKey::Previous); break;
+        case kVK_DownArrow:
+        case kVK_RightArrow: handled = Orb::HandleHostKey(Orb::HostKey::Next); break;
+        case kVK_Return: handled = Orb::HandleHostKey(Orb::HostKey::Select); break;
+        case kVK_Escape: handled = Orb::HandleHostKey(Orb::HostKey::Close); break;
+        case kVK_Tab:
+          if ([event modifierFlags] & NSEventModifierFlagShift)
+            handled = Orb::HandleHostKey(Orb::HostKey::Menu);
+          break;
+        }
+      }
+    }
+    if (event && !handled)
       [NSApp sendEvent:event];
     if (IsEmbedded())
       return;
@@ -655,7 +745,7 @@ void PlatformMacOS::SetupMenu()
     [menuBar addItem:miscMenuItem];
 
     // Quit
-    NSString* quitTitle = @"Quit Orca";
+    NSString* quitTitle = @"Quit YG Dolphin";
     NSMenuItem* quitMenuItem = [[NSMenuItem alloc] initWithTitle:quitTitle
                                                           action:@selector(shutdown)
                                                    keyEquivalent:@"q"];
@@ -782,7 +872,7 @@ void BringToFront()
     NSMenu* bar = [NSMenu new];
     NSMenuItem* app_item = [NSMenuItem new];
     NSMenu* app_menu = [NSMenu new];
-    [app_menu addItemWithTitle:@"Quit Orca" action:@selector(terminate:) keyEquivalent:@"q"];
+    [app_menu addItemWithTitle:@"Quit YG Dolphin" action:@selector(terminate:) keyEquivalent:@"q"];
     [app_item setSubmenu:app_menu];
     [bar addItem:app_item];
     NSMenuItem* edit_item = [NSMenuItem new];
@@ -808,7 +898,7 @@ std::optional<std::string> Platform::ChooseFileMacOS(const std::string& message)
     [panel setCanChooseFiles:YES];
     [panel setCanChooseDirectories:NO];
     [panel setAllowsMultipleSelection:NO];
-    [panel setTitle:@"Orca"];
+    [panel setTitle:@"YG Dolphin"];
     [panel setMessage:[NSString stringWithUTF8String:message.c_str()]];
     [panel setPrompt:@"Choose"];
     // Stay above other windows even if macOS won't let this process take focus from the app.

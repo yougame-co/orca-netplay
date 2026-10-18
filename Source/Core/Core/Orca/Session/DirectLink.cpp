@@ -37,6 +37,7 @@
 #include <mbedtls/md.h>
 
 #include "Common/Logging/Log.h"
+#include "Common/Network.h"
 #include "Common/Random.h"
 #include "Common/SocketContext.h"
 #include "Core/Orca/Profile.h"
@@ -770,6 +771,9 @@ bool ParseIce(const picojson::value& ice, IceConfig* out)
 
 std::optional<DirectOptions> DirectOptionsFromEnv()
 {
+  if (Common::OfflineReplay())
+    return std::nullopt;
+
   if (GetEnv("ORCA_DIRECT") == "0")
     return std::nullopt;
   DirectOptions options;
@@ -1138,10 +1142,18 @@ struct DirectLink::Impl
     return static_cast<int>(x % 100) < options.loss_percent;
   }
 
+  bool BlackedOut() const
+  {
+    if (!options.blackout)
+      return false;
+    const auto now = Clock::now();
+    return now >= options.blackout->first && now < options.blackout->second;
+  }
+
   void SendOn(Link& link, const std::vector<u8>& datagram)
   {
     // Under send_mutex, so the agent is alive.
-    if (!link.agent)
+    if (!link.agent || BlackedOut())
       return;
 #ifdef _WIN32
     // libjuice can't mark traffic on Windows (that would need qWAVE, as Slippi uses).
@@ -1152,16 +1164,16 @@ struct DirectLink::Impl
 #endif
   }
 
-  void Send(std::string_view payload, u8 kind = KIND_PACKET, Link* only = nullptr)
+  void Send(std::string_view payload, u8 kind = KIND_PACKET, Link* only = nullptr, int seat = -1)
   {
     if (payload.size() > MAX_PAYLOAD)
       return;
     std::lock_guard lock(send_mutex);
-    if (stopped)
+    if (stopped || BlackedOut())
       return;
     for (const std::shared_ptr<Link>& link : sending)
     {
-      if ((only && link.get() != only) || !link->Selected())
+      if ((only && link.get() != only) || (seat >= 0 && link->slot != seat) || !link->Selected())
         continue;
       const auto start = Clock::now();
       const auto datagram = link->Seal(kind, payload);
@@ -1187,6 +1199,8 @@ struct DirectLink::Impl
   std::vector<Received> Receive()
   {
     std::lock_guard lock(inbox_mutex);
+    if (BlackedOut())
+      inbox.clear();
     std::vector<Received> out(std::make_move_iterator(inbox.begin()),
                               std::make_move_iterator(inbox.end()));
     inbox.clear();
@@ -1232,7 +1246,7 @@ struct DirectLink::Impl
 
   void OnDatagram(Link& link, const u8* data, size_t size)
   {
-    if (block_in)
+    if (block_in || BlackedOut())
       return;
     if (options.net_delay_ms)
     {
@@ -1254,6 +1268,8 @@ struct DirectLink::Impl
 
   void Deliver(Link& link, const u8* data, size_t size)
   {
+    if (BlackedOut())
+      return;
     u8 kind = 0;
     auto payload = link.Open(data, size, &kind);
     if (!payload || kind != KIND_PACKET)
@@ -2064,6 +2080,13 @@ struct DirectLink::Impl
       if (peer.link)
       {
         const bool selected = peer.link->Selected();
+        if (selected && options.loopback)
+        {
+          char local[JUICE_MAX_ADDRESS_STRING_LEN] = {};
+          if (juice_get_selected_addresses(peer.link->agent, local, sizeof(local), nullptr, 0) ==
+              JUICE_ERR_SUCCESS)
+            s.test_local_address = local;
+        }
         std::lock_guard lock(peer.link->m);
         const bool up = selected && peer.link->last_rx && now - *peer.link->last_rx < UP_WINDOW;
         s.kind = !up ? LinkKind::Relay : peer.turn ? LinkKind::Turn : LinkKind::Direct;
@@ -2088,10 +2111,13 @@ DirectLink::DirectLink() : m_impl(std::make_unique<Impl>())
 
 DirectLink::~DirectLink() = default;
 
-void DirectLink::Start(DirectOptions options)
+bool DirectLink::Start(DirectOptions options)
 {
+  if (Common::OfflineReplay())
+    return false;
+
   if (m_impl->started.exchange(true))
-    return;
+    return false;
   m_impl->options = std::move(options);
   if (m_impl->options.blocked)
   {
@@ -2099,6 +2125,7 @@ void DirectLink::Start(DirectOptions options)
     m_impl->block_out = true;
   }
   m_impl->thread = std::thread([impl = m_impl.get()] { impl->Run(); });
+  return true;
 }
 
 void DirectLink::AddPeer(const std::string& id, int slot)
@@ -2147,9 +2174,9 @@ void DirectLink::SetIce(const IceConfig& ice)
   m_impl->Post({Impl::Command::Kind::Ice, {}, -1, {}, ice, {}});
 }
 
-void DirectLink::Send(const std::string& payload)
+void DirectLink::Send(const std::string& payload, int seat)
 {
-  m_impl->Send(payload);
+  m_impl->Send(payload, KIND_PACKET, nullptr, seat);
 }
 
 std::vector<DirectLink::Received> DirectLink::Receive()

@@ -121,11 +121,13 @@ bool JitBase::DoesConfigNeedRefresh() const
   });
 }
 
-void JitBase::CompileFromHook(u32 em_address)
+bool JitBase::CompileFromHook(u32 em_address)
 {
   m_compiling_from_hook = true;
+  m_hook_compile_dropped = false;
   Jit(em_address);
   m_compiling_from_hook = false;
+  return !m_hook_compile_dropped;
 }
 
 void JitBase::RefreshConfig()

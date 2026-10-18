@@ -618,8 +618,8 @@ View Model::At(double now) const
   {
     Hint h;
     h.progress = m_hint_progress;
-    // The same words while Z is held: the bar under them fills.
-    h.text = m_hint_alone ? "Press Start to continue · Hold Z to leave" : "Hold Z to leave";
+    // The same words while B is held: the bar under them fills.
+    h.text = m_hint_alone ? "Press Start to continue · Hold B to leave" : "Hold B to leave";
     v.hint = std::move(h);
   }
   return v;
@@ -880,7 +880,7 @@ double DemoFrame(double now)
   }
   else if (s_demo == "stay")
   {
-    // After the set on the results screen: VICTORY, the hint, Z held, the opponent leaving.
+    // After the set on the results screen: VICTORY, the hint, B held, the opponent leaving.
     if (at(0, 500))
     {
       m.BlockSetOver(static_cast<u32>(loop + 1), true, 2, 1, 1532, now);

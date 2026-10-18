@@ -7,6 +7,11 @@ add_executable(dolphin-nogui
   MainNoGUI.cpp
 )
 
+# The synchronous boot call owns scope guards that must unwind on allocation failure.
+if(NOT MSVC)
+  set_property(SOURCE MainNoGUI.cpp APPEND PROPERTY COMPILE_OPTIONS -fexceptions)
+endif()
+
 if(X11_FOUND)
   target_sources(dolphin-nogui PRIVATE PlatformX11.cpp)
   target_link_libraries(dolphin-nogui PRIVATE PkgConfig::XRANDR PkgConfig::X11)
@@ -34,12 +39,14 @@ endif()
 if(APPLE)
   option(ORCA_MACOS_BUNDLE "Build the NoGUI frontend as Orca.app, a self-contained bundle" OFF)
 endif()
-set(ORCA_VERSION "0.1.0" CACHE STRING "The Orca version (macOS Info.plist, Windows version resource)")
+# ORCA_VERSION is set in Source/Core/CMakeLists.txt (Core reads it too).
 
 if (WIN32)
   target_sources(dolphin-nogui PRIVATE DolphinNoGUI.exe.manifest DolphinNoGUI.rc)
-  # Orca.exe's version resource (DolphinNoGUI.rc), what Windows and antivirus show: ORCA_VERSION as
-  # a string and as the four numbers VERSIONINFO wants.
+  # The program's version resource (DolphinNoGUI.rc), what Windows and antivirus show: ORCA_VERSION
+  # as a string and as the four numbers VERSIONINFO wants. The release packages DolphinNoGUI.exe as
+  # "YG Dolphin/yg-dolphin.exe" from 0.3.42 ("YG Baiji/yg-baiji.exe" in 0.3.40 and 0.3.41;
+  # "Orca/Orca.exe" before).
   string(REGEX MATCHALL "[0-9]+" ORCA_VERSION_PARTS "${ORCA_VERSION}")
   list(APPEND ORCA_VERSION_PARTS 0 0 0 0)
   list(SUBLIST ORCA_VERSION_PARTS 0 4 ORCA_VERSION_PARTS)
@@ -53,6 +60,8 @@ if (WIN32)
   )
 elseif(APPLE AND ORCA_MACOS_BUNDLE)
   # Orca.app: runs a session by default, with its own user dir and a disc picker (MainNoGUI.cpp).
+  # Tools/orca-package-macos.sh ships it as "YG Dolphin.app"; the program inside stays
+  # Contents/MacOS/Orca (CFBundleExecutable, Orca-Info.plist.in).
   target_compile_definitions(dolphin-nogui PRIVATE ORCA_MACOS_BUNDLE)
   set_target_properties(dolphin-nogui PROPERTIES
     MACOSX_BUNDLE TRUE

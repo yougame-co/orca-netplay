@@ -566,7 +566,7 @@ TEST(OrcaSetEndSetOver, OnlyAfterTheRoomSaysSo)
   EXPECT_TRUE(m.At(400).Empty());
 }
 
-TEST(OrcaSetEndSetOver, TheLeaveHintAndZsHold)
+TEST(OrcaSetEndSetOver, TheLeaveHintAndBsHold)
 {
   Model m;
   m.MatchBegan(true, "bo", 0);
@@ -574,17 +574,17 @@ TEST(OrcaSetEndSetOver, TheLeaveHintAndZsHold)
   m.LeaveHint(true, false, 0);
   View v = m.At(10);
   ASSERT_TRUE(v.hint);
-  EXPECT_EQ(v.hint->text, "Hold Z to leave");
+  EXPECT_EQ(v.hint->text, "Hold B to leave");
   EXPECT_FLOAT_EQ(v.hint->progress, 0.0f);
   EXPECT_FALSE(v.Empty());
   m.LeaveHint(true, false, 0.4f);
   EXPECT_FLOAT_EQ(m.At(20).hint->progress, 0.4f);
-  EXPECT_EQ(m.At(20).hint->text, "Hold Z to leave");  // the bar fills, the words stay
+  EXPECT_EQ(m.At(20).hint->text, "Hold B to leave");  // the bar fills, the words stay
   m.LeaveHint(true, false, 3.0f);
   EXPECT_FLOAT_EQ(m.At(30).hint->progress, 1.0f);
   // The opponent gone: Start too.
   m.LeaveHint(true, true, 0);
-  EXPECT_EQ(m.At(40).hint->text, "Press Start to continue · Hold Z to leave");
+  EXPECT_EQ(m.At(40).hint->text, "Press Start to continue · Hold B to leave");
   // Left, or off the results screen.
   m.LeaveHint(false, true, 0.7f);
   EXPECT_FALSE(m.At(50).hint);

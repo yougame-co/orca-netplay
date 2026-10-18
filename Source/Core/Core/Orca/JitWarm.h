@@ -5,6 +5,7 @@
 
 #include <optional>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -45,7 +46,12 @@ struct Block
 std::optional<u64> HashRanges(std::span<const u8> mem1, std::span<const u8> mem2,
                               const std::vector<std::pair<u32, u32>>& ranges);
 
-// File format (<user>/Cache/<profile>.jitwarm): header, blocks, checksum.
+// File format (<user>/Cache/<profile>.jitwarm): header, blocks, checksum. Decode takes nothing it
+// doesn't expect from a JIT: a file over MAX_FILE_BYTES, an address or range outside MEM1 and MEM2
+// or not word-aligned, or a block covering more instructions than the JIT puts in one is refused,
+// whoever wrote the file. (The list only says what to compile ahead: each block is still checked
+// against RAM before it compiles, and the warm-up never changes what the game computes.)
+constexpr std::size_t MAX_FILE_BYTES = std::size_t{16} << 20;
 std::vector<u8> Encode(const std::vector<Block>& blocks);
 std::optional<std::vector<Block>> Decode(std::span<const u8> bytes);
 
@@ -73,5 +79,19 @@ void OnBoundary(const Core::CPUThreadGuard& guard);
 
 // Whether the running scene is a match, for a game whose scenes Orca reads (Brawl rev 2 and the
 // launchers that boot it); nullopt while the scene can't be read, and for any other game.
+// Whether the active module can read this game's scenes for warm-up and host diagnostics.
+bool ScenesReadable();
 std::optional<bool> SceneIsMatch(const Core::CPUThreadGuard& guard);
+
+// The running scene, for the same games: its object and its name's address; nullopt while it
+// can't be read and for any other game. Reads only.
+struct Scene
+{
+  u32 object = 0;
+  u32 name = 0;
+  bool operator==(const Scene&) const = default;
+};
+std::optional<Scene> CurrentScene(const Core::CPUThreadGuard& guard);
+// The scene name at `name` (CurrentScene's), at most 31 characters; empty if unreadable.
+std::string SceneName(const Core::CPUThreadGuard& guard, u32 name);
 }  // namespace Orca::JitWarm

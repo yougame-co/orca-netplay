@@ -10,6 +10,7 @@
 #include <deque>
 #include <mutex>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -24,8 +25,10 @@
 #include "Common/IOFile.h"
 #include "Common/Logging/Log.h"
 #include "Core/Core.h"
+#include "Core/ConfigManager.h"
 #include "Core/HW/Memmap.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/UX/UX.h"
 #include "Core/PowerPC/JitCommon/JitBase.h"
 #include "Core/PowerPC/JitCommon/JitCache.h"
 #include "Core/PowerPC/JitInterface.h"
@@ -42,6 +45,18 @@ constexpr u32 FILE_VERSION = 1;
 constexpr u32 MEM2_PHYSICAL = 0x10000000;
 constexpr std::size_t MAX_RANGES = 32;
 constexpr u32 MAX_RANGE_BYTES = 0x10000;
+// Wii RAM, physical: MEM1 (24 MiB at 0) and MEM2 (64 MiB at 0x10000000).
+constexpr u32 MEM1_END = 0x01800000;
+constexpr u32 MEM2_END = MEM2_PHYSICAL + 0x04000000;
+// The most instructions the JIT puts in one block (JitBase::code_buffer_size), as bytes.
+constexpr u32 MAX_BLOCK_BYTES = 32000 * 4;
+// The smallest block in the file: its fixed fields and one range.
+constexpr std::size_t MIN_BLOCK_BYTES = 4 + 4 + 4 + 8 + 2 + 1 + 1 + 8;
+
+bool InRam(u32 start, u32 end)
+{
+  return start < end && (end <= MEM1_END || (start >= MEM2_PHYSICAL && end <= MEM2_END));
+}
 
 // Brawl (NTSC-U, rev 2), Project+ included: gfSceneManager* at 0x805A0060, its current scene at
 // +0x4, and the scene's name (char*) at +0x0. A match is the scMelee scene, starting after the load
@@ -140,28 +155,27 @@ std::string SeedPath()
   const Profile* profile = ActiveProfile();
   if (!profile || GetEnv("ORCA_JITWARM_SEED") == "0")
     return {};
+  // Mod mode: the bundle's JIT seed, when it has one (host-only: not in the tree hash).
+  if (profile->mod)
+    return profile->mod->JitWarmPath();
   return File::GetSysDirectory() + "Orca/" + profile->game_id + ".jitwarm";
 }
 
+// The pack format's cap on orca/jitwarm is the same as Decode's.
+static_assert(Mod::MAX_JITWARM_BYTES == JitWarm::MAX_FILE_BYTES);
+
+// Empty when missing, unreadable or over Mod::MAX_JITWARM_BYTES (a mod's orca/jitwarm may be up to
+// 4 GiB in its tree.json; Orca's seeds and a player's list are about 1 MB).
 std::vector<u8> ReadWhole(const std::string& path)
 {
   std::vector<u8> bytes;
-  if (File::IOFile in(path, "rb"); in)
+  if (File::IOFile in(path, "rb"); in && in.GetSize() <= Mod::MAX_JITWARM_BYTES)
   {
     bytes.resize(in.GetSize());
     if (!in.ReadBytes(bytes.data(), bytes.size()))
       bytes.clear();
   }
   return bytes;
-}
-
-// A game whose scenes Orca can read: Brawl rev 2, or a launcher profile that boots it.
-bool KnownGame()
-{
-  const Profile* profile = ActiveProfile();
-  if (!profile || profile->revision != 2)
-    return false;
-  return profile->IsLauncher() ? profile->disc == "RSBE01" : profile->game_id == "RSBE01";
 }
 
 // Whether the current scene is a match; nullopt while the scene can't be read (boot, transitions).
@@ -240,6 +254,9 @@ private:
   bool m_log_presence = false;  // ORCA_JITWARM_LOG=2: also which listed blocks are in RAM
   std::string m_path;
   std::string m_seed_path;  // Orca's shipped list, used when the player has none (SeedPath)
+  // A flat bundle's seed as it was verified (Mod.h ModInfo::flat_jitwarm): read from here, never
+  // from m_seed_path again.
+  std::optional<std::vector<u8>> m_seed_bytes;
 
   bool m_seen_other_scene = false;  // a match starts only from another scene, not on a join
   bool m_in_match = false;
@@ -296,7 +313,7 @@ bool State::Enabled()
   if (m_checked)
     return m_enabled;
   m_checked = true;
-  m_enabled = SessionActive() && KnownGame() && GetEnv("ORCA_JITWARM") != "0";
+  m_enabled = SessionActive() && ScenesReadable() && GetEnv("ORCA_JITWARM") != "0";
   if (const std::string budget = GetEnv("ORCA_JITWARM_BUDGET_US"); !budget.empty())
     m_budget_us = std::clamp(std::atoi(budget.c_str()), 0, 100'000);
   if (const std::string slow = GetEnv("ORCA_TEST_JITWARM_SLOW_US"); !slow.empty())
@@ -306,6 +323,12 @@ bool State::Enabled()
   m_log_presence = log == "2";
   m_path = FilePath();
   m_seed_path = SeedPath();
+  if (const Profile* profile = ActiveProfile();
+      profile && profile->mod && profile->mod->flat && !m_seed_path.empty())
+  {
+    const std::string& seed = profile->mod->flat_jitwarm;
+    m_seed_bytes.emplace(seed.begin(), seed.end());
+  }
   if (m_enabled)
     NOTICE_LOG_FMT(ROLLBACK, "JIT warm-up: on ({}, {} us per frame)", m_path, m_budget_us);
   return m_enabled;
@@ -634,9 +657,22 @@ void State::Warm(const Core::CPUThreadGuard& guard)
     m_compiling = true;
     const auto compile_start = std::chrono::steady_clock::now();
     PowerPC::RoundingModeUpdated(ppc_state);
-    jit->CompileFromHook(b.effective);
+    const bool fit = jit->CompileFromHook(b.effective);
     Common::FPU::LoadDefaultSIMDState();
     m_compiling = false;
+    if (!fit)
+    {
+      // Bigger than the free code space (no real game's block comes close): the JIT dropped it.
+      // Stop warming this match rather than try more of the list.
+      WARN_LOG_FMT(ROLLBACK, "JIT warm-up: {:08x} did not fit in the free code space; stopping",
+                   b.effective);
+      status = Status::GivenUp;
+      ++m_discarded;
+      m_queue.clear();
+      m_waiting.clear();
+      m_cursor = 0;
+      break;
+    }
     if (m_log_frames)
     {
       const double compile_ms = std::chrono::duration<double, std::milli>(
@@ -712,7 +748,7 @@ void State::Warm(const Core::CPUThreadGuard& guard)
 
 void State::OnBoundary(const Core::CPUThreadGuard& guard)
 {
-  if (!Enabled())
+  if (!ScenesReadable() || !Enabled())
     return;
   if (!m_load_started)
   {
@@ -724,7 +760,7 @@ void State::OnBoundary(const Core::CPUThreadGuard& guard)
         WARN_LOG_FMT(ROLLBACK, "JIT warm-up: {} is not readable, starting over", m_path);
       if (!blocks && !m_seed_path.empty())
       {
-        blocks = Decode(ReadWhole(m_seed_path));
+        blocks = Decode(m_seed_bytes ? *m_seed_bytes : ReadWhole(m_seed_path));
         if (blocks)
         {
           NOTICE_LOG_FMT(ROLLBACK,
@@ -869,7 +905,7 @@ std::vector<u8> Encode(const std::vector<Block>& blocks)
 
 std::optional<std::vector<Block>> Decode(std::span<const u8> bytes)
 {
-  if (bytes.size() < 3 * sizeof(u32) + sizeof(u64))
+  if (bytes.size() < 3 * sizeof(u32) + sizeof(u64) || bytes.size() > MAX_FILE_BYTES)
     return std::nullopt;
   const std::span<const u8> body = bytes.first(bytes.size() - sizeof(u64));
   u64 checksum;
@@ -879,7 +915,8 @@ std::optional<std::vector<Block>> Decode(std::span<const u8> bytes)
   Reader in(body);
   u32 magic, version, count;
   if (!in.Get(&magic) || !in.Get(&version) || !in.Get(&count) || magic != FILE_MAGIC ||
-      version != FILE_VERSION || count > 2 * MAX_BLOCKS)
+      version != FILE_VERSION || count > 2 * MAX_BLOCKS ||
+      count > (bytes.size() - 3 * sizeof(u32) - sizeof(u64)) / MIN_BLOCK_BYTES)
   {
     return std::nullopt;
   }
@@ -889,16 +926,24 @@ std::optional<std::vector<Block>> Decode(std::span<const u8> bytes)
     u8 ranges;
     if (!in.Get(&b.effective) || !in.Get(&b.physical) || !in.Get(&b.flags) || !in.Get(&b.hash) ||
         !in.Get(&b.when) || !in.Get(&b.age) || !in.Get(&ranges) || ranges == 0 ||
-        ranges > MAX_RANGES)
+        ranges > MAX_RANGES || (b.effective & 3) != 0 || (b.physical & 3) != 0 ||
+        !InRam(b.physical, b.physical + 4))
     {
       return std::nullopt;
     }
     b.ranges.resize(ranges);
+    u32 block_bytes = 0;
     for (auto& [start, end] : b.ranges)
     {
-      if (!in.Get(&start) || !in.Get(&end) || end <= start || end - start > MAX_RANGE_BYTES)
+      if (!in.Get(&start) || !in.Get(&end) || end <= start || end - start > MAX_RANGE_BYTES ||
+          ((start | end) & 3) != 0 || !InRam(start, end))
+      {
         return std::nullopt;
+      }
+      block_bytes += end - start;
     }
+    if (block_bytes > MAX_BLOCK_BYTES)
+      return std::nullopt;
   }
   if (!in.AtEnd())
     return std::nullopt;
@@ -946,7 +991,9 @@ std::vector<Block> Merge(std::vector<Block> known, const std::vector<bool>& seen
 
 void OnBlockFinalized(const JitBlock& block)
 {
-  GetState().OnBlockFinalized(block);
+  // Recording can still be armed from a previous boot in this process.
+  if (ScenesReadable())
+    GetState().OnBlockFinalized(block);
 }
 
 void OnBoundary(const Core::CPUThreadGuard& guard)
@@ -954,10 +1001,50 @@ void OnBoundary(const Core::CPUThreadGuard& guard)
   GetState().OnBoundary(guard);
 }
 
+// Only modules that can read these scenes use Brawl's warm-up timing and diagnostics.
+bool ScenesReadable()
+{
+  const auto& running = SConfig::GetInstance();
+  return Orca::UX::Game().ScenesReadable(running.GetGameID(), running.GetRevision());
+}
+
 std::optional<bool> SceneIsMatch(const Core::CPUThreadGuard& guard)
 {
-  if (!KnownGame())
+  if (!ScenesReadable())
     return std::nullopt;
   return InMatch(guard);
+}
+
+std::optional<Scene> CurrentScene(const Core::CPUThreadGuard& guard)
+{
+  if (!ScenesReadable())
+    return std::nullopt;
+  const auto mapped = [&guard](u32 address) {
+    return PowerPC::MMU::HostIsRAMAddress(guard, address);
+  };
+  if (!mapped(SCENE_MANAGER))
+    return std::nullopt;
+  const u32 manager = PowerPC::MMU::HostRead<u32>(guard, SCENE_MANAGER);
+  if (!mapped(manager + 0x4))
+    return std::nullopt;
+  const u32 scene = PowerPC::MMU::HostRead<u32>(guard, manager + 0x4);
+  if (!mapped(scene))
+    return std::nullopt;
+  return Scene{scene, PowerPC::MMU::HostRead<u32>(guard, scene)};
+}
+
+std::string SceneName(const Core::CPUThreadGuard& guard, u32 name)
+{
+  if (!ScenesReadable())
+    return {};
+  std::string out;
+  for (u32 i = 0; i < 31 && PowerPC::MMU::HostIsRAMAddress(guard, name + i); ++i)
+  {
+    const char c = static_cast<char>(PowerPC::MMU::HostRead<u8>(guard, name + i));
+    if (c == '\0')
+      break;
+    out.push_back(c >= 0x20 && c < 0x7F ? c : '?');
+  }
+  return out;
 }
 }  // namespace Orca::JitWarm

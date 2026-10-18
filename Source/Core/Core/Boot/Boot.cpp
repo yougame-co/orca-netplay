@@ -497,7 +497,7 @@ static bool SetDefaultDisc(DVD::DVDInterface& dvd_interface)
     // The loader's profile check read its own volume of this disc.
     if (!Orca::SessionDiscReady(*disc))
     {
-      Orca::Status::Error("disc_revision", "Orca couldn't read that Brawl disc as Rev 2.");
+      Orca::Status::Error("disc_revision", "YG Dolphin couldn't read that Brawl disc as Rev 2.");
       return false;
     }
   }

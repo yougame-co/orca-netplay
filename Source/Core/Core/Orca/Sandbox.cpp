@@ -21,6 +21,9 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <dlfcn.h>
+#endif
 #endif
 
 #include <fmt/format.h>
@@ -200,6 +203,27 @@ bool Jailed()
     return true;
 #endif
   return !GetEnv("ORCA_NET").empty();
+}
+
+bool PackJailed()
+{
+#ifdef _WIN32
+  return AppContainer();
+#elif defined(__APPLE__)
+  // The app applies the sandbox before launching Orca. Ask the OS about this process, including
+  // inherited profiles. A null operation queries whether a sandbox is applied. Resolve the
+  // system entry point at runtime; an unavailable query cannot authorize a pack.
+  void* library = dlopen("/usr/lib/libsandbox.dylib", RTLD_LAZY | RTLD_LOCAL);
+  if (!library)
+    return false;
+  using Check = int (*)(pid_t, const char*, int, ...);
+  const auto check = reinterpret_cast<Check>(dlsym(library, "sandbox_check"));
+  const bool jailed = check && check(getpid(), nullptr, 0) == 1;
+  dlclose(library);
+  return jailed;
+#else
+  return false;
+#endif
 }
 
 bool AdapterAllowed(bool session)

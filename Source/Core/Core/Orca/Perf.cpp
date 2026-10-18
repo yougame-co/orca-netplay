@@ -226,8 +226,11 @@ std::string InfoJson(const Info& info)
     for (std::size_t i = 0; i < std::min(adapters, info.adapters.size()); ++i)
       ad += fmt::format("{}{}", i ? "," : "", Quote(CleanName(info.adapters[i])));
     std::string json =
-        fmt::format("{{\"v\":1,\"k\":\"info\",\"be\":{},\"gpu\":{},\"ad\":[{}],\"ai\":{}",
-                    Quote(CleanName(info.backend)), Quote(CleanName(info.gpu)), ad, info.adapter);
+        fmt::format("{{\"v\":1,\"k\":\"info\",\"be\":{},\"gpu\":{}{},\"ad\":[{}],\"ai\":{}",
+                    Quote(CleanName(info.backend)), Quote(CleanName(info.gpu)),
+                    info.driver.empty() ? std::string() :
+                                          fmt::format(",\"drv\":{}", Quote(CleanName(info.driver))),
+                    ad, info.adapter);
     if (with_cpu)
       json += fmt::format(",\"cpu\":{}", Quote(CleanName(info.cpu)));
     json += fmt::format(",\"th\":{},\"os\":{},\"rev\":{}}}", info.threads,
@@ -589,6 +592,7 @@ void SendInfo()
       g_video_backend ? g_video_backend->GetConfigName() : Config::Get(Config::MAIN_GFX_BACKEND);
   info.adapters = g_backend_info.Adapters;
   info.adapter = Config::Get(Config::GFX_ADAPTER);
+  info.driver = g_backend_info.DriverVersion;
   if (!g_backend_info.AdapterName.empty())
     info.gpu = g_backend_info.AdapterName;
   else if (info.adapter >= 0 && info.adapter < static_cast<int>(info.adapters.size()))

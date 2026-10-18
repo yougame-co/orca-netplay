@@ -19,6 +19,7 @@
 #include "Core/Core.h"
 #include "Core/Host.h"
 #include "Core/Orca/JitWarm.h"
+#include "Core/Orca/PanicDiag.h"
 #include "Core/PowerPC/JitCommon/JitBase.h"
 #include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PPCSymbolDB.h"
@@ -162,6 +163,9 @@ void JitBaseBlockCache::FinalizeBlock(JitBlock& block, bool block_link,
   block.fast_block_map_index = index;
 
   block.physical_addresses = code_block.m_physical_addresses;
+  // Orca: what RAM held when this block was compiled, so a crash dump can tell stale code apart.
+  block.orca_code_hash =
+      Orca::PanicDiag::CodeHash(Orca::PanicDiag::RamOf(m_jit.m_system), block.physical_addresses);
 
   block.originalSize = code_block.m_num_instructions;
   if (Rollback::Diag::g_jit_code_log)
@@ -437,6 +441,15 @@ void JitBaseBlockCache::EraseSingleBlock(const JitBlock& block)
 
   DestroyBlock(mutable_block);
   block_map.erase(block_map_iter);  // The original JitBlock reference is now dangling.
+}
+
+void JitBaseBlockCache::DiscardUnfinalizedBlock(const JitBlock& block)
+{
+  const auto equal_range = block_map.equal_range(block.physicalAddress);
+  const auto block_map_iter = std::ranges::find(equal_range.first, equal_range.second, &block,
+                                                [](const auto& kv) { return &kv.second; });
+  if (block_map_iter != equal_range.second)
+    block_map.erase(block_map_iter);
 }
 
 u32* JitBaseBlockCache::GetBlockBitSet() const

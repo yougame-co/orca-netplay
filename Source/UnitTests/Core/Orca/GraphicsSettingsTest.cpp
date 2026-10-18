@@ -127,6 +127,18 @@ TEST_F(OrcaGraphicsSettings, GameAffectingSettingsFromOutsideAreIgnored)
   EXPECT_EQ(Verify(), std::nullopt);
 }
 
+TEST_F(OrcaGraphicsSettings, NoKeyboardOrUsbDeviceFromOutside)
+{
+  Ini(Config::MAIN_WII_KEYBOARD, true);
+  Ini(Config::MAIN_USB_PASSTHROUGH_DEVICES, std::string("057e:0337"));
+  CommandLine(Config::MAIN_WII_KEYBOARD, true);
+  Boot();
+
+  EXPECT_FALSE(Config::Get(Config::MAIN_WII_KEYBOARD));
+  EXPECT_EQ(Config::Get(Config::MAIN_USB_PASSTHROUGH_DEVICES), "");
+  EXPECT_EQ(Verify(), std::nullopt);
+}
+
 TEST_F(OrcaGraphicsSettings, DrawingOnlySettingsAreThePlayers)
 {
   CommandLine(Config::MAIN_GFX_BACKEND, std::string("Vulkan"));

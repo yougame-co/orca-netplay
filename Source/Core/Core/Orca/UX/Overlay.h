@@ -9,6 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Core/Orca/Session/Events.h"
@@ -177,6 +178,10 @@ void SetPerf(Perf perf);
 void FrameBoundary(bool shown, double game_held_ms, int game_held_frames);
 // A short toast under the circle. Any thread.
 void ShowToast(std::string text);
+// A declared-origin host restarts its own game to shorten a friend's join replay.
+void ShowRestartForJoin(std::string_view name);
+// A declared-origin queue host restarts before the matched game.
+void ShowRestartForMatch();
 // A line of the app's chat. Never logged. Any thread.
 void ShowChat(std::string name, std::string text);
 // A ranked set's lines, top centre: the set score, and whose stage-select turn it is with its

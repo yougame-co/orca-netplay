@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# free-space.py: proves the match block and the code caves of Core/Orca/UX/FreeSpace.h free in Brawl
+# free-space.py: proves the match block and the code caves of Core/Orca/Games/Brawl/FreeSpace.h free in Brawl
 # or Project+ (ORCA.md "Free space"), headless and muted, one Orca at a time.
 #
 #   Tools/orca/free-space.py <dolphin-emu-nogui> <disc> [--pplus <launcher.dol>] [--keep]
@@ -47,7 +47,7 @@ def log(text):
 
 # ---- The ranges, read from the header so the tool and the code never disagree ----
 
-header = open(os.path.join(ROOT, "Source/Core/Core/Orca/UX/FreeSpace.h")).read()
+header = open(os.path.join(ROOT, "Source/Core/Core/Orca/Games/Brawl/FreeSpace.h")).read()
 
 
 def ranges(name):

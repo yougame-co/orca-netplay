@@ -1,4 +1,5 @@
 add_dolphin_test(VertexLoaderTest VertexLoaderTest.cpp)
+add_dolphin_test(OrcaGpuBoundsTest GpuBoundsTest.cpp)
 
 # Orca: the D3D FXC shader cache. D3DCommon builds only on Windows, so elsewhere the test compiles
 # the cache's source itself (only the compiler DLL's digest needs Windows).

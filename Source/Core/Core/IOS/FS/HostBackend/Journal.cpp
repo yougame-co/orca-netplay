@@ -69,19 +69,25 @@ void HostFileSystem::JournalStop()
   m_journal_active = false;
   m_journal_has_fst = false;
   m_journal.clear();
+  m_journal_bytes = 0;
 }
 
 void HostFileSystem::JournalTrim(u64 mark)
 {
   while (!m_journal.empty() && m_journal.front().seq < mark)
+  {
+    JournalForget(m_journal.front());
     m_journal.pop_front();
+  }
 }
 
 void HostFileSystem::JournalUndo(u64 mark)
 {
+  m_usage.reset();
   while (!m_journal.empty() && m_journal.back().seq >= mark)
   {
     UndoJournalEntry(m_journal.back());
+    JournalForget(m_journal.back());
     m_journal.pop_back();
   }
   // Changes from here on are relative to the restored FST. Numbering restarts at the mark (every
@@ -93,6 +99,11 @@ void HostFileSystem::JournalUndo(u64 mark)
 
 void HostFileSystem::UndoJournalEntry(const JournalEntry& entry)
 {
+  if (entry.lossy)
+  {
+    ERROR_LOG_FMT(IOS_FS, "NAND journal: a change to {} kept no bytes to undo", entry.host_path);
+    m_journal_error = true;
+  }
   switch (entry.kind)
   {
   case JournalEntry::Kind::Fst:
@@ -204,6 +215,7 @@ void HostFileSystem::JournalRemoved(const std::string& host_path)
     entry.removed_paths.push_back(host_path);
     entry.removed_contents.push_back(std::move(content));
   }
+  JournalAccount(entry);
 }
 
 void HostFileSystem::JournalWritten(const std::string& host_path, File::IOFile& file, u64 offset,
@@ -232,6 +244,7 @@ void HostFileSystem::JournalWritten(const std::string& host_path, File::IOFile& 
       m_journal_error = true;
     }
   }
+  JournalAccount(entry);
 }
 
 void HostFileSystem::JournalRenamed(const std::string& old_host_path,
@@ -244,5 +257,39 @@ void HostFileSystem::JournalRenamed(const std::string& old_host_path,
   entry.seq = m_journal_next_seq++;
   entry.host_path = old_host_path;
   entry.new_host_path = new_host_path;
+}
+u64 HostFileSystem::JournalEntryBytes(const JournalEntry& entry)
+{
+  u64 bytes = entry.old_bytes.size();
+  for (const std::string& content : entry.removed_contents)
+    bytes += content.size();
+  return bytes;
+}
+
+void HostFileSystem::JournalAccount(JournalEntry& entry)
+{
+  const u64 bytes = JournalEntryBytes(entry);
+  if (m_journal_bytes + bytes > JOURNAL_MAX_BYTES)
+  {
+    // Not undoable: keep the entry's order but not its bytes.
+    ERROR_LOG_FMT(IOS_FS, "NAND journal: over {} bytes of changes since the oldest snapshot",
+                  JOURNAL_MAX_BYTES);
+    entry.old_bytes = {};
+    entry.removed_contents.assign(entry.removed_contents.size(), std::string());
+    entry.lossy = true;
+    return;
+  }
+  m_journal_bytes += bytes;
+  // A log line for each new 8 MiB of peak, so runs show what a game keeps journaled.
+  if (m_journal_bytes >= m_journal_peak_logged + (u64{8} << 20))
+  {
+    m_journal_peak_logged = m_journal_bytes;
+    NOTICE_LOG_FMT(IOS_FS, "NAND journal: {} bytes kept", m_journal_bytes);
+  }
+}
+
+void HostFileSystem::JournalForget(const JournalEntry& entry)
+{
+  m_journal_bytes -= std::min(m_journal_bytes, JournalEntryBytes(entry));
 }
 }  // namespace IOS::HLE::FS

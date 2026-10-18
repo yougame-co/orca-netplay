@@ -2267,7 +2267,10 @@ void TextureCacheBase::CopyRenderTargetToTexture(
 
   auto& system = Core::System::GetInstance();
   auto& memory = system.GetMemory();
-  u8* dst = memory.GetPointerForRange(dstAddr, covered_range);
+  // Every byte the rows below write, not just num_blocks_y * dstStride (a stride under a row's
+  // bytes writes past that).
+  u8* dst = memory.GetPointerForRange(
+      dstAddr, EFBCopyCheckedRange(bytes_per_row, num_blocks_y, dstStride));
   if (dst == nullptr)
   {
     ERROR_LOG_FMT(VIDEO, "Trying to copy from EFB to invalid address {:#010x}", dstAddr);
@@ -2587,7 +2590,16 @@ void TextureCacheBase::FlushEFBCopy(TCacheEntry* entry)
   // Copy from texture -> guest memory.
   auto& system = Core::System::GetInstance();
   auto& memory = system.GetMemory();
-  u8* const dst = memory.GetPointerForRange(entry->addr, covered_range);
+  u8* const dst = memory.GetPointerForRange(
+      entry->addr,
+      EFBCopyCheckedRange(entry->pending_efb_copy_width * 4,
+                          entry->pending_efb_copy_height, entry->memory_stride));
+  if (dst == nullptr)
+  {
+    ERROR_LOG_FMT(VIDEO, "Trying to flush an EFB copy to invalid address {:#010x}", entry->addr);
+    ReleaseEFBCopyStagingTexture(std::move(entry->pending_efb_copy));
+    return;
+  }
   WriteEFBCopyToRAM(dst, entry->pending_efb_copy_width, entry->pending_efb_copy_height,
                     entry->memory_stride, std::move(entry->pending_efb_copy));
 

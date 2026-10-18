@@ -6,7 +6,7 @@
     name="YouGame.Orca"
     type="win32"
 />
-<description>Orca</description>
+<description>YG Dolphin</description>
 <dependency>
     <dependentAssembly>
         <assemblyIdentity

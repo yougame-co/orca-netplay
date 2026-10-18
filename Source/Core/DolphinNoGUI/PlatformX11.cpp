@@ -75,6 +75,7 @@ public:
   WindowSystemInfo GetWindowSystemInfo() const override;
 
 protected:
+  std::optional<Embed::WindowBounds> EmbedGetBounds() const override;
   void EmbedSetRect(const Embed::Rect& rect) override;
   void EmbedSetVisible(bool visible) override;
   void EmbedSetFocus(bool focus) override;
@@ -151,7 +152,11 @@ bool PlatformX11::Init()
   }
 
   if (IsEmbedded())
-    return InitEmbedded();
+  {
+    if (InitEmbedded())
+      return true;
+    // The embed attempt failed: retain this display and open our own window below.
+  }
 
   m_window = XCreateSimpleWindow(m_display, DefaultRootWindow(m_display), m_window_x, m_window_y,
                                  m_window_width, m_window_height, 0, 0, BlackPixel(m_display, 0));
@@ -221,6 +226,7 @@ bool PlatformX11::InitEmbedded()
   {
     std::fprintf(stderr, "Orca: the app's window %llu is not an X11 window on this display\n",
                  m_embed.parent);
+    EmbedFallback(m_parent == X_None ? "no-parent" : "parent-gone");
     return false;
   }
   m_root = app.root;
@@ -275,6 +281,8 @@ bool PlatformX11::InitEmbedded()
   {
     std::fprintf(stderr, "Orca: couldn't open a window inside the app's window %llu\n",
                  m_embed.parent);
+    m_window = X_None;
+    EmbedFallback("track-failed");
     return false;
   }
 
@@ -347,6 +355,20 @@ void PlatformX11::UpdateWindowPosition()
 
 // The window commands act only when embedded: ORCA_TEST_COMMANDS alone sends them too, and the
 // window then is Dolphin's own top-level one, the window manager's to place.
+std::optional<Embed::WindowBounds> PlatformX11::EmbedGetBounds() const
+{
+  XWindowAttributes attributes{};
+  if (!XGetWindowAttributes(m_display, m_window, &attributes))
+    return std::nullopt;
+  int x = 0, y = 0;
+  Window child{};
+  if (!XTranslateCoordinates(m_display, m_window, attributes.root, 0, 0, &x, &y, &child))
+    return std::nullopt;
+  return Embed::WindowBounds{static_cast<double>(x), static_cast<double>(y),
+                             static_cast<double>(attributes.width),
+                             static_cast<double>(attributes.height), 1.0};
+}
+
 void PlatformX11::EmbedSetRect(const Embed::Rect& r)
 {
   if (!IsEmbedded())
@@ -388,6 +410,13 @@ void PlatformX11::EmbedSetFocus(bool focus)
 // keyboard is in the app's window, the game is shown, and the app's last word was "focus".
 void PlatformX11::UpdateEmbedFocus()
 {
+  XWindowAttributes own{};
+  if (!EmbedResultDecided() && m_embed_visible &&
+      XGetWindowAttributes(m_display, m_window, &own) &&
+      own.map_state == IsViewable)
+  {
+    EmbedSucceeded();
+  }
   m_window_focus = m_embed_visible && m_embed_focus && m_app_focused && m_app_viewable;
 }
 

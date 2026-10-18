@@ -165,7 +165,10 @@ host = Orca("Host", {"ORCA_ROOM": ROOM})
 orcas.append(host)
 host.expect("orca caps", 30)
 host.send("caps join leave stats")
-host.expect("orca state playing", 90)
+# In mod mode the caps wait for the builtin's guards (ORCA.md "Mods (phase 1)"), so "playing" may
+# come before them.
+if "playing" not in host.states:
+    host.expect("orca state playing", 90)
 time.sleep(30)
 
 # 2. A join sent at once, before the caps handshake (as the app does for an invite it opened): Orca
