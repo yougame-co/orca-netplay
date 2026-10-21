@@ -1,0 +1,38 @@
+# Two matches in one process (ORCA.md, "Match start"): the 2-minute Mario (P1) vs Link (P2) match
+# on Battlefield of bf-mario-link-results.txt, its results screen, then Mario vs Donkey Kong on
+# Final Destination (a stage and a fighter the first match never loaded). scMelee starts at frames
+# 2134 and 10800 (Brawl rev 2, the same on every machine); YG_EXIT_AFTER=19000 ends at the second
+# results screen.
+# Rules count frames from entry into each scene (@scene), so menu timing can drift.
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain mash 30 99999 1 40 A
+# Character select: both join, move up to the top row, P1 takes Mario, P2 Link, P1 starts.
+@scSelctCharacter 53 56 1 A
+@scSelctCharacter 83 86 2 A
+@scSelctCharacter 113 153 1 SY=255
+@scSelctCharacter 113 153 2 SY=255
+@scSelctCharacter 173 176 1 A
+@scSelctCharacter 193 196 2 A
+@scSelctCharacter 233 236 1 START
+# Stage select: up to the top row, one step left onto Battlefield.
+@scSelStage 35 73 1 SY=255
+@scSelStage 75 78 1 SX=0
+@scSelStage 95 98 1 A
+# The match: both players fuzzed after the countdown.
+@scMelee fuzz 400 99999 1 11
+@scMelee fuzz 400 99999 2 22
+# Results screen: both players press A, then START, until the game leaves it.
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START
+# Second visit to character select (the first leaves at ~237): each hand moves off its fighter and
+# picks another, then P1 presses START until the game moves on; stage select takes the cursor's.
+@scSelctCharacter 300 318 1 SX=255
+@scSelctCharacter 330 333 1 A
+@scSelctCharacter 340 352 2 SX=0
+@scSelctCharacter 362 365 2 A
+@scSelctCharacter mash 400 99999 1 45 START
+@scSelStage mash 200 99999 1 40 A

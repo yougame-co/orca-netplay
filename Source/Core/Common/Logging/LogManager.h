@@ -59,6 +59,8 @@ public:
   void Log(LogLevel level, LogType type, const char* file, int line, const char* message);
   void LogWithFullPath(LogLevel level, LogType type, const char* file, int line,
                        const char* message);
+  // A diagnostic for the log file only, with the same category and verbosity checks.
+  void LogToFile(LogLevel level, LogType type, const char* message);
 
   // Use this function instead of LOGGER_VERBOSITY to determine which logs should be printed.
   LogLevel GetEffectiveLogLevel() const;

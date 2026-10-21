@@ -1,0 +1,26 @@
+# Project+ v3.2 drop-in runs (Tools/orca/dropin-commands.py --pplus, cross-machine soaks): both
+# players pick and start only after the friend has plugged in. The Netplay Launcher reaches
+# character select at frame ~150 and a friend plugs in up to ~75 s after the host's boot, so the
+# first picks wait until 6,000 frames (100 s) into character select. A later visit (after a match)
+# keeps both picks, and P1's Start, pressed every 2 s there, goes straight to the next match.
+# Matches are fuzzed for both players; results go back to character select.
+# Rules count frames from entry into each scene (@scene).
+# A build without PPLUS32.patches first asks "Create save file for Project+?": P1 answers Yes.
+@scBoot mash 30 99999 1 40 A
+# Orca boots Project+ to its main menu (PPLUS32.patches): A through VERSUS to its character select.
+@muMenuMain:1 mash 30 99999 1 40 A
+@scSelctCharacter 6000 6003 1 A
+@scSelctCharacter 6010 6013 2 A
+@scSelctCharacter 6030 6056 1 SY=255
+@scSelctCharacter 6030 6056 2 SY=255
+@scSelctCharacter 6080 6083 1 A
+@scSelctCharacter 6090 6093 2 A
+@scSelctCharacter mash 660 99999 1 120 START
+@scSelStage 40 44 1 SY=255
+@scSelStage 60 63 1 A
+@scMelee fuzz 300 99999 1 11
+@scMelee fuzz 300 99999 2 22
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START

@@ -56,6 +56,7 @@
 #include "Core/IOS/VersionInfo.h"
 #include "Core/IOS/WFS/WFSI.h"
 #include "Core/IOS/WFS/WFSSRV.h"
+#include "Core/Orca/Profile.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/System.h"
 #include "Core/WiiRoot.h"
@@ -624,6 +625,32 @@ void EmulationKernel::AddStaticDevices()
   }
 }
 
+bool SessionAllowsDevice(std::string_view path)
+{
+  if (!path.starts_with("/dev/"))
+    return true;
+  // Sorted for the binary search. What Brawl and Project+ open from boot to a match's results
+  // (IOS + IOS_ES logs), plus the crypto devices and the stub slots IOS always has.
+  static constexpr std::string_view allowed[] = {
+      "/dev/aes",
+      "/dev/di",
+      "/dev/es",
+      "/dev/fs",
+      "/dev/net/kd/request",  // every request refused in a session (NetKDRequest.cpp)
+      "/dev/net/kd/time",
+      "/dev/net/ncd/manage",  // a fixed MAC address under determinism (MACUtils.cpp)
+      "/dev/sdio/slot0",      // a verified read-only image, or no card
+      "/dev/sdio/slot1",
+      "/dev/sha",
+      "/dev/stm/eventhook",
+      "/dev/stm/immediate",
+      "/dev/usb/oh1",
+      "/dev/usb/oh1/57e/305",  // the emulated Bluetooth stack; no Wii Remotes are connected
+  };
+  static_assert(std::ranges::is_sorted(allowed));
+  return std::ranges::binary_search(allowed, path);
+}
+
 s32 EmulationKernel::GetFreeDeviceID()
 {
   for (u32 i = 0; i < IPC_MAX_FDS; i++)
@@ -685,6 +712,14 @@ std::optional<IPCReply> EmulationKernel::OpenDevice(OpenRequest& request)
   else if (request.path.starts_with('/'))
   {
     device = GetDeviceByName("/dev/fs");
+  }
+
+  // Orca: the session device budget, checked after the lookup so an absent device answers exactly
+  // as an unknown one does.
+  if (device && Orca::SessionActive() && !SessionAllowsDevice(request.path))
+  {
+    WARN_LOG_FMT(IOS, "Orca session: {} is not available", request.path);
+    device = nullptr;
   }
 
   if (!device)
@@ -805,6 +840,14 @@ void EmulationKernel::EnqueueIPCReply(const Request& request, const s32 return_v
   memory.Write_U32(request.command, request.address + 8);
   // IOS also overwrites the command type with the reply type.
   memory.Write_U32(IPC_REPLY, request.address);
+  if (CoreTiming::g_rollback_event_trace)  // Orca: rollback diagnostics
+  {
+    const auto& device = request.fd < IPC_MAX_FDS ? m_fdmap[request.fd] : nullptr;
+    CoreTiming::g_rollback_event_trace->push_back(fmt::format(
+        "  reply {} cmd={} ret={} +{} at {} from={}", device ? device->GetDeviceName() : "?",
+        static_cast<u32>(request.command), return_value, cycles_in_future,
+        system.GetCoreTiming().GetTicks(), static_cast<int>(from)));
+  }
   system.GetCoreTiming().ScheduleEvent(cycles_in_future, s_event_enqueue, request.address, from);
 }
 
@@ -909,6 +952,12 @@ void EmulationKernel::DoState(PointerWrap& p)
           m_fdmap[i]->DoState(p);
           break;
         }
+      }
+      else
+      {
+        // A descriptor opened after the state was saved must not survive the load, or the next
+        // open returns a different fd than it did when the state was current.
+        m_fdmap[i].reset();
       }
     }
   }

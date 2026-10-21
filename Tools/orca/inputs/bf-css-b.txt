@@ -1,0 +1,20 @@
+# What B does on Brawl's Versus character select (ORCA.md "B only takes the token back up"), no
+# header (no locks): port 1 joins and puts its token on Mario; B for one frame (the token comes back
+# up), A (down again), B for two frames, A, then B held 300 frames from the token down (up on the
+# first frame, back to the menus 31 frames after the press began). Watch it with an ORCA_UX_PROBE
+# file of three lines:
+#   @* 0 watch [[[[805a0060]+4]+400]+44]+1f8 p1-inhand-fly
+#   @* 0 watch [[[[805a0060]+4]+400]+44]+1b8 p1-char
+#   @* 0 watch [[[[[805a0060]+4]+400]+44]+1a8]+80 p1-target
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain mash 30 99999 1 40 A
+@scSelctCharacter:1 53 56 1 A
+@scSelctCharacter:1 113 153 1 SY=255
+@scSelctCharacter:1 173 176 1 A
+@scSelctCharacter:1 230 230 1 B
+@scSelctCharacter:1 270 273 1 A
+@scSelctCharacter:1 330 331 1 B
+@scSelctCharacter:1 370 373 1 A
+@scSelctCharacter:1 430 730 1 B

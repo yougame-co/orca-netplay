@@ -1,0 +1,81 @@
+# The character select's buttons in a ranked queue2 set (ORCA.md "A only in the grid",
+# "Character order": A picks a character, Start locks it in), Brawl: game 1 as bf-queue2-ranked.txt
+# (the player's own character select, Link steered in for port 2, both ready, the strikes, port 2
+# walks off), the results, then game 2's character order, port 1 (the winner) first:
+#   - port 1 goes up over its own token (Mario), then right onto another character and presses A:
+#     the token is down on Mario, so nothing happens (it must not count as Mario's lock-in);
+#   - port 1's B takes the token up (one frame), A puts it on the new character, B again held on
+#     for 60 frames (the token comes up once, the held B never backs out), A again, then Start
+#     locks the pick in: final, port 2's turn; port 1's B and A then do nothing;
+#   - port 2's B takes its token up and stays held 140 frames with the token in the hand (no back
+#     out), A puts it down where the hand is, Start locks in: the stage select at once.
+# Game 2's stage select: port 1 skips its ban (Y), port 2 picks Battlefield (A).
+# Run with ORCA_TEST_QUEUE=ranked:solo ORCA_UX_TEST_NAMES=ada,bo YG_RESULTS=1
+# ORCA_TEST_SET_RULES=1,8 ORCA_TEST_QUEUE_PICK=<the solo character select's frame + 300>:3:2:-7.5:14.23:1532,
+# e.g. the sync test from the main menu on (YG_SYNCTEST=7 YG_SYNCTEST_FROM=1440).
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+# PLAY ONLINE, With Anyone, Ranked (one below Casual).
+@muMenuMain:1 120 123 1 DOWN
+@muMenuMain:1 170 173 1 A
+@muMenuMain:1 220 223 1 RIGHT
+@muMenuMain:1 270 273 1 A
+@muMenuMain:1 320 323 1 DOWN
+@muMenuMain:1 370 373 1 A
+@scSelctCharacter:1 113 153 1 SY=255
+@scSelctCharacter:1 173 176 1 A
+@scSelctCharacter:1 230 233 1 START
+@scSelctCharacter:1 mash 600 99999 1 30 START
+@scSelctCharacter:1 mash 620 99999 2 30 START
+# Game 1: strike Battlefield, Yoshi's Island, Lylat Cruise; the first striker picks Smashville.
+@scSelStage:1 40 59 1 SY=255
+@scSelStage:1 40 59 2 SY=255
+@scSelStage:1 62 64 1 SX=1
+@scSelStage:1 62 64 2 SX=1
+@scSelStage:1 75 77 1 X
+@scSelStage:1 75 77 2 X
+@scSelStage:1 85 90 1 SY=1
+@scSelStage:1 85 90 2 SY=1
+@scSelStage:1 100 102 1 X
+@scSelStage:1 100 102 2 X
+@scSelStage:1 110 117 1 SX=255
+@scSelStage:1 110 117 2 SX=255
+@scSelStage:1 125 127 1 X
+@scSelStage:1 125 127 2 X
+@scSelStage:1 135 141 1 SX=255
+@scSelStage:1 135 141 2 SX=255
+@scSelStage:1 142 146 1 SY=1
+@scSelStage:1 142 146 2 SY=1
+@scSelStage:1 175 177 1 A
+@scSelStage:1 175 177 2 A
+@scMelee 250 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START
+# Game 2: port 1 up over its own token, right onto another character, A (nothing: the token is
+# down on Mario).
+@scSelctCharacter:2 30 70 1 SY=255
+@scSelctCharacter:2 80 90 1 SX=255
+@scSelctCharacter:2 100 102 1 A
+# B takes the token up, A puts it on the new character; B held, A again; Start locks in.
+@scSelctCharacter:2 120 120 1 B
+@scSelctCharacter:2 140 142 1 A
+@scSelctCharacter:2 170 230 1 B
+@scSelctCharacter:2 250 252 1 A
+@scSelctCharacter:2 270 272 1 START
+# Locked in: port 1's B and A do nothing now.
+@scSelctCharacter:2 290 292 1 B
+@scSelctCharacter:2 300 302 1 A
+# Port 2: up into the grid, B (the token up), held on with it in the hand, A, Start.
+@scSelctCharacter:2 310 343 2 SY=255
+@scSelctCharacter:2 360 500 2 B
+@scSelctCharacter:2 520 522 2 A
+@scSelctCharacter:2 540 542 2 START
+# Game 2's stage select: port 1 skips its ban (Y); port 2 goes onto Battlefield and picks it.
+@scSelStage:2 40 42 1 Y
+@scSelStage:2 60 79 2 SY=255
+@scSelStage:2 82 84 2 SX=1
+@scSelStage:2 95 97 2 A
+@scMelee 250 99999 2 SX=1

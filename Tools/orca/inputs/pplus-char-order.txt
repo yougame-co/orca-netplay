@@ -1,0 +1,24 @@
+# Character order (CharOrder.h) on Project+'s boot character select, with ORCA_TEST_CHAR_ORDER
+# pplus:2:1 (port 1 picks first) or pplus:2:2 (port 2 first). Port 2 joins and puts its token on a
+# character; port 1 joins later, which starts the order with port 1's token in its hand.
+@scBoot mash 30 99999 1 40 A
+# Orca boots Project+ to its main menu (PPLUS32.patches): A through VERSUS to its character select.
+@muMenuMain:1 mash 30 99999 1 40 A
+@scSelctCharacter:1 60 63 2 A
+@scSelctCharacter:1 90 116 2 SY=255
+@scSelctCharacter:1 150 153 2 A
+@scSelctCharacter:1 200 203 1 A
+# Presses the order masks: port 2's Start and B, port 1's Start and B.
+@scSelctCharacter:1 240 243 2 START
+@scSelctCharacter:1 245 248 2 B
+@scSelctCharacter:1 250 253 1 START
+@scSelctCharacter:1 260 263 1 B
+# Port 1 moves up and presses A: its pick (pplus:2:1), masked on port 2's turn (pplus:2:2).
+@scSelctCharacter:1 270 296 1 SY=255
+@scSelctCharacter:1 320 323 1 A
+# Once port 2's 45 s are up (pplus:2:2), port 1 moves up and puts its token down; masked or gone
+# otherwise.
+@scSelctCharacter:1 2920 2946 1 SY=255
+@scSelctCharacter:1 3000 3003 1 A
+@scSelStage:1 40 44 1 SY=255
+@scSelStage:1 60 63 1 A

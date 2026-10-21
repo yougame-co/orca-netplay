@@ -1,0 +1,14 @@
+# bf-friend-leaves.txt in Project+ (ORCA_PROFILE=PPLUS32): ORCA_UX_TEST_PLUG_AT=320 (With Friends'
+# select at 354), ORCA_UX_TEST_UNPLUG_AT=554:3: port 3's panel empties at 554, and the fight at 691
+# has ports 1 and 2. YG_EXIT_AFTER=950.
+@scBoot mash 30 99999 1 40 A
+@scSelctCharacter:1 60 84 1 SY=255
+@scSelctCharacter:1 60 84 2 SY=255
+@scSelctCharacter:1 60 84 3 SY=255
+@scSelctCharacter:1 110 113 1 A
+@scSelctCharacter:1 120 123 2 A
+@scSelctCharacter:1 130 133 3 A
+@scSelctCharacter:1 260 263 1 START
+@scSelctCharacter:1 300 303 1 START
+@scSelStage:1 60 63 1 A
+@scSelStage:1 100 103 1 A

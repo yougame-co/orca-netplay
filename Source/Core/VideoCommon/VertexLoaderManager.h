@@ -4,7 +4,10 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 
@@ -57,6 +60,35 @@ NativeVertexFormat* GetCurrentVertexFormat();
 // Resolved pointers to array bases. Used by vertex loaders.
 extern Common::EnumMap<u8*, CPArray::TexCoord7> cached_arraybases;
 void UpdateVertexArrayPointers();
+
+// Orca: indexed vertex reads stay inside guest RAM. The guest picks each array's base, stride and
+// every index, so an element can lie past the end of MEM1 or MEM2; such a draw is dropped (no
+// emulated state depends on vertex loading). A draw whose elements are all in RAM is unaffected.
+struct IndexedRead
+{
+  CPArray array = CPArray::Position;
+  u8 index_bytes = 1;    // 1 or 2
+  u8 src_offset = 0;     // where the index is in a raw vertex
+  u8 extent = 0;         // bytes read from index * stride on
+  bool skip_max = false;  // Position: the largest index skips the vertex, unread by the JITs
+  bool reads_before = false;  // RGBA6666: the JIT loaders read from one byte before the element
+};
+constexpr std::size_t MAX_INDEXED_READS = 14;  // a position, 3 normals, 2 colors, 8 coordinates
+// Every indexed read a vertex with this description makes, and (vertex_bytes) the raw vertex's
+// size as these offsets count it. nullopt for a layout the loaders don't agree on: a color in one
+// of the two invalid formats (no game uses them; Dolphin raises a panic alert for them), whose
+// draws are dropped.
+std::optional<std::size_t> GetIndexedReads(const TVtxDesc& vtx_desc, const VAT& vtx_attr,
+                                           std::array<IndexedRead, MAX_INDEXED_READS>* reads,
+                                           u32* vertex_bytes = nullptr);
+// The loaders read whole words: past the last element's bytes, at most this many more.
+constexpr u32 INDEXED_OVERREAD = 4;
+// Whether `count` raw vertices at `src` read only within each array's room: `room` bytes from its
+// base to the end of what is readable, over-read included; `before` bytes of RAM before the base.
+bool IndexedReadsFit(std::span<const IndexedRead> reads, const u8* src, u32 count, u32 vertex_size,
+                     const Common::EnumMap<u32, CPArray::XF_D>& strides,
+                     const Common::EnumMap<u32, CPArray::TexCoord7>& room,
+                     const Common::EnumMap<u32, CPArray::TexCoord7>& before);
 
 // Position cache for zfreeze (3 vertices, 4 floats each to allow SIMD overwrite).
 // These arrays are in reverse order.

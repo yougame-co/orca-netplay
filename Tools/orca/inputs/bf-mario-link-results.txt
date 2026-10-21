@@ -1,0 +1,26 @@
+# Boot to a 2-minute Mario (P1) vs Link (P2) match on Battlefield, then fuzzed play.
+# Rules count frames from entry into each scene (@scene), so menu timing can drift.
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain mash 30 99999 1 40 A
+# Character select: both join, move up to the top row, P1 takes Mario, P2 Link, P1 starts.
+@scSelctCharacter 53 56 1 A
+@scSelctCharacter 83 86 2 A
+@scSelctCharacter 113 153 1 SY=255
+@scSelctCharacter 113 153 2 SY=255
+@scSelctCharacter 173 176 1 A
+@scSelctCharacter 193 196 2 A
+@scSelctCharacter 233 236 1 START
+# Stage select: up to the top row, one step left onto Battlefield.
+@scSelStage 35 73 1 SY=255
+@scSelStage 75 78 1 SX=0
+@scSelStage 95 98 1 A
+# The match: both players fuzzed after the countdown.
+@scMelee fuzz 400 99999 1 11
+@scMelee fuzz 400 99999 2 22
+# Results screen: both players press A, then START, until the game leaves it.
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START

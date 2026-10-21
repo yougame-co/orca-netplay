@@ -288,7 +288,7 @@ public:
   }
 
   template <typename T>
-  void DoPointer(T*& x, T* const base)
+  bool DoPointer(T*& x, T* const base, size_t count)
   {
     // pointers can be more than 2^31 apart, but you're using this function wrong if you need that
     // much range
@@ -296,21 +296,34 @@ public:
     Do(offset);
     if (IsReadMode())
     {
+      if (offset < 0 || static_cast<size_t>(offset) > count)
+      {
+        SetMeasureMode();
+        return false;
+      }
       x = base + offset;
     }
+    return true;
   }
 
-  void DoPointer(void*& x, void* const base)
+  bool DoPointer(void*& x, void* const base, size_t count)
   {
     auto* ptr = static_cast<u8*>(x);
-    DoPointer(ptr, static_cast<u8*>(base));
+    if (!DoPointer(ptr, static_cast<u8*>(base), count))
+      return false;
     x = ptr;
+    return true;
   }
+
+  // Rollback harness diagnostics: when set, DoMarker records (name, write position) in write mode.
+  static inline std::vector<std::pair<std::string, const u8*>>* s_marker_log = nullptr;
 
   void DoMarker(const std::string& prevName, u32 arbitraryNumber = 0x42)
   {
     u32 cookie = arbitraryNumber;
     Do(cookie);
+    if (s_marker_log && IsWriteMode())
+      s_marker_log->emplace_back(prevName, *m_ptr_current);
 
     if (IsReadMode() && cookie != arbitraryNumber)
     {
