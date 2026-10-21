@@ -20,6 +20,8 @@
 #include "Core/HW/Memmap.h"
 #include "Core/IOS/IOS.h"
 #include "Core/IOS/VersionInfo.h"
+#include "Core/Orca/Profile.h"
+#include "Core/Rollback/Cow.h"
 #include "Core/System.h"
 
 namespace IOS::HLE
@@ -54,7 +56,9 @@ void SDIOSlot0Device::RefreshConfig()
 void SDIOSlot0Device::DoState(PointerWrap& p)
 {
   Device::DoState(p);
-  if (p.IsReadMode())
+  // Orca: a rollback load keeps the session's card open rather than reopening it by path (the path
+  // is the verified image, and the file must not be swapped mid-session).
+  if (p.IsReadMode() && !(Orca::SessionActive() && m_card.IsOpen()))
   {
     OpenInternal();
   }
@@ -87,6 +91,18 @@ void SDIOSlot0Device::EventNotify()
 void SDIOSlot0Device::OpenInternal()
 {
   const std::string filename = File::GetUserPath(F_WIISDCARDIMAGE_IDX);
+  // Orca: a session without a card opens none (not the player's own); a session's card is a
+  // verified image it must never change (writes are refused), and a missing one is an error, not a
+  // reason to make a blank card.
+  if (Orca::SessionActive() && !Config::Get(Config::MAIN_WII_SD_CARD))
+    return;
+  if (Orca::SessionActive() && !Config::Get(Config::MAIN_ALLOW_SD_WRITES))
+  {
+    m_card.Open(filename, "rb");
+    if (!m_card)
+      ERROR_LOG_FMT(IOS_SD, "Orca: could not open the session's SD card image {}", filename);
+    return;
+  }
   m_card.Open(filename, "r+b");
   if (!m_card)
   {
@@ -288,7 +304,10 @@ s32 SDIOSlot0Device::ExecuteCommand(const Request& request, u32 buffer_in, u32 b
     if (!m_card.Seek(address, File::SeekOrigin::Begin))
       ERROR_LOG_FMT(IOS_SD, "Seek failed");
 
-    if (m_card.ReadBytes(memory.GetPointerForRange(req.addr, size), size))
+    u8* const buffer = memory.GetPointerForRange(req.addr, size);
+    // Guest RAM, which the read() under fread fills without faulting.
+    Rollback::Cow::PrepareHostWrite(buffer, buffer ? size : 0);
+    if (m_card.ReadBytes(buffer, size))
     {
       DEBUG_LOG_FMT(IOS_SD, "Outbuffer size {} got {}", rw_buffer_size, size);
     }

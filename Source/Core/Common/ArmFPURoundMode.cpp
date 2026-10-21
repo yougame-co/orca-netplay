@@ -48,8 +48,12 @@ void SetSIMDMode(RoundMode rounding_mode, bool non_ieee_mode)
   // On CPUs with FEAT_AFP support, setting AH = 1, FZ = 1, FIZ = 0 emulates the GC/Wii CPU's
   // "non-IEEE mode". Unfortunately, FEAT_AFP didn't exist until 2020, so we can't count on setting
   // AH actually doing anything. But flushing both inputs and outputs seems to cause less problems
-  // than flushing nothing, so let's just set FZ and AH and roll with whatever behavior we get.
-  const u32 flush_to_zero_bits = (non_ieee_mode ? FZ | AH : 0);
+  // than flushing nothing, so let's just set FZ and roll with whatever behavior we get.
+  //
+  // Orca: set AH only where the CPU has it (elsewhere it is ignored anyway), so ORCA_TEST_NO_AFP
+  // makes an AFP CPU flush like an M1 to M3. Sessions handle the CPUs' NaN and denormal
+  // differences in JitArm64::DenormalInputsFlushed and the JITs' accurate-NaN paths.
+  const u32 flush_to_zero_bits = (non_ieee_mode ? (cpu_info.bAFP ? FZ | AH : FZ) : 0);
   static bool afp_warning_shown = false;
   if (!afp_warning_shown && !cpu_info.bAFP && non_ieee_mode)
   {

@@ -1,0 +1,39 @@
+# Game 1 of a ranked queue2 set in one run, Project+ (ORCA_PROFILE=PPLUS32):
+# boot -> the main menu -> PLAY ONLINE > With Anyone > Ranked -> the player's own character select
+# (the solo header): port 1 picks and presses Start (ready) -> from ORCA_TEST_QUEUE_PICK's frame
+# port 2 plugs in with its pick and rating, the header becomes the room's and the pick is steered in
+# -> both ready -> Orca presses Start -> game 1's strikes by X (port 1 Battlefield; port 2 Bowser's
+# Castle and the stage to its right; then port 1's pick with A, or its timer) -> the match starts.
+# Run with ORCA_TEST_QUEUE=ranked:solo ORCA_UX_TEST_NAMES=ada,bo YG_RESULTS=1
+# ORCA_TEST_QUEUE_PICK=<the solo character select's frame + 300>:43:2:-7.4:7.7:1532.
+# Both ports send the same stage select inputs: only the turn's port acts (the input gate).
+@scBoot mash 30 99999 1 40 A
+# PLAY ONLINE, With Anyone, Ranked (one below Casual).
+@muMenuMain:1 120 123 1 DOWN
+@muMenuMain:1 170 173 1 A
+@muMenuMain:1 220 223 1 RIGHT
+@muMenuMain:1 270 273 1 A
+@muMenuMain:1 320 323 1 DOWN
+@muMenuMain:1 370 373 1 A
+@scSelctCharacter:1 90 116 1 SY=255
+@scSelctCharacter:1 140 143 1 A
+@scSelctCharacter:1 200 203 1 START
+@scSelctCharacter:1 mash 600 99999 1 30 START
+@scSelctCharacter:1 mash 620 99999 2 30 START
+@scSelStage:1 40 43 1 SY=255
+@scSelStage:1 40 43 2 SY=255
+@scSelStage:1 60 62 1 X
+@scSelStage:1 60 62 2 X
+@scSelStage:1 80 83 1 SY=255
+@scSelStage:1 80 83 2 SY=255
+@scSelStage:1 100 102 1 X
+@scSelStage:1 100 102 2 X
+@scSelStage:1 120 123 1 SX=255
+@scSelStage:1 120 123 2 SX=255
+@scSelStage:1 140 142 1 X
+@scSelStage:1 140 142 2 X
+@scSelStage:1 160 163 1 SY=1
+@scSelStage:1 160 163 2 SY=1
+@scSelStage:1 180 182 1 A
+@scSelStage:1 180 182 2 A
+@scMelee 250 99999 2 SX=1

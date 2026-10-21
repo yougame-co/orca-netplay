@@ -186,6 +186,9 @@ private:
 //
 // Device qualifier used to match devices.
 // Currently has ( source, id, name ) properties which match a device
+// Orca: the name "*" matches any device of that source and id, so a shipped default mapping can
+// name a gamepad it hasn't seen. Ids count per model, so "SDL/0/*" is the first-listed SDL device
+// that is the first of its model: with two different gamepads connected, either may be picked.
 //
 class DeviceQualifier
 {

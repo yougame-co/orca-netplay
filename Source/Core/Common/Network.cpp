@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstdlib>
 #include <string_view>
 #include <vector>
 
@@ -28,6 +29,14 @@
 
 namespace Common
 {
+bool OfflineReplay()
+{
+  const char* source = std::getenv("ORCA_REPLAY_SOURCE");
+  if (!source || !*source)
+    return false;
+  const std::string_view value(source);
+  return !value.starts_with("ws://") && !value.starts_with("wss://");
+}
 
 static constexpr auto GetMaskFromNetworkPrefixLength(u32 network_prefix_length)
 {

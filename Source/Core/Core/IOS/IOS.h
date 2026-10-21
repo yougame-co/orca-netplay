@@ -116,6 +116,13 @@ void RAMOverrideForIOSMemoryValues(Memory::MemoryManager& memory, MemorySetupTyp
 
 void WriteReturnValue(Memory::MemoryManager& memory, s32 value, u32 address);
 
+// Orca: the device budget. In an Orca session (Orca::SessionActive) the guest may open only the
+// resource managers the session's games need: storage, the disc, ES, STM, the SD slot (a read-only
+// image or none), the emulated Bluetooth stack and the network devices whose every request is
+// refused. Every other device (USB, keyboard, WFS, the network stack, /dev/dolphin) is absent,
+// whichever IOS the guest reloads into. Paths outside /dev/ (NAND files) are not devices.
+bool SessionAllowsDevice(std::string_view path);
+
 // HLE for the IOS kernel: IPC, device management, syscalls, and Dolphin-specific, IOS-wide calls.
 class Kernel
 {

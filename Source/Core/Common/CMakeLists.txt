@@ -37,6 +37,7 @@ add_library(common
   Config/Layer.h
   Contains.h
   CPUDetect.h
+  CurlTLS.h
   Crypto/AES.cpp
   Crypto/AES.h
   Crypto/bn.cpp
@@ -101,6 +102,8 @@ add_library(common
   Lazy.h
   LinearDiskCache.h
   UnixUtil.h
+  LocaleUtil.cpp
+  LocaleUtil.h
   Logging/ConsoleListener.h
   Logging/Log.h
   Logging/LogManager.cpp
@@ -164,6 +167,8 @@ add_library(common
   Version.cpp
   Version.h
   WaitableFlag.h
+  WebSocket.cpp
+  WebSocket.h
   WindowSystemInfo.h
   WorkQueueThread.h
 )

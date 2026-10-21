@@ -17,6 +17,7 @@
 #include "Common/Timer.h"
 
 #include "Core/Config/MainSettings.h"
+#include "Core/Orca/Branding.h"
 
 #include "VideoCommon/AbstractGfx.h"
 #include "VideoCommon/AbstractTexture.h"
@@ -33,6 +34,8 @@ constexpr float MESSAGE_DROP_TIME = 5000.f;  // Ms to drop OSD messages that has
 
 static std::atomic<int> s_obscured_pixels_left = 0;
 static std::atomic<int> s_obscured_pixels_top = 0;
+// Orca: see MessagesBottom().
+static std::atomic<float> s_messages_bottom = 0;
 
 struct Message
 {
@@ -142,14 +145,51 @@ void AddTypedMessage(MessageType type, std::string message, u32 ms, u32 argb,
   for (auto it = range.first; it != range.second; ++it)
     it->second.should_discard = true;
 
-  s_messages.emplace(type, Message(std::move(message), ms, argb, icon));
+  s_messages.emplace(type, Message(Orca::BrandText(message), ms, argb, icon));
+}
+
+void DiscardTypedMessage(MessageType type)
+{
+  std::lock_guard lock{s_messages_mutex};
+  // Like AddTypedMessage: the message is removed at the next DrawMessages().
+  auto range = s_messages.equal_range(type);
+  for (auto it = range.first; it != range.second; ++it)
+    it->second.should_discard = true;
 }
 
 void AddMessage(std::string message, u32 ms, u32 argb,
                 const VideoCommon::CustomTextureData::ArraySlice::Level* icon)
 {
   std::lock_guard lock{s_messages_mutex};
-  s_messages.emplace(MessageType::Typeless, Message(std::move(message), ms, argb, icon));
+  s_messages.emplace(MessageType::Typeless, Message(Orca::BrandText(message), ms, argb, icon));
+}
+
+namespace
+{
+std::mutex s_host_overlay_mutex;
+std::function<void()> s_host_overlay;
+std::function<void()> s_host_overlay_release;
+}  // namespace
+
+void SetHostOverlay(std::function<void()> draw, std::function<void()> release)
+{
+  std::lock_guard lock{s_host_overlay_mutex};
+  s_host_overlay = std::move(draw);
+  s_host_overlay_release = std::move(release);
+}
+
+void DrawHostOverlay()
+{
+  std::lock_guard lock{s_host_overlay_mutex};
+  if (s_host_overlay)
+    s_host_overlay();
+}
+
+void ReleaseHostOverlay()
+{
+  std::lock_guard lock{s_host_overlay_mutex};
+  if (s_host_overlay_release)
+    s_host_overlay_release();
 }
 
 void DrawMessages()
@@ -188,6 +228,12 @@ void DrawMessages()
     if (draw_messages)
       current_y += DrawMessage(index++, msg, ImVec2(current_x, current_y), time_left);
   }
+  s_messages_bottom = index > 0 ? current_y : 0.0f;
+}
+
+float MessagesBottom()
+{
+  return s_messages_bottom;
 }
 
 void ClearMessages()

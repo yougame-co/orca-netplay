@@ -1,0 +1,25 @@
+# Super Smash Bros. Brawl (RSBE01) for Tools/orca/dropin-identity.py: each Orca joins port 1 of its
+# own game's character select at once (its YouGame tag, whose controls the test then sets), the
+# friend drops in (it boots once the host has set its controls, ~30 s in, and joins ~30 s later),
+# and only then do both pick: P2 joins port 2 70 s into character select, Mario (P1) and Link (P2)
+# as bf-mario-link-results.txt, P1 starts, Battlefield, fuzzed play.
+# Rules count frames from entry into each scene (@scene).
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain mash 30 99999 1 40 A
+@scSelctCharacter 53 56 1 A
+@scSelctCharacter 4200 4203 2 A
+@scSelctCharacter 4240 4280 1 SY=255
+@scSelctCharacter 4240 4280 2 SY=255
+@scSelctCharacter 4300 4303 1 A
+@scSelctCharacter 4320 4323 2 A
+@scSelctCharacter mash 4400 99999 1 60 START
+# Stage select takes input only ~150 frames in after this long a character select: up to the top
+# row and one step left onto Battlefield then, else whatever the cursor is on.
+@scSelStage 200 238 1 SY=255
+@scSelStage 240 243 1 SX=0
+@scSelStage 260 263 1 A
+@scSelStage mash 400 99999 1 40 A
+@scMelee fuzz 400 99999 1 11
+@scMelee fuzz 400 99999 2 22

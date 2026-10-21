@@ -24,6 +24,7 @@ typedef SSIZE_T ssize_t;
 
 #include "Common/Assert.h"
 #include "Common/Logging/Log.h"
+#include "Common/Network.h"
 #include "Common/SocketContext.h"
 #include "Core/Core.h"
 #include "Core/HW/CPU.h"
@@ -1050,6 +1051,9 @@ static void InitGeneric(int domain, const sockaddr* server_addr, socklen_t serve
 #ifndef _WIN32
 void InitLocal(const char* socket)
 {
+  if (Common::OfflineReplay())
+    return;
+
   unlink(socket);
 
   sockaddr_un addr = {};
@@ -1062,6 +1066,9 @@ void InitLocal(const char* socket)
 
 void Init(u32 port)
 {
+  if (Common::OfflineReplay())
+    return;
+
   sockaddr_in saddr_server = {};
   sockaddr_in saddr_client;
 

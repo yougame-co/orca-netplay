@@ -46,6 +46,7 @@
 #include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PPCAnalyst.h"
 #include "Core/PowerPC/PowerPC.h"
+#include "Core/Rollback/Diag.h"
 #include "Core/System.h"
 
 using namespace Gen;
@@ -420,9 +421,18 @@ void Jit64::HLEFunction(u32 hook_index)
 {
   gpr.Flush();
   fpr.Flush();
+  // See JitArm64::HLEFunction: settle pending cycles before the rollback frame boundary hook.
+  if (HLE::NeedsExactTime(hook_index))
+  {
+    SUB(32, PPCSTATE(downcount), Imm32(js.downcountAmount));
+    js.downcountAmount = 0;
+  }
   ABI_PushRegistersAndAdjustStack({}, 0);
   ABI_CallFunctionCCP(HLE::ExecuteFromJIT, js.compilerPC, hook_index, &m_system);
   ABI_PopRegistersAndAdjustStack({}, 0);
+  // See JitArm64::HLEFunction: a snapshot load replaces every register.
+  if (HLE::NeedsExactTime(hook_index))
+    m_constant_propagation.Clear();
 }
 
 void Jit64::DoNothing(UGeckoInstruction _inst)
@@ -793,10 +803,14 @@ void Jit64::Jit(u32 em_address, bool clear_cache_and_retry_on_failure)
     if (!SConfig::GetInstance().bJITNoBlockCache)
     {
       WARN_LOG_FMT(DYNA_REC, "flushing trampoline code cache, please report if this happens a lot");
+      if (Rollback::Diag::g_jit_code_log)
+        Rollback::Diag::JitCodeNote("trampolines full");
     }
     ClearCache();
   }
-  FreeRanges();
+  // Orca: not from a hook (JitBase::CompileFromHook).
+  if (!m_compiling_from_hook)
+    FreeRanges();
 
   std::size_t block_size = m_code_buffer.size();
 
@@ -846,7 +860,23 @@ void Jit64::Jit(u32 em_address, bool clear_cache_and_retry_on_failure)
     u8* far_start = m_far_code.GetWritableCodePtr();
 
     JitBlock* b = blocks.AllocateBlock(em_address);
-    if (DoJit(em_address, b, nextPC))
+    const bool compiled = DoJit(em_address, b, nextPC);
+    if (!compiled && m_compiling_from_hook)
+    {
+      // Orca: never clear the cache under the hook's caller (JitBase::CompileFromHook). Drop the
+      // unfinished block and what its partial code registered; that code is in free space.
+      blocks.DiscardUnfinalizedBlock(*b);
+      const auto in_partial_code = [&](const u8* p) {
+        return (p >= near_start && p < GetCodeEnd()) ||
+               (p >= far_start && p < m_far_code.GetCodeEnd());
+      };
+      std::erase_if(m_back_patch_info, [&](const auto& kv) { return in_partial_code(kv.first); });
+      std::erase_if(m_exception_handler_at_loc,
+                    [&](const auto& kv) { return in_partial_code(kv.first); });
+      m_hook_compile_dropped = true;
+      return;
+    }
+    if (compiled)
     {
       // Code generation succeeded.
 
@@ -873,12 +903,19 @@ void Jit64::Jit(u32 em_address, bool clear_cache_and_retry_on_failure)
       return;
     }
   }
+  else if (m_compiling_from_hook)
+  {
+    m_hook_compile_dropped = true;  // no free code region: as above, never clear here
+    return;
+  }
 
   if (clear_cache_and_retry_on_failure)
   {
     // Code generation failed due to not enough free space in either the near or far code regions.
     // Clear the entire JIT cache and retry.
     WARN_LOG_FMT(DYNA_REC, "flushing code caches, please report if this happens a lot");
+    if (Rollback::Diag::g_jit_code_log)
+      Rollback::Diag::JitCodeNote("code space full");
     ClearCache();
     Jit(em_address, false);
     return;
@@ -1293,6 +1330,35 @@ void Jit64::EraseSingleBlock(const JitBlock& block)
 std::vector<JitBase::MemoryStats> Jit64::GetMemoryStats() const
 {
   return {{"near", m_free_ranges_near.get_stats()}, {"far", m_free_ranges_far.get_stats()}};
+}
+
+bool Jit64::CanCompileFromHook() const
+{
+  // Far more than any block: Common::CodeBlock::IsAlmostFull counts 64 KiB as more than the biggest
+  // block ever.
+  constexpr std::size_t ROOM = 1024 * 1024;
+  const auto largest = [](const Common::RangeSizeSet<u8*>& ranges) -> std::size_t {
+    const auto it = ranges.by_size_begin();
+    return it == ranges.by_size_end() ? 0 : static_cast<std::size_t>(it.to() - it.from());
+  };
+  // Jit() clears the cache when the trampolines are almost full or a stack fault is pending.
+  return !m_cleanup_after_stackfault && !IsDebuggingEnabled() &&
+         !SConfig::GetInstance().bJITNoBlockCache && !trampolines.IsAlmostFull() &&
+         largest(m_free_ranges_near) >= ROOM && largest(m_free_ranges_far) >= ROOM;
+}
+
+void Jit64::ReserveForBlocks(std::size_t count)
+{
+  // One entry per compiled fastmem load or store, kept until the cache clears: about 11 per block.
+  // A rehash mid-match costs tens of ms (a dropped frame), so reserve 16 per block up front, which
+  // leaves room for blocks that rollbacks recompile. Only ever grown: shrinking would rehash too.
+  constexpr std::size_t PER_BLOCK = 16;
+  const std::size_t wanted = m_back_patch_info.size() + count * PER_BLOCK;
+  if (static_cast<float>(wanted) >
+      m_back_patch_info.max_load_factor() * static_cast<float>(m_back_patch_info.bucket_count()))
+  {
+    m_back_patch_info.reserve(wanted);
+  }
 }
 
 std::size_t Jit64::DisassembleNearCode(const JitBlock& block, std::ostream& stream) const

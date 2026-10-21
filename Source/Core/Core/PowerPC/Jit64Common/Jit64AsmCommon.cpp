@@ -220,8 +220,10 @@ void CommonAsmRoutines::GenFres()
   // This function clobbers all three RSCRATCH.
   MOVQ_xmm(R(RSCRATCH), XMM0);
 
-  // Zero inputs set an exception and take the complex path.
-  TEST(64, R(RSCRATCH), R(RSCRATCH));
+  // Zero inputs set an exception and take the complex path. Orca: -0.0 too (shift the sign out),
+  // as the interpreter and JitArm64 do, so fres(-0.0) sets FPSCR.ZX and FX.
+  MOV(64, R(RSCRATCH_EXTRA), R(RSCRATCH));
+  SHL(64, R(RSCRATCH_EXTRA), Imm8(1));
   FixupBranch zero = J_CC(CC_Z);
 
   MOV(64, R(RSCRATCH_EXTRA), R(RSCRATCH));

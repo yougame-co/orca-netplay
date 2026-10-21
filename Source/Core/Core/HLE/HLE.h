@@ -75,6 +75,10 @@ HookFlag GetHookFlagsByIndex(u32 index);
 
 bool IsEnabled(HookFlag flag, PowerPC::CoreMode mode);
 
+// True for hooks that must see the exact emulated time when they run (the JIT settles the block's
+// pending cycles before calling them): the rollback frame boundary.
+bool NeedsExactTime(u32 hook_index);
+
 // Performs the backend-independent preliminary checking for whether a function
 // can be HLEd. If it can be, the information needed for HLEing it is returned.
 TryReplaceFunctionResult TryReplaceFunction(PPCSymbolDB& ppc_symbol_db, u32 address,

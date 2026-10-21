@@ -1,0 +1,39 @@
+# Project+ ranked set under the harness (ORCA.md "Ranked steps"): ORCA_PROFILE=PPLUS32,
+# ORCA_TEST_QUEUE=ranked:1 (game 1's first striker is port 2), ORCA_UX_TEST_NAMES=ada,bo (ports 1 and 2
+# plugged in). No probe: every strike and pick is the game's own, through the cursor or a timer.
+# The stage select's cursor starts on Random; one short push up puts it on Battlefield, another on
+# Bowser's Castle (the 2024 Proposed preset's page 0).
+# Game 1: port 2 strikes Battlefield with X; port 1's two strikes run out (PS2 and Smashville);
+# port 2's pick runs out (Luigi's Mansion, the first left, picked with a pressed A). Port 2 walks
+# off; port 1 wins.
+# Game 2: on the character select both press A on their player-type buttons (masked); port 1 (the
+# winner) strikes Battlefield and Bowser's Castle with X; port 2's pick runs out (PS2). Port 1 wins
+# again: 2-0, and the third stage select is free.
+@scBoot mash 30 99999 1 40 A
+# Orca boots Project+ to its main menu (PPLUS32.patches): A through VERSUS to its character select.
+@muMenuMain:1 mash 30 99999 1 40 A
+@scSelctCharacter:1 60 63 1 A
+@scSelctCharacter:1 70 73 2 A
+@scSelctCharacter:1 90 116 1 SY=255
+@scSelctCharacter:1 90 116 2 SY=255
+@scSelctCharacter:1 140 143 1 A
+@scSelctCharacter:1 150 153 2 A
+@scSelctCharacter:1 200 203 1 START
+@scSelStage:1 40 43 2 SY=255
+@scSelStage:1 60 62 2 X
+@scSelStage:2 40 43 1 SY=255
+@scSelStage:2 60 62 1 X
+@scSelStage:2 80 83 1 SY=255
+@scSelStage:2 100 102 1 X
+@scMelee 60 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START
+@scSelctCharacter:2 80 83 1 START
+# Game 2's hands come back on their own player-type buttons, where A would make the player a CPU:
+# the winner presses A there on its turn, the loser on its own (from about 2700 frames in). The
+# online rules pass A only in the grid, so both stay human and both picks run out as before.
+@scSelctCharacter:2 30 33 1 A
+@scSelctCharacter:2 2800 2803 2 A
+@scSelctCharacter:3 80 83 1 START

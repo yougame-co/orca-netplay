@@ -1,0 +1,28 @@
+# ORCA_UX_PROBE file (ORCA.md "No CPUs online"): on the first main menu, before anything goes
+# online, writes Project+'s record of the character select's players as local Versus leaves it
+# with CPUs on ports 2 and 3 (gmSelCharData, [0x805A00E0]+0x10; each port +0xB8 + port x 0x5C: the
+# character, then the state, 0 a human, 1 a CPU, 3 nobody). Project+ never resets that record, so
+# Orca must clear it before an online select builds its panels. For harness runs (with
+# ORCA_TEST_QUEUE=ranked:solo and pplus-queue2-ranked.txt) and two-Orca runs (queue-e2e.mjs
+# --probe). The watches log what the select and the fight make of it.
+@muMenuMain:1 30 write [[805a00e0]+10]+114 3301
+@muMenuMain:1 30 write [[805a00e0]+10]+170 1e01
+# The panels' kinds (+0x1B4: 0 empty, 1 human, 2 CPU)
+@* 0 watch [[[[805a0060]+4]+400]+44]+1b4 a1-kind
+@* 0 watch [[[[805a0060]+4]+400]+48]+1b4 a2-kind
+@* 0 watch [[[[805a0060]+4]+400]+4c]+1b4 a3-kind
+@* 0 watch [[[[805a0060]+4]+400]+50]+1b4 a4-kind
+# The record's players and the fight's (character, state)
+@* 0 watch [[805a00e0]+10]+b8 sc1
+@* 0 watch [[805a00e0]+10]+114 sc2
+@* 0 watch [[805a00e0]+10]+170 sc3
+@* 0 watch [[805a00e0]+10]+1cc sc4
+@* 0 watch [[805a00e0]+8]+98 mm1
+@* 0 watch [[805a00e0]+8]+f4 mm2
+@* 0 watch [[805a00e0]+8]+150 mm3
+@* 0 watch [[805a00e0]+8]+1ac mm4
+# Each panel's first model's draw flags (0xA0000000 drawn, 0xA0000060 hidden)
+@* 0 watch [[[[[[805a0060]+4]+400]+44]+b0]+c]+cc a1-flags
+@* 0 watch [[[[[[805a0060]+4]+400]+48]+b0]+c]+cc a2-flags
+@* 0 watch [[[[[[805a0060]+4]+400]+4c]+b0]+c]+cc a3-flags
+@* 0 watch [[[[[[805a0060]+4]+400]+50]+b0]+c]+cc a4-flags

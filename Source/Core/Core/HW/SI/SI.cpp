@@ -553,6 +553,24 @@ void SerialInterfaceManager::UpdateDevices()
   NetPlay::SetSIPollBatching(false);
 }
 
+void SerialInterfaceManager::RelatchInputs()
+{
+  // Orca: the game reads each channel's buffer a few ms after the frame hook, when the poll just
+  // before the hook set RDST. Writing the buffer here, without touching status bits or interrupts,
+  // puts this frame's session pads into that read. See ORCA.md, "Input latency".
+  // Verified for Brawl and Project+ only: a new game must be checked to read RDST the same way.
+  for (u32 i = 0; i != MAX_SI_CHANNELS; ++i)
+  {
+    u32 hi = 0, lo = 0;
+    if (m_channel[i].device->GetData(hi, lo) != DataResponse::Success)
+      continue;
+    const u32 errlatch = m_channel[i].in_hi.ERRLATCH.Value();
+    m_channel[i].in_hi.hex = hi;
+    m_channel[i].in_lo.hex = lo;
+    m_channel[i].in_hi.ERRLATCH = errlatch;
+  }
+}
+
 SIDevices SerialInterfaceManager::GetDeviceType(int channel) const
 {
   if (channel < 0 || channel >= MAX_SI_CHANNELS || !m_channel[channel].device)
