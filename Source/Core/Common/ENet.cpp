@@ -5,11 +5,15 @@
 
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
+#include "Common/Network.h"
 
 namespace Common::ENet
 {
 void WakeupThread(ENetHost* host)
 {
+  if (Common::OfflineReplay())
+    return;
+
   // Send ourselves a spurious message.  This is hackier than it should be.
   // comex reported this as https://github.com/lsalzman/enet/issues/23, so
   // hopefully there will be a better way to do it in the future.
@@ -39,6 +43,9 @@ int ENET_CALLBACK InterceptCallback(ENetHost* host, ENetEvent* event)
 
 bool SendPacket(ENetPeer* socket, const sf::Packet& packet, u8 channel_id)
 {
+  if (Common::OfflineReplay())
+    return false;
+
   if (!socket)
   {
     ERROR_LOG_FMT(NETPLAY, "Target socket is null.");

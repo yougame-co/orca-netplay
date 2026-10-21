@@ -12,6 +12,8 @@
 
 using namespace Gen;
 
+alignas(16) static const u64 psDefaultQNaN[2] = {0x7FF8000000000000ULL, 0x7FF8000000000000ULL};
+
 void Jit64::ps_mr(UGeckoInstruction inst)
 {
   INSTRUCTION_START
@@ -50,6 +52,34 @@ void Jit64::ps_sum(UGeckoInstruction inst)
   X64Reg tmp = XMM1;
   MOVDDUP(tmp, Ra);  // {a.ps0, a.ps0}
   ADDPD(tmp, Rb);    // {a.ps0 + b.ps0, a.ps0 + b.ps1}
+  if (m_accurate_nans)
+  {
+    // Orca: x86-64 picks among NaN inputs as PowerPC does for an addition (a.ps0 first), but
+    // inf - inf makes x86's default NaN, which is negative, where PowerPC's is positive. So a NaN
+    // a.ps0 + b.ps1 is redone by PowerPC's rules: a.ps0 or else b.ps1 made quiet, or the positive
+    // default NaN. (HandleNaNs can't: its paired form pairs each output lane with the same lane of
+    // the inputs.)
+    MOVHLPS(XMM0, tmp);
+    UCOMISD(XMM0, R(XMM0));
+    FixupBranch handle_nan = J_CC(CC_P, Jump::Near);
+    SwitchToFarCode();
+    SetJumpTarget(handle_nan);
+    MOVDDUP(XMM0, Ra);
+    UCOMISD(XMM0, R(XMM0));
+    FixupBranch a_nan = J_CC(CC_P);
+    MOVAPD(XMM0, Rb);
+    UNPCKHPD(XMM0, R(XMM0));
+    UCOMISD(XMM0, R(XMM0));
+    FixupBranch b_nan = J_CC(CC_P);
+    XORPD(XMM0, R(XMM0));  // finished into the default NaN below
+    SetJumpTarget(a_nan);
+    SetJumpTarget(b_nan);
+    ORPD(XMM0, MConst(psDefaultQNaN));  // quiet
+    UNPCKLPD(tmp, R(XMM0));             // {a.ps0 + b.ps0, the NaN}
+    FixupBranch done = J(Jump::Near);
+    SwitchToNearCode();
+    SetJumpTarget(done);
+  }
   switch (inst.SUBOP5)
   {
   case 10:  // ps_sum0: {a.ps0 + b.ps1, c.ps1}
@@ -64,8 +94,7 @@ void Jit64::ps_sum(UGeckoInstruction inst)
   default:
     PanicAlertFmt("ps_sum WTF!!!");
   }
-  // We're intentionally not calling HandleNaNs here.
-  // For addition and subtraction specifically, x86's NaN behavior matches PPC's.
+  // Not HandleNaNs: see above.
   FinalizeSingleResult(Rd, R(tmp));
 }
 

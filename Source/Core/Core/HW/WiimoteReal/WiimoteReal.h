@@ -115,6 +115,8 @@ protected:
   u8 m_bt_device_index = 0;
 
 private:
+  friend class WiimoteTestPeer;
+
   struct TimedReport
   {
     TimePoint time;

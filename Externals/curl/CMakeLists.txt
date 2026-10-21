@@ -50,6 +50,31 @@ endif()
 
 add_subdirectory(curl)
 
+# Let WebSocket::Connect read HTTP refusal bodies on the original request. curl otherwise
+# aborts at the headers; the client still requires a 101 before using the WebSocket API.
+# Compile a local copy so the vendored submodule stays unchanged.
+set(orca_http_source "${CMAKE_CURRENT_SOURCE_DIR}/curl/lib/http.c")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${orca_http_source}")
+file(READ "${orca_http_source}" orca_http)
+set(orca_ws_check "if(data->req.upgr101 == UPGR101_WS) {")
+string(FIND "${orca_http}" "${orca_ws_check}" orca_ws_check_at)
+if(orca_ws_check_at EQUAL -1)
+  message(FATAL_ERROR "curl WebSocket refusal handling changed; review the local body adjustment")
+endif()
+string(REPLACE "${orca_ws_check}"
+  "if(data->req.upgr101 == UPGR101_WS && k->httpcode < 400) {" orca_http "${orca_http}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/orca-http.c" "${orca_http}")
+if(TARGET libcurl_object)
+  set(orca_curl_target libcurl_object)
+else()
+  set(orca_curl_target libcurl_static)
+endif()
+get_target_property(orca_curl_sources ${orca_curl_target} SOURCES)
+list(FILTER orca_curl_sources EXCLUDE REGEX "(^|/)http\\.c$")
+list(APPEND orca_curl_sources "${CMAKE_CURRENT_BINARY_DIR}/orca-http.c")
+set_property(TARGET ${orca_curl_target} PROPERTY SOURCES "${orca_curl_sources}")
+target_include_directories(${orca_curl_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/curl/lib")
+
 if(UNIX AND NOT MBEDTLS_FOUND)
   # HACK: Manually link with the mbedtls libraries.
   target_link_libraries(libcurl_static PRIVATE

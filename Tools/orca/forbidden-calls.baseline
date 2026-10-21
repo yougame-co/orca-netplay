@@ -1,0 +1,877 @@
+# Tools/orca/forbidden-calls baseline: the hits Orca's shipped code is allowed today.
+# Rewrite with `Tools/orca/forbidden-calls --update-baseline`; a person reviews the diff.
+# Scanned against upstream base f84df02055ab9610feec48e65648cac5a3c098fa.
+# <count>\t<rule>\t<path>\t<token>
+1	build-deps	CMakeLists.txt	add_custom_target(dolphin_scmrev)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/Bochs_disasm)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/FatFs)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/FreeSurround)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/MoltenVK)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/cpp-ipc)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/cpp-optparse)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/discord-rpc)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/ed25519)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/expr)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/imgui)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/implot)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/libadrenotools)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/libjuice)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/rcheevos)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/spirv_cross)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/tinygltf)
+1	build-deps	CMakeLists.txt	add_subdirectory(Externals/watcher)
+1	build-deps	CMakeLists.txt	add_subdirectory(Source)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(BZip2)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(CUBEB)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(CURL)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(HIDAPI)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(Iconv)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(LIBMGBA)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(LZO)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(LibLZMA)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(LibUSB)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(MBEDTLS)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(MINIUPNPC)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(SDL3)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(SFML)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(glslang)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library(pugixml)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library_pkgconfig(ENET)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library_pkgconfig(FMT)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library_pkgconfig(GTEST)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library_pkgconfig(SPNG)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library_pkgconfig(ZLIB)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library_pkgconfig(ZSTD)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library_pkgconfig(lz4)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library_pkgconfig(minizip-ng)
+1	build-deps	CMakeLists.txt	dolphin_find_optional_system_library_pkgconfig(xxhash)
+1	build-deps	CMakeLists.txt	find_package(EGL)
+1	build-deps	CMakeLists.txt	find_package(FFmpeg)
+1	build-deps	CMakeLists.txt	find_package(Git)
+1	build-deps	CMakeLists.txt	find_package(LIBEVDEV)
+2	build-deps	CMakeLists.txt	find_package(LIBUDEV)
+1	build-deps	CMakeLists.txt	find_package(OpenGL)
+1	build-deps	CMakeLists.txt	find_package(SYSTEMD)
+1	build-deps	CMakeLists.txt	find_package(Threads)
+1	build-deps	CMakeLists.txt	include(CCache)
+1	build-deps	CMakeLists.txt	include(CPack)
+1	build-deps	CMakeLists.txt	include(CheckAndAddFlag)
+1	build-deps	CMakeLists.txt	include(CheckCCompilerFlag)
+1	build-deps	CMakeLists.txt	include(CheckCXXSourceRuns)
+1	build-deps	CMakeLists.txt	include(CheckIPOSupported)
+1	build-deps	CMakeLists.txt	include(CheckLib)
+1	build-deps	CMakeLists.txt	include(CheckSymbolExists)
+1	build-deps	CMakeLists.txt	include(DolphinCompileDefinitions)
+1	build-deps	CMakeLists.txt	include(DolphinDisableWarningsMSVC)
+1	build-deps	CMakeLists.txt	include(DolphinLibraryTools)
+1	build-deps	CMakeLists.txt	include(GNUInstallDirs)
+1	build-deps	CMakeLists.txt	include(RemoveCompileFlag)
+1	build-deps	CMakeLists.txt	pkg_check_modules(X11)
+1	build-deps	CMakeLists.txt	pkg_check_modules(X11_INPUT)
+1	build-deps	CMakeLists.txt	pkg_check_modules(XRANDR)
+1	build-deps	Externals/imgui/CMakeLists.txt	target_link_libraries(imgui fmt::fmt)
+1	app-channel	Externals/imgui/imgui_user_config.cpp	fmt::print(
+1	app-channel	Externals/imgui/imgui_user_config.cpp	stderr
+1	build-deps	Externals/libjuice/CMakeLists.txt	find_package(Threads)
+1	build-deps	Externals/libjuice/CMakeLists.txt	target_link_libraries(juice Threads::Threads)
+1	build-deps	Externals/libjuice/CMakeLists.txt	target_link_libraries(juice bcrypt)
+1	build-deps	Externals/libjuice/CMakeLists.txt	target_link_libraries(juice ws2_32)
+1	build-deps	Externals/mGBA/CMakeLists.txt	add_subdirectory(mgba)
+1	build-deps	Externals/mGBA/CMakeLists.txt	target_link_libraries(mgba ZLIB::ZLIB)
+1	env	Source/Core/Common/ArmCPUDetect.cpp	std::getenv("ORCA_TEST_NO_AFP"
+1	file-open	Source/Core/Common/ArmCPUDetect.cpp	#include fstream
+3	file-open	Source/Core/Common/ArmCPUDetect.cpp	File::OpenFStream(
+3	file-open	Source/Core/Common/ArmCPUDetect.cpp	std::ifstream
+1	build-deps	Source/Core/Common/CMakeLists.txt	execute_process(COMMAND)
+1	build-deps	Source/Core/Common/CMakeLists.txt	find_package(LLVM)
+1	build-deps	Source/Core/Common/CMakeLists.txt	find_package(PowerShell)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common "-INCLUDE:enableCompatPatches")
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common ${APPKIT_LIBRARY})
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common ${CMAKE_THREAD_LIBS_INIT})
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common ${COREFOUNDATION_LIBRARY})
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common ${EGL_LIBRARIES})
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common ${FOUNDATION_LIBRARY})
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common ${IOK_LIBRARY})
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common ${VTUNE_LIBRARIES})
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common CURL::libcurl)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common FatFs)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common GL)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common Iconv::Iconv)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common MINIZIP::minizip-ng)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common MbedTLS::mbedtls)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common Miniupnpc::miniupnpc)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common androidcommon)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common bdisasm)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common be)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common dl)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common enet::enet)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common fmt::fmt)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common kernel32.lib)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common opengl32.lib)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common rt)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common sfml-network)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common shlwapi.lib)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common spng::spng)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common use_pch)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common watcher)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(common winmm.lib)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(traversal_server ${SYSTEMD_LIBRARIES})
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(traversal_server common)
+1	build-deps	Source/Core/Common/CMakeLists.txt	target_link_libraries(traversal_server fmt::fmt)
+16	build-deps	Source/Core/Common/CMakeLists.txt	target_sources(common)
+1	http	Source/Core/Common/CurlTLS.h	#include curl/curl.h
+2	http	Source/Core/Common/CurlTLS.h	curl_easy_setopt(
+1	http	Source/Core/Common/CurlTLS.h	curl_version_info(
+1	file-open	Source/Core/Common/FatFsUtil.cpp	File::CreateDir(
+1	file-open	Source/Core/Common/FatFsUtil.cpp	File::Delete(
+2	file-open	Source/Core/Common/FatFsUtil.cpp	File::DeleteDirRecursively(
+8	file-open	Source/Core/Common/FatFsUtil.cpp	File::IOFile
+3	file-open	Source/Core/Common/FatFsUtil.cpp	File::Rename(
+1	http	Source/Core/Common/HttpRequest.cpp	#include Common/CurlTLS.h
+1	http	Source/Core/Common/HttpRequest.cpp	#include Common/HttpRequest.h
+1	http	Source/Core/Common/HttpRequest.cpp	#include curl/curl.h
+32	http	Source/Core/Common/HttpRequest.cpp	HttpRequest
+1	http	Source/Core/Common/HttpRequest.cpp	curl_easy_escape(
+2	http	Source/Core/Common/HttpRequest.cpp	curl_easy_getinfo(
+1	http	Source/Core/Common/HttpRequest.cpp	curl_easy_init(
+1	http	Source/Core/Common/HttpRequest.cpp	curl_easy_perform(
+22	http	Source/Core/Common/HttpRequest.cpp	curl_easy_setopt(
+1	http	Source/Core/Common/HttpRequest.cpp	curl_free(
+1	http	Source/Core/Common/HttpRequest.cpp	curl_global_init(
+1	http	Source/Core/Common/HttpRequest.cpp	curl_mime_addpart(
+1	http	Source/Core/Common/HttpRequest.cpp	curl_mime_data(
+1	http	Source/Core/Common/HttpRequest.cpp	curl_mime_free(
+1	http	Source/Core/Common/HttpRequest.cpp	curl_mime_init(
+1	http	Source/Core/Common/HttpRequest.cpp	curl_mime_name(
+3	http	Source/Core/Common/HttpRequest.cpp	curl_slist_append(
+1	http	Source/Core/Common/HttpRequest.cpp	curl_slist_free_all(
+2	file-open	Source/Core/Common/IOFile.cpp	_tfsopen(
+1	file-open	Source/Core/Common/IOFile.cpp	fdopen(
+1	file-open	Source/Core/Common/IOFile.cpp	std::fopen(
+1	app-channel	Source/Core/Common/Logging/ConsoleListenerWin.cpp	GetStdHandle
+1	app-channel	Source/Core/Common/Logging/ConsoleListenerWin.cpp	STD_OUTPUT_HANDLE
+3	app-channel	Source/Core/Common/Logging/ConsoleListenerWin.cpp	stdout
+1	file-open	Source/Core/Common/Logging/LogManager.cpp	#include fstream
+1	file-open	Source/Core/Common/Logging/LogManager.cpp	File::OpenFStream(
+1	file-open	Source/Core/Common/Logging/LogManager.cpp	std::ofstream
+1	dynload	Source/Core/Common/MemArena.h	#include Common/DynamicLibrary.h
+2	dynload	Source/Core/Common/MemArena.h	DynamicLibrary
+1	http	Source/Core/Common/WebSocket.cpp	#include Common/CurlTLS.h
+1	http	Source/Core/Common/WebSocket.cpp	#include Common/WebSocket.h
+1	http	Source/Core/Common/WebSocket.cpp	#include curl/curl.h
+12	http	Source/Core/Common/WebSocket.cpp	WebSocket
+1	http	Source/Core/Common/WebSocket.cpp	curl_easy_cleanup(
+2	http	Source/Core/Common/WebSocket.cpp	curl_easy_getinfo(
+1	http	Source/Core/Common/WebSocket.cpp	curl_easy_init(
+1	http	Source/Core/Common/WebSocket.cpp	curl_easy_perform(
+7	http	Source/Core/Common/WebSocket.cpp	curl_easy_setopt(
+3	http	Source/Core/Common/WebSocket.cpp	curl_easy_strerror(
+2	http	Source/Core/Common/WebSocket.cpp	curl_ws_recv(
+2	http	Source/Core/Common/WebSocket.cpp	curl_ws_send(
+1	socket	Source/Core/Common/WebSocket.cpp	#include winsock2.h
+1	socket	Source/Core/Common/WebSocket.cpp	WSAPoll(
+1	socket	Source/Core/Common/WebSocket.cpp	poll(
+7	http	Source/Core/Common/WebSocket.h	WebSocket
+1	app-channel	Source/Core/Core/Boot/Boot.cpp	Orca::Status::Error("disc_revision"
+1	file-open	Source/Core/Core/Boot/Boot.cpp	#include fstream
+3	file-open	Source/Core/Core/Boot/Boot.cpp	File::IOFile
+1	file-open	Source/Core/Core/Boot/Boot.cpp	File::OpenFStream(
+1	file-open	Source/Core/Core/Boot/Boot.cpp	std::ifstream
+1	file-open	Source/Core/Core/Boot/Boot.h	File::IOFile
+1	app-channel	Source/Core/Core/BootManager.cpp	Orca::Status::Error(
+1	app-channel	Source/Core/Core/BootManager.cpp	Orca::Status::Error("settings"
+1	app-channel	Source/Core/Core/BootManager.cpp	Orca::Status::State("booting"
+1	file-open	Source/Core/Core/BootManager.cpp	File::Delete(
+1	file-open	Source/Core/Core/BootManager.cpp	File::DeleteDirRecursively(
+1	build-deps	Source/Core/Core/CMakeLists.txt	add_custom_command(OUTPUT)
+1	build-deps	Source/Core/Core/CMakeLists.txt	find_package(BlueZ)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core ${CORESERV_LIBRARY})
+2	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core ${IOB_LIBRARY})
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core ${IOK_LIBRARY})
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core ${LIBUDEV_LIBRARY})
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core BlueZ::BlueZ)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core CURL::libcurl)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core FatFs)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core Hidapi::Hidapi)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core LZ4::LZ4)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core LZO::LZO)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core LibJuice::LibJuice)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core LibUSB::LibUSB)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core MbedTLS::mbedtls)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core ZLIB::ZLIB)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core androidcommon)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core audiocommon)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core bcrypt)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core common)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core cpp-ipc::ipc)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core cubeb)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core discio)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core ed25519)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core enet::enet)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core expr)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core fmt::fmt)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core imgui)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core inputcommon)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core iphlpapi.lib)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core mGBA::mgba)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core pugixml)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core rcheevos)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core resolv)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core setupapi.lib)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core sfml-network)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core use_pch)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core videod3d)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core videod3d12)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core videometal)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core videonull)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core videoogl)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core videosoftware)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core videovulkan)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core xxhash::xxhash)
+1	build-deps	Source/Core/Core/CMakeLists.txt	target_link_libraries(core zstd::zstd)
+14	build-deps	Source/Core/Core/CMakeLists.txt	target_sources(core)
+1	file-open	Source/Core/Core/Core.cpp	File::CreateFullPath(
+1	file-open	Source/Core/Core/Core.cpp	File::Delete(
+1	file-open	Source/Core/Core/HW/DSPHLE/UCodes/AX.cpp	File::IOFile
+2	file-open	Source/Core/Core/HW/EXI/EXI_DeviceIPL.cpp	File::IOFile
+2	file-open	Source/Core/Core/IOS/FS/HostBackend/FS.cpp	File::CreateDir(
+1	file-open	Source/Core/Core/IOS/FS/HostBackend/FS.cpp	File::CreateEmptyFile(
+1	file-open	Source/Core/Core/IOS/FS/HostBackend/FS.cpp	File::CreateFullPath(
+3	file-open	Source/Core/Core/IOS/FS/HostBackend/FS.cpp	File::Delete(
+3	file-open	Source/Core/Core/IOS/FS/HostBackend/FS.cpp	File::DeleteDirRecursively(
+2	file-open	Source/Core/Core/IOS/FS/HostBackend/FS.cpp	File::IOFile
+2	file-open	Source/Core/Core/IOS/FS/HostBackend/FS.cpp	File::Rename(
+1	file-open	Source/Core/Core/IOS/FS/HostBackend/FS.h	CreateFile(
+4	file-open	Source/Core/Core/IOS/FS/HostBackend/FS.h	File::IOFile
+6	file-open	Source/Core/Core/IOS/FS/HostBackend/File.cpp	File::IOFile
+1	file-open	Source/Core/Core/IOS/FS/HostBackend/Journal.cpp	File::CreateDir(
+2	file-open	Source/Core/Core/IOS/FS/HostBackend/Journal.cpp	File::Delete(
+1	file-open	Source/Core/Core/IOS/FS/HostBackend/Journal.cpp	File::DeleteDirRecursively(
+2	file-open	Source/Core/Core/IOS/FS/HostBackend/Journal.cpp	File::IOFile
+2	file-open	Source/Core/Core/IOS/FS/HostBackend/Journal.cpp	File::ReadFileToString(
+1	file-open	Source/Core/Core/IOS/FS/HostBackend/Journal.cpp	File::Rename(
+1	file-open	Source/Core/Core/IOS/FS/HostBackend/Journal.cpp	File::WriteStringToFile(
+1	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	#include arpa/inet.h
+1	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	#include netdb.h
+1	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	#include netinet/in.h
+1	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	#include sys/socket.h
+1	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	#include ws2tcpip.h
+2	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	::inet_addr(
+1	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	connect(
+1	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	getaddrinfo(
+2	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	gethostbyname(
+1	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	getpeername(
+2	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	getsockname(
+1	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	getsockopt(
+5	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	inet_addr(
+2	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	inet_pton(
+1	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	listen(
+1	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	recv(
+1	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	send(
+2	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	setsockopt(
+2	socket	Source/Core/Core/IOS/Network/IP/Top.cpp	socket(
+5	http	Source/Core/Core/IOS/Network/KD/NetKDRequest.cpp	Common::HttpRequest
+1	http	Source/Core/Core/IOS/Network/KD/NetKDRequest.h	#include Common/HttpRequest.h
+1	http	Source/Core/Core/IOS/Network/KD/NetKDRequest.h	Common::HttpRequest
+2	file-open	Source/Core/Core/IOS/Network/SSL.cpp	File::IOFile
+2	http	Source/Core/Core/IOS/Network/SSL.cpp	"https://dolphin-emu.org/docs/guides/wii-network-guide/for"
+1	socket	Source/Core/Core/IOS/Network/SSL.cpp	mbedtls_net_recv(
+1	socket	Source/Core/Core/IOS/Network/SSL.cpp	mbedtls_net_send(
+1	file-open	Source/Core/Core/IOS/Network/Socket.cpp	File::IOFile
+1	socket	Source/Core/Core/IOS/Network/Socket.cpp	#include arpa/inet.h
+2	socket	Source/Core/Core/IOS/Network/Socket.cpp	accept(
+1	socket	Source/Core/Core/IOS/Network/Socket.cpp	bind(
+2	socket	Source/Core/Core/IOS/Network/Socket.cpp	closesocket(
+1	socket	Source/Core/Core/IOS/Network/Socket.cpp	connect(
+1	socket	Source/Core/Core/IOS/Network/Socket.cpp	getpeername(
+4	socket	Source/Core/Core/IOS/Network/Socket.cpp	getsockopt(
+2	socket	Source/Core/Core/IOS/Network/Socket.cpp	ioctlsocket(
+1	socket	Source/Core/Core/IOS/Network/Socket.cpp	poll(
+1	socket	Source/Core/Core/IOS/Network/Socket.cpp	recvfrom(
+2	socket	Source/Core/Core/IOS/Network/Socket.cpp	select(
+1	socket	Source/Core/Core/IOS/Network/Socket.cpp	sendto(
+1	socket	Source/Core/Core/IOS/Network/Socket.cpp	setsockopt(
+1	socket	Source/Core/Core/IOS/Network/Socket.cpp	socket(
+1	file-open	Source/Core/Core/Movie.cpp	File::Delete(
+5	file-open	Source/Core/Core/Movie.cpp	File::IOFile
+1	file-open	Source/Core/Core/NetPlayClient.cpp	File::CreateFullPath(
+2	file-open	Source/Core/Core/NetPlayClient.cpp	File::Delete(
+5	file-open	Source/Core/Core/NetPlayClient.cpp	File::DeleteDirRecursively(
+1	socket	Source/Core/Core/NetPlayClient.cpp	enet_address_set_host(
+2	socket	Source/Core/Core/NetPlayClient.cpp	enet_host_connect(
+1	socket	Source/Core/Core/NetPlayClient.cpp	enet_host_create(
+1	socket	Source/Core/Core/NetPlayClient.cpp	enet_host_destroy(
+1	socket	Source/Core/Core/NetPlayClient.cpp	enet_host_flush(
+5	socket	Source/Core/Core/NetPlayClient.cpp	enet_host_service(
+3	socket	Source/Core/Core/NetPlayClient.cpp	enet_packet_destroy(
+1	socket	Source/Core/Core/NetPlayClient.cpp	enet_peer_disconnect(
+1	socket	Source/Core/Core/NetPlayClient.cpp	enet_peer_reset(
+2	socket	Source/Core/Core/NetPlayClient.cpp	enet_peer_timeout(
+77	socket	Source/Core/Core/NetPlayClient.cpp	sf::Packet
+2	app-channel	Source/Core/Core/Orca/Activity.cpp	Status::Line(
+1	env	Source/Core/Core/Orca/Bridge.cpp	GetEnv("YOUGAME_STDIO"
+2	env	Source/Core/Core/Orca/Bundle.cpp	GetEnv("ORCA_MOD_DIR"
+2	env	Source/Core/Core/Orca/Bundle.cpp	GetEnv("YOUGAME_GAME"
+1	file-open	Source/Core/Core/Orca/Bundle.cpp	#include filesystem
+2	file-open	Source/Core/Core/Orca/Bundle.cpp	File::IOFile
+1	file-open	Source/Core/Core/Orca/Bundle.cpp	fs::directory_iterator
+1	peer-parse	Source/Core/Core/Orca/Bundle.cpp	ParseManifest(
+2	peer-parse	Source/Core/Core/Orca/Bundle.cpp	ParseSignature(
+1	peer-parse	Source/Core/Core/Orca/Bundle.cpp	UX::ParseGamePatches(
+2	peer-parse	Source/Core/Core/Orca/Bundle.cpp	reinterpret_cast<
+1	peer-parse	Source/Core/Core/Orca/Bundle.h	ParseSignature(
+1	app-channel	Source/Core/Core/Orca/CrashNote.cpp	GetStdHandle
+1	app-channel	Source/Core/Core/Orca/CrashNote.cpp	STD_ERROR_HANDLE
+2	dynload	Source/Core/Core/Orca/CrashNote.cpp	GetModuleHandleW(
+1	file-open	Source/Core/Core/Orca/Disc.cpp	File::IOFile
+1	app-channel	Source/Core/Core/Orca/DiscVerify.cpp	fmt::print(
+1	file-open	Source/Core/Core/Orca/DiscVerify.cpp	#include filesystem
+1	file-open	Source/Core/Core/Orca/DiscVerify.cpp	std::filesystem::create_directory
+1	file-open	Source/Core/Core/Orca/DiscVerify.cpp	std::filesystem::directory_iterator
+1	file-open	Source/Core/Core/Orca/DiscVerify.cpp	std::filesystem::remove_all
+1	file-open	Source/Core/Core/Orca/DiscVerify.cpp	std::filesystem::temp_directory_path
+1	env	Source/Core/Core/Orca/JitWarm.cpp	GetEnv("ORCA_JITWARM"
+1	env	Source/Core/Core/Orca/JitWarm.cpp	GetEnv("ORCA_JITWARM_BUDGET_US"
+1	env	Source/Core/Core/Orca/JitWarm.cpp	GetEnv("ORCA_JITWARM_LOG"
+1	env	Source/Core/Core/Orca/JitWarm.cpp	GetEnv("ORCA_JITWARM_SEED"
+1	env	Source/Core/Core/Orca/JitWarm.cpp	GetEnv("ORCA_TEST_JITWARM_SLOW_US"
+1	file-open	Source/Core/Core/Orca/JitWarm.cpp	File::CreateFullPath(
+2	file-open	Source/Core/Core/Orca/JitWarm.cpp	File::IOFile
+1	file-open	Source/Core/Core/Orca/JitWarm.cpp	File::Rename(
+3	peer-parse	Source/Core/Core/Orca/JitWarm.cpp	Decode(
+3	peer-parse	Source/Core/Core/Orca/JitWarm.cpp	std::memcpy(
+1	peer-parse	Source/Core/Core/Orca/JitWarm.h	Decode(
+1	file-open	Source/Core/Core/Orca/Launch.cpp	#include filesystem
+1	file-open	Source/Core/Core/Orca/Launch.cpp	File::ReadFileToString(
+2	env	Source/Core/Core/Orca/Mod.cpp	GetEnv("ORCA_MOD_DIR"
+1	env	Source/Core/Core/Orca/Mod.cpp	GetEnv("ORCA_SD_CACHE"
+1	file-open	Source/Core/Core/Orca/Mod.cpp	#include filesystem
+1	file-open	Source/Core/Core/Orca/Mod.cpp	File::CreateFullPath(
+4	file-open	Source/Core/Core/Orca/Mod.cpp	File::Delete(
+1	file-open	Source/Core/Core/Orca/Mod.cpp	File::IOFile
+1	file-open	Source/Core/Core/Orca/Mod.cpp	File::ReadFileToString(
+2	file-open	Source/Core/Core/Orca/Mod.cpp	File::Rename(
+1	file-open	Source/Core/Core/Orca/Mod.cpp	File::WriteStringToFile(
+1	file-open	Source/Core/Core/Orca/Mod.cpp	fs::directory_iterator
+4	file-open	Source/Core/Core/Orca/Mod.cpp	fs::remove
+21	peer-parse	Source/Core/Core/Orca/Mod.cpp	.get<
+1	peer-parse	Source/Core/Core/Orca/Mod.cpp	Mod::ParseManifest(
+1	peer-parse	Source/Core/Core/Orca/Mod.cpp	Mod::ParseTree(
+1	peer-parse	Source/Core/Core/Orca/Mod.cpp	ParseManifest(
+1	peer-parse	Source/Core/Core/Orca/Mod.cpp	ParseTree(
+3	peer-parse	Source/Core/Core/Orca/Mod.cpp	ParseWhole(
+1	peer-parse	Source/Core/Core/Orca/Mod.cpp	UX::ParseGamePatches(
+1	peer-parse	Source/Core/Core/Orca/Mod.cpp	picojson::parse(
+1	peer-parse	Source/Core/Core/Orca/Mod.cpp	reinterpret_cast<
+1	peer-parse	Source/Core/Core/Orca/Mod.cpp	std::stoul(
+1	peer-parse	Source/Core/Core/Orca/Mod.h	ParseManifest(
+1	peer-parse	Source/Core/Core/Orca/Mod.h	ParseTree(
+1	env	Source/Core/Core/Orca/Music.cpp	Orca::GetEnv("ORCA_MUSIC"
+2	app-channel	Source/Core/Core/Orca/PanicDiag.cpp	stderr
+1	app-channel	Source/Core/Core/Orca/Perf.cpp	Status::Line("orcaperf"
+2	env	Source/Core/Core/Orca/Perf.cpp	GetEnv("ORCA_PERF_AUTO"
+1	env	Source/Core/Core/Orca/Perf.cpp	GetEnv("ORCA_TEST_COMMANDS"
+2	env	Source/Core/Core/Orca/Perf.cpp	GetEnv("ORCA_TEST_PERF"
+2	env	Source/Core/Core/Orca/Perf.cpp	GetEnv("ORCA_TEST_SLOW"
+1	env	Source/Core/Core/Orca/Profile.cpp	EnvIs(
+1	env	Source/Core/Core/Orca/Profile.cpp	EnvIs("ORCA_SESSION"
+1	env	Source/Core/Core/Orca/Profile.cpp	EnvIs("ORCA_TEST_FULL_SNAPSHOTS"
+1	env	Source/Core/Core/Orca/Profile.cpp	EnvIs("ORCA_TEST_NO_AFP"
+1	env	Source/Core/Core/Orca/Profile.cpp	EnvIs("ORCA_TEST_PADS"
+1	env	Source/Core/Core/Orca/Profile.cpp	EnvIs("ORCA_TEST_SKIP_RENDER"
+2	env	Source/Core/Core/Orca/Profile.cpp	GetEnv(
+1	env	Source/Core/Core/Orca/Profile.cpp	GetEnv("ORCA_SHADER_WAIT_S"
+1	env	Source/Core/Core/Orca/Profile.cpp	GetEnv("ORCA_TEST_CHAR_ORDER"
+1	env	Source/Core/Core/Orca/Profile.cpp	GetEnv("ORCA_TEST_CPUCORE"
+1	env	Source/Core/Core/Orca/Profile.cpp	GetEnv("ORCA_TEST_FXC_FLAGS"
+1	env	Source/Core/Core/Orca/Profile.cpp	GetEnv("ORCA_TEST_GATE"
+1	env	Source/Core/Core/Orca/Profile.cpp	GetEnv("ORCA_TEST_NET_DELAY_MS"
+1	env	Source/Core/Core/Orca/Profile.cpp	GetEnv("ORCA_TEST_NET_JITTER_MS"
+1	env	Source/Core/Core/Orca/Profile.cpp	GetEnv("ORCA_TEST_NET_SPIKES"
+1	env	Source/Core/Core/Orca/Profile.cpp	GetEnv("ORCA_TEST_NET_UPLINK"
+1	env	Source/Core/Core/Orca/Profile.cpp	GetEnv("ORCA_TEST_QUEUE"
+1	env	Source/Core/Core/Orca/Profile.cpp	GetEnv("ORCA_TEST_QUEUE_PICK"
+1	env	Source/Core/Core/Orca/Profile.cpp	GetEnv("ORCA_TEST_SHADER_WAIT_MS"
+1	env	Source/Core/Core/Orca/Profile.cpp	GetEnv("ORCA_TEST_SNAPSHOT_EVERY"
+1	env	Source/Core/Core/Orca/Profile.cpp	_wgetenv(
+1	env	Source/Core/Core/Orca/Profile.cpp	std::getenv(
+1	env	Source/Core/Core/Orca/Profile.cpp	std::getenv("ORCA_PROFILE"
+1	file-open	Source/Core/Core/Orca/Profile.cpp	#include fstream
+1	file-open	Source/Core/Core/Orca/Profile.cpp	File::IOFile
+1	file-open	Source/Core/Core/Orca/Profile.cpp	File::OpenFStream(
+1	file-open	Source/Core/Core/Orca/Profile.cpp	File::ReadFileToString(
+1	file-open	Source/Core/Core/Orca/Profile.cpp	std::ifstream
+5	peer-parse	Source/Core/Core/Orca/Profile.cpp	ParseNumber(
+2	peer-parse	Source/Core/Core/Orca/Profile.cpp	reinterpret_cast<
+3	peer-parse	Source/Core/Core/Orca/Profile.cpp	std::sscanf(
+1	peer-parse	Source/Core/Core/Orca/Profile.cpp	std::strtoul(
+1	env	Source/Core/Core/Orca/Profile.h	GetEnv(
+2	env	Source/Core/Core/Orca/Sandbox.cpp	GetEnv("ORCA_NET"
+1	file-open	Source/Core/Core/Orca/Sandbox.cpp	#include fcntl.h
+2	file-open	Source/Core/Core/Orca/Sandbox.cpp	CreateFileW(
+2	file-open	Source/Core/Core/Orca/Sandbox.cpp	open(
+1	file-open	Source/Core/Core/Orca/Sandbox.cpp	unlink(
+1	socket	Source/Core/Core/Orca/Sandbox.cpp	#include arpa/inet.h
+1	socket	Source/Core/Core/Orca/Sandbox.cpp	#include netinet/in.h
+1	socket	Source/Core/Core/Orca/Sandbox.cpp	#include winsock2.h
+1	socket	Source/Core/Core/Orca/Sandbox.cpp	#include ws2tcpip.h
+4	socket	Source/Core/Core/Orca/Sandbox.cpp	inet_pton(
+1	env	Source/Core/Core/Orca/Session/DirectLink.cpp	GetEnv("ORCA_DIRECT"
+1	env	Source/Core/Core/Orca/Session/DirectLink.cpp	GetEnv("ORCA_DIRECT_BLOCK"
+1	env	Source/Core/Core/Orca/Session/DirectLink.cpp	GetEnv("ORCA_DIRECT_FORCE"
+1	env	Source/Core/Core/Orca/Session/DirectLink.cpp	GetEnv("ORCA_DIRECT_ICE_LOG"
+1	env	Source/Core/Core/Orca/Session/DirectLink.cpp	GetEnv("ORCA_DIRECT_LOOPBACK"
+1	env	Source/Core/Core/Orca/Session/DirectLink.cpp	GetEnv("ORCA_DIRECT_LOSS"
+1	env	Source/Core/Core/Orca/Session/DirectLink.cpp	GetEnv("ORCA_DIRECT_STUN"
+2	env	Source/Core/Core/Orca/Session/DirectLink.cpp	GetEnv("ORCA_DIRECT_TURN"
+1	file-open	Source/Core/Core/Orca/Session/DirectLink.cpp	#include fcntl.h
+10	peer-parse	Source/Core/Core/Orca/Session/DirectLink.cpp	.get<
+6	peer-parse	Source/Core/Core/Orca/Session/DirectLink.cpp	ParseCandidate(
+1	peer-parse	Source/Core/Core/Orca/Session/DirectLink.cpp	ParseIce(
+15	peer-parse	Source/Core/Core/Orca/Session/DirectLink.cpp	reinterpret_cast<
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	#include arpa/inet.h
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	#include juice/juice.h
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	#include netdb.h
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	#include netinet/in.h
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	#include sys/socket.h
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	#include winsock2.h
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	#include ws2tcpip.h
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	SOCKET
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	bind(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	closesocket(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	getaddrinfo(
+2	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	inet_pton(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	ioctlsocket(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	juice_add_remote_candidate(
+6	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	juice_agent_t
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	juice_create(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	juice_destroy(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	juice_gather_candidates(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	juice_get_local_description(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	juice_get_selected_candidates(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	juice_send(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	juice_send_diffserv(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	juice_set_log_handler(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	juice_set_log_level(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	juice_set_remote_description(
+2	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	juice_set_remote_gathering_done(
+1	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	recv(
+2	socket	Source/Core/Core/Orca/Session/DirectLink.cpp	socket(
+1	peer-parse	Source/Core/Core/Orca/Session/DirectLink.h	ParseIce(
+1	env	Source/Core/Core/Orca/Session/Keyframe.cpp	Orca::GetEnv("ORCA_TEST_KEEP_KEYFRAMES"
+1	env	Source/Core/Core/Orca/Session/Keyframe.cpp	Orca::GetEnv("ORCA_TEST_KEYFRAME_DIR"
+4	file-open	Source/Core/Core/Orca/Session/Keyframe.cpp	File::CreateFullPath(
+2	file-open	Source/Core/Core/Orca/Session/Keyframe.cpp	File::Delete(
+1	file-open	Source/Core/Core/Orca/Session/Keyframe.cpp	File::DeleteDirRecursively(
+4	file-open	Source/Core/Core/Orca/Session/Keyframe.cpp	File::IOFile
+2	file-open	Source/Core/Core/Orca/Session/Keyframe.cpp	File::ReadFileToString(
+1	file-open	Source/Core/Core/Orca/Session/Keyframe.cpp	File::Rename(
+1	http	Source/Core/Core/Orca/Session/Keyframe.cpp	#include Common/CurlTLS.h
+1	http	Source/Core/Core/Orca/Session/Keyframe.cpp	#include curl/curl.h
+1	http	Source/Core/Core/Orca/Session/Keyframe.cpp	curl_easy_cleanup(
+2	http	Source/Core/Core/Orca/Session/Keyframe.cpp	curl_easy_getinfo(
+1	http	Source/Core/Core/Orca/Session/Keyframe.cpp	curl_easy_init(
+1	http	Source/Core/Core/Orca/Session/Keyframe.cpp	curl_easy_perform(
+17	http	Source/Core/Core/Orca/Session/Keyframe.cpp	curl_easy_setopt(
+1	http	Source/Core/Core/Orca/Session/Keyframe.cpp	curl_easy_strerror(
+1	http	Source/Core/Core/Orca/Session/Keyframe.cpp	curl_slist_append(
+1	http	Source/Core/Core/Orca/Session/Keyframe.cpp	curl_slist_free_all(
+3	peer-parse	Source/Core/Core/Orca/Session/Keyframe.cpp	.get<
+1	peer-parse	Source/Core/Core/Orca/Session/Keyframe.cpp	picojson::parse(
+3	peer-parse	Source/Core/Core/Orca/Session/Keyframe.cpp	reinterpret_cast<
+2	peer-parse	Source/Core/Core/Orca/Session/Keyframe.cpp	std::memcpy(
+1	app-channel	Source/Core/Core/Orca/Session/Online.cpp	Status::Cap("host"
+1	app-channel	Source/Core/Core/Orca/Session/Online.cpp	Status::Cap("join"
+1	app-channel	Source/Core/Core/Orca/Session/Online.cpp	Status::Cap("leave"
+1	app-channel	Source/Core/Core/Orca/Session/Online.cpp	Status::Error("internal"
+2	app-channel	Source/Core/Core/Orca/Session/Online.cpp	Status::Report(
+1	app-channel	Source/Core/Core/Orca/Session/Online.cpp	Status::Report("desync"
+1	app-channel	Source/Core/Core/Orca/Session/Online.cpp	Status::Report("network"
+1	app-channel	Source/Core/Core/Orca/Session/Online.cpp	Status::Report("peer_left"
+1	env	Source/Core/Core/Orca/Session/Online.cpp	Env(
+2	env	Source/Core/Core/Orca/Session/Online.cpp	Env("ORCA_DISC_SHA1"
+1	env	Source/Core/Core/Orca/Session/Online.cpp	Env("ORCA_JOIN"
+2	env	Source/Core/Core/Orca/Session/Online.cpp	Env("ORCA_NAME"
+1	env	Source/Core/Core/Orca/Session/Online.cpp	Env("ORCA_ROOM"
+1	env	Source/Core/Core/Orca/Session/Online.cpp	Env("ORCA_TEST_DEV_GAME"
+1	env	Source/Core/Core/Orca/Session/Online.cpp	Env("ORCA_TEST_DROP_SILENT"
+1	env	Source/Core/Core/Orca/Session/Online.cpp	Env("YOUGAME_BRIDGE"
+1	env	Source/Core/Core/Orca/Session/Online.cpp	Env("YOUGAME_TOKEN"
+1	env	Source/Core/Core/Orca/Session/Online.cpp	GetEnv(
+1	file-open	Source/Core/Core/Orca/Session/Online.cpp	File::ReadFileToString(
+1	file-user	Source/Core/Core/Orca/Session/Online.cpp	File::ReadFileToString(
+1	peer-parse	Source/Core/Core/Orca/Session/PadCodec.h	DecodePad(
+1	peer-parse	Source/Core/Core/Orca/Session/Replay.h	std::from_chars(
+1	app-channel	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Orca::Status::Cap("direct"
+1	app-channel	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Orca::Status::Cap("leave"
+3	app-channel	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Orca::Status::Result(
+1	env	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Env(
+1	env	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Env("ORCA_SITE"
+2	env	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Env("ORCA_TEST_DEV_GAME"
+1	env	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Env("ORCA_TEST_DROP_SILENT"
+1	env	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Env("ORCA_TEST_PLAYER"
+1	env	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Env("ORCA_TEST_ROOM"
+1	env	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Env("YOUGAME_BRIDGE"
+1	env	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Env("YOUGAME_GAME"
+1	env	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Env("YOUGAME_TOKEN"
+1	env	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Orca::GetEnv(
+1	env	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Orca::GetEnv("ORCA_TEST_INLINE"
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	"http://"
+2	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	"http://127.0.0.1:"
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	"http://localhost:"
+2	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	"https://"
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	"https://yougame.co"
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	"ws://"
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	"ws://127.0.0.1:"
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	"ws://localhost:"
+2	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	"wss://"
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	#include Common/HttpRequest.h
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	#include Common/WebSocket.h
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	#include curl/curl.h
+14	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Common::HttpRequest
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Common::WebSocket
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	curl_easy_cleanup(
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	curl_easy_getinfo(
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	curl_easy_init(
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	curl_easy_perform(
+10	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	curl_easy_setopt(
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	curl_easy_strerror(
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	curl_slist_append(
+1	http	Source/Core/Core/Orca/Session/YouGameRoom.cpp	curl_slist_free_all(
+76	peer-parse	Source/Core/Core/Orca/Session/YouGameRoom.cpp	.get<
+2	peer-parse	Source/Core/Core/Orca/Session/YouGameRoom.cpp	DecodeDirectPacket(
+2	peer-parse	Source/Core/Core/Orca/Session/YouGameRoom.cpp	DecodeInlineKeyframe(
+2	peer-parse	Source/Core/Core/Orca/Session/YouGameRoom.cpp	DecodePacket(
+2	peer-parse	Source/Core/Core/Orca/Session/YouGameRoom.cpp	ParseIce(
+10	peer-parse	Source/Core/Core/Orca/Session/YouGameRoom.cpp	ParseJson(
+1	peer-parse	Source/Core/Core/Orca/Session/YouGameRoom.cpp	ParseRoomJson(
+1	peer-parse	Source/Core/Core/Orca/Session/YouGameRoom.cpp	picojson::parse(
+1	peer-parse	Source/Core/Core/Orca/Session/YouGameRoom.h	DecodeDirectPacket(
+1	peer-parse	Source/Core/Core/Orca/Session/YouGameRoom.h	DecodeInlineKeyframe(
+1	peer-parse	Source/Core/Core/Orca/Session/YouGameRoom.h	DecodePacket(
+1	peer-parse	Source/Core/Core/Orca/Session/YouGameRoom.h	ParseRoomJson(
+1	app-channel	Source/Core/Core/Orca/Status.cpp	stdout
+1	env	Source/Core/Core/Orca/ThreadPriority.cpp	GetEnv("ORCA_THREAD_QOS"
+3	peer-parse	Source/Core/Core/Orca/UX/Chat.cpp	DecodeField(
+1	peer-parse	Source/Core/Core/Orca/UX/Chat.cpp	Parse(
+1	peer-parse	Source/Core/Core/Orca/UX/Chat.h	DecodeField(
+1	peer-parse	Source/Core/Core/Orca/UX/Chat.h	Parse(
+1	env	Source/Core/Core/Orca/UX/ControllerSource.cpp	Env(
+1	env	Source/Core/Core/Orca/UX/ControllerSource.cpp	Env("YOUGAME_BRIDGE"
+1	env	Source/Core/Core/Orca/UX/ControllerSource.cpp	Env("YOUGAME_TOKEN"
+1	env	Source/Core/Core/Orca/UX/ControllerSource.cpp	std::getenv(
+1	http	Source/Core/Core/Orca/UX/ControllerSource.cpp	"http://127.0.0.1:"
+1	http	Source/Core/Core/Orca/UX/ControllerSource.cpp	#include Common/HttpRequest.h
+1	http	Source/Core/Core/Orca/UX/ControllerSource.cpp	#include curl/curl.h
+1	http	Source/Core/Core/Orca/UX/ControllerSource.cpp	Common::HttpRequest
+1	http	Source/Core/Core/Orca/UX/ControllerSource.cpp	curl_easy_cleanup(
+1	http	Source/Core/Core/Orca/UX/ControllerSource.cpp	curl_easy_getinfo(
+1	http	Source/Core/Core/Orca/UX/ControllerSource.cpp	curl_easy_init(
+1	http	Source/Core/Core/Orca/UX/ControllerSource.cpp	curl_easy_perform(
+14	http	Source/Core/Core/Orca/UX/ControllerSource.cpp	curl_easy_setopt(
+1	http	Source/Core/Core/Orca/UX/ControllerSource.cpp	curl_easy_strerror(
+1	http	Source/Core/Core/Orca/UX/ControllerSource.cpp	curl_slist_append(
+1	http	Source/Core/Core/Orca/UX/ControllerSource.cpp	curl_slist_free_all(
+2	peer-parse	Source/Core/Core/Orca/UX/ControllerSource.cpp	ParseSnapshotEvent(
+7	peer-parse	Source/Core/Core/Orca/UX/Controllers.cpp	.get<
+1	peer-parse	Source/Core/Core/Orca/UX/Controllers.cpp	GCAdapter::DecodeChannel(
+2	peer-parse	Source/Core/Core/Orca/UX/Controllers.cpp	ParsePad(
+2	peer-parse	Source/Core/Core/Orca/UX/Controllers.cpp	ParsePort(
+3	peer-parse	Source/Core/Core/Orca/UX/Controllers.cpp	ParseSnapshotEvent(
+1	peer-parse	Source/Core/Core/Orca/UX/Controllers.cpp	picojson::parse(
+2	peer-parse	Source/Core/Core/Orca/UX/Controllers.h	ParseSnapshotEvent(
+2	peer-parse	Source/Core/Core/Orca/UX/GameFont.cpp	DecodeCoverage(
+5	peer-parse	Source/Core/Core/Orca/UX/GameFont.cpp	ReadU16(
+2	peer-parse	Source/Core/Core/Orca/UX/GameFont.cpp	Rfnt::Parse(
+1	peer-parse	Source/Core/Core/Orca/UX/GameFont.cpp	Rfnt::ReadU16(
+1	peer-parse	Source/Core/Core/Orca/UX/GameFont.cpp	reinterpret_cast<
+1	peer-parse	Source/Core/Core/Orca/UX/GameFont.h	Parse(
+1	peer-parse	Source/Core/Core/Orca/UX/GameFont.h	ReadU16(
+3	app-channel	Source/Core/Core/Orca/UX/GamePatches.cpp	Orca::Status::Error("profile"
+2	file-open	Source/Core/Core/Orca/UX/GamePatches.cpp	File::ReadFileToString(
+2	peer-parse	Source/Core/Core/Orca/UX/GamePatches.cpp	.Read32(
+2	peer-parse	Source/Core/Core/Orca/UX/GamePatches.cpp	ParseCondition(
+4	peer-parse	Source/Core/Core/Orca/UX/GamePatches.cpp	ParseGamePatches(
+1	peer-parse	Source/Core/Core/Orca/UX/GamePatches.h	ParseGamePatches(
+1	env	Source/Core/Core/Orca/UX/Kit.cpp	std::getenv("ORCA_UX_KIT_DEMO"
+2	app-channel	Source/Core/Core/Orca/UX/NameTags.cpp	Orca::Status::Line("orcacontrols"
+1	env	Source/Core/Core/Orca/UX/NameTags.cpp	std::getenv("ORCA_CONTROLS"
+1	file-open	Source/Core/Core/Orca/UX/NameTags.cpp	File::ReadFileToString(
+1	file-open	Source/Core/Core/Orca/UX/NameTags.cpp	File::WriteStringToFile(
+2	app-channel	Source/Core/Core/Orca/UX/OnlineMenu.cpp	Orca::Status::Cap("host"
+1	app-channel	Source/Core/Core/Orca/UX/OnlineMenu.cpp	Orca::Status::Cap("pick-casual"
+1	app-channel	Source/Core/Core/Orca/UX/OnlineMenu.cpp	Orca::Status::Cap("pick-ranked"
+1	app-channel	Source/Core/Core/Orca/UX/OnlineMenu.cpp	Orca::Status::Cap("queue2"
+2	app-channel	Source/Core/Core/Orca/UX/OnlineMenu.cpp	Orca::Status::Menu(
+1	app-channel	Source/Core/Core/Orca/UX/OnlineMenu.cpp	Orca::Status::Menu("cancel"
+1	env	Source/Core/Core/Orca/UX/OnlineMenu.cpp	std::getenv("ORCA_TEST_HOLD"
+1	app-channel	Source/Core/Core/Orca/UX/OrbCombo.cpp	Status::Line("orcaorb"
+1	env	Source/Core/Core/Orca/UX/Overlay.cpp	std::getenv("ORCA_UX_OVERLAY_DEMO"
+1	env	Source/Core/Core/Orca/UX/Overlay.cpp	std::getenv("ORCA_UX_STATS"
+1	env	Source/Core/Core/Orca/UX/Probe.cpp	std::getenv("ORCA_TEST_DEV_GAME"
+1	env	Source/Core/Core/Orca/UX/Probe.cpp	std::getenv("ORCA_UX_PROBE"
+1	env	Source/Core/Core/Orca/UX/Probe.cpp	std::getenv("ORCA_UX_PROBE_WATCHDOG"
+1	file-open	Source/Core/Core/Orca/UX/Probe.cpp	#include fstream
+1	file-open	Source/Core/Core/Orca/UX/Probe.cpp	std::ifstream
+1	file-user	Source/Core/Core/Orca/UX/Probe.cpp	File::IOFile
+2	app-channel	Source/Core/Core/Orca/UX/Queue.cpp	Orca::Status::Line(
+1	app-channel	Source/Core/Core/Orca/UX/Queue.cpp	Orca::Status::Line("orcaqueueskip"
+1	app-channel	Source/Core/Core/Orca/UX/Queue.cpp	Orca::Status::Line("orcaqueueunready"
+1	env	Source/Core/Core/Orca/UX/RankedSet.cpp	std::getenv("ORCA_TEST_SET_RULES"
+1	env	Source/Core/Core/Orca/UX/SetEnd.cpp	std::getenv("ORCA_UX_SETEND_DEMO"
+1	env	Source/Core/Core/Orca/UX/SetEnd.cpp	std::getenv("ORCA_UX_SETEND_DEMO_AT"
+1	env	Source/Core/Core/Orca/UX/UX.cpp	std::getenv("ORCA_UX_TEST_LATE_NAME"
+4	peer-parse	Source/Core/Core/Orca/UX/YgOrb.cpp	Chat::DecodeField(
+1	peer-parse	Source/Core/Core/Orca/UX/YgOrb.cpp	ParseNotice(
+1	peer-parse	Source/Core/Core/Orca/UX/YgOrb.cpp	ParseOrb(
+1	peer-parse	Source/Core/Core/Orca/UX/YgOrb.cpp	std::from_chars(
+1	peer-parse	Source/Core/Core/Orca/UX/YgOrb.h	ParseNotice(
+1	peer-parse	Source/Core/Core/Orca/UX/YgOrb.h	ParseOrb(
+1	app-channel	Source/Core/Core/PowerPC/Jit64/Jit.cpp	fmt::print(
+1	file-open	Source/Core/Core/PowerPC/Jit64/Jit.cpp	File::IOFile
+1	app-channel	Source/Core/Core/PowerPC/JitArm64/Jit.cpp	fmt::print(
+2	app-channel	Source/Core/Core/PowerPC/JitInterface.cpp	fmt::println(
+1	env	Source/Core/Core/Rollback/Cow.cpp	EnvHeat(
+1	env	Source/Core/Core/Rollback/Cow.cpp	EnvHeat("YG_COW_FAULT_HEAT"
+1	env	Source/Core/Core/Rollback/Cow.cpp	EnvHeat("YG_COW_HEAT"
+1	env	Source/Core/Core/Rollback/Cow.cpp	std::getenv(
+1	file-open	Source/Core/Core/Rollback/Cow.cpp	#include sys/mman.h
+1	env	Source/Core/Core/Rollback/Diag.cpp	EnvInt(
+1	env	Source/Core/Core/Rollback/Diag.cpp	EnvInt("YG_FRAMETIME"
+1	env	Source/Core/Core/Rollback/Diag.cpp	EnvInt("YG_NTCOPY"
+1	env	Source/Core/Core/Rollback/Diag.cpp	EnvInt("YG_PAGEDIFF"
+1	env	Source/Core/Core/Rollback/Diag.cpp	EnvInt("YG_SNAPTIME"
+1	env	Source/Core/Core/Rollback/Diag.cpp	EnvInt("YG_THROTTLE"
+1	env	Source/Core/Core/Rollback/Diag.cpp	std::getenv(
+1	env	Source/Core/Core/Rollback/Diag.cpp	std::getenv("YG_JITCODE_LOG"
+1	file-open	Source/Core/Core/Rollback/Diag.cpp	std::fopen(
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt(
+2	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("ORCA_UX_TEST_PLUG_AT"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("ORCA_UX_TEST_RESEAT_AT"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_BENCH"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_CLEARJIT_EVERY"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_CLEARJIT_FROM"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_DUMP_FRAMES_FROM"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_DUMP_FRAMES_TO"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_DUMP_RAM_AT"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_EXIT_AFTER"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_KEYFRAME_TEST"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_LOOPBACK_CHECKSUM_EVERY"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_LOOPBACK_DELAY"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_LOOPBACK_GIVE_UP_MS"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_LOOPBACK_JITTER"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_LOOPBACK_LAG"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_LOOPBACK_MAX_ROLLBACK"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_LOOPBACK_SEATS"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_LOOPBACK_SILENT_FROM"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_SAVE_ONLY_FROM"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_SCENES"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_SHOT_EVERY"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_SHOT_FROM"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_SYNCTEST"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_SYNCTEST_CLEARJIT"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_SYNCTEST_DIAG"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_SYNCTEST_FROM"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_SYNCTEST_RENDER"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvInt("YG_SYNCTEST_SECTIONS"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvList(
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvList("YG_CLEARJIT_AT"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvList("YG_JITCODE_CENSUS"
+1	env	Source/Core/Core/Rollback/Harness.cpp	EnvList("YG_WATCH"
+3	env	Source/Core/Core/Rollback/Harness.cpp	Orca::GetEnv(
+1	env	Source/Core/Core/Rollback/Harness.cpp	Orca::GetEnv("ORCA_UX_TEST_CONTROLS"
+2	env	Source/Core/Core/Rollback/Harness.cpp	Orca::GetEnv("ORCA_UX_TEST_NAMES"
+1	env	Source/Core/Core/Rollback/Harness.cpp	Orca::GetEnv("ORCA_UX_TEST_PADS_FOLLOW_PLUGS"
+1	env	Source/Core/Core/Rollback/Harness.cpp	Orca::GetEnv("ORCA_UX_TEST_UNPLUG_AT"
+1	env	Source/Core/Core/Rollback/Harness.cpp	Orca::GetEnv("YG_INPUT"
+1	env	Source/Core/Core/Rollback/Harness.cpp	Orca::GetEnv("YG_JIT_INVALIDATE"
+1	env	Source/Core/Core/Rollback/Harness.cpp	Orca::GetEnv("YG_LOOPBACK"
+1	env	Source/Core/Core/Rollback/Harness.cpp	Orca::GetEnv("YG_LOOPBACK_SPIKE"
+1	env	Source/Core/Core/Rollback/Harness.cpp	Orca::GetEnv("YG_NAND_HASHES_AT"
+1	env	Source/Core/Core/Rollback/Harness.cpp	Orca::GetEnv("YG_RESULTS"
+1	env	Source/Core/Core/Rollback/Harness.cpp	Orca::GetEnv("YG_SHOT_AT"
+1	file-open	Source/Core/Core/Rollback/Harness.cpp	#include fstream
+7	file-open	Source/Core/Core/Rollback/Harness.cpp	File::IOFile
+1	file-open	Source/Core/Core/Rollback/Harness.cpp	File::OpenFStream(
+1	file-open	Source/Core/Core/Rollback/Harness.cpp	std::ifstream
+1	file-open	Source/Core/Core/Rollback/Loopback.cpp	#include fstream
+1	file-open	Source/Core/Core/Rollback/Loopback.cpp	File::OpenFStream(
+1	file-open	Source/Core/Core/Rollback/Loopback.cpp	std::ifstream
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Cap("delay"
+8	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Cap("host"
+5	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Cap("join"
+4	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Cap("leave"
+4	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Cap("queue2"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Error("desync"
+2	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Error("internal"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Error("peer_left"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Event("friend-leftmatch-over"
+2	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Event("host-leftmatch-over"
+3	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Event("left"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Event("leftlobby"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Event("playing"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Line("unsupportedhost"
+2	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Menu("cancel"
+2	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Report(
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Report("desync"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Report("mismatch"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Report("network"
+5	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::State(
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::State("friend-holding"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::State("friend-joined"
+2	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::State("friend-joining"
+3	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::State("friend-left"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::State("friend-leftleft"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::State("friend-leftrefused"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::State("friend-waiting"
+4	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::State("joining0"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::State("no-room"
+2	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::State("playing"
+1	app-channel	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::Status::Stats(
+1	env	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::GetEnv("ORCA_TEST_FAST_UNTIL"
+1	env	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::GetEnv("ORCA_TEST_FRESH"
+1	env	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::GetEnv("ORCA_TEST_FRESH_AFTER"
+1	env	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::GetEnv("ORCA_TEST_LEAVE_AT"
+1	env	Source/Core/Core/Rollback/OnlineMatch.cpp	Orca::GetEnv("ORCA_TEST_RNG_SEED"
+1	peer-parse	Source/Core/Core/Rollback/OnlineMatch.cpp	Net::DecodePad(
+1	peer-parse	Source/Core/Core/Rollback/OnlineMatch.cpp	std::strtoul(
+1	app-channel	Source/Core/Core/Rollback/Rollback.cpp	Orca::Status::GameStarted(
+1	file-open	Source/Core/Core/State.cpp	#include filesystem
+4	file-open	Source/Core/Core/State.cpp	File::Delete(
+8	file-open	Source/Core/Core/State.cpp	File::IOFile
+3	file-open	Source/Core/Core/State.cpp	File::Rename(
+2	file-open	Source/Core/Core/WiiRoot.cpp	File::Copy(
+2	file-open	Source/Core/Core/WiiRoot.cpp	File::CreateDirs(
+2	file-open	Source/Core/Core/WiiRoot.cpp	File::CreateFullPath(
+3	file-open	Source/Core/Core/WiiRoot.cpp	File::DeleteDirRecursively(
+1	file-open	Source/Core/Core/WiiRoot.cpp	File::IOFile
+2	file-open	Source/Core/Core/WiiRoot.cpp	File::MoveWithOverwrite(
+1	file-user	Source/Core/Core/WiiRoot.cpp	File::Delete(
+2	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	add_custom_command(TARGET)
+1	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	pkg_check_modules(XEXT)
+1	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	target_link_libraries(dolphin-nogui ${APPKIT_LIBRARY})
+1	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	target_link_libraries(dolphin-nogui ${COREFOUNDATION_LIBRARY})
+1	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	target_link_libraries(dolphin-nogui ${IOK_LIBRARY})
+1	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	target_link_libraries(dolphin-nogui PkgConfig::X11)
+1	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	target_link_libraries(dolphin-nogui PkgConfig::XEXT)
+1	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	target_link_libraries(dolphin-nogui PkgConfig::XRANDR)
+1	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	target_link_libraries(dolphin-nogui core)
+1	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	target_link_libraries(dolphin-nogui cpp-optparse)
+1	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	target_link_libraries(dolphin-nogui dwmapi.lib)
+1	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	target_link_libraries(dolphin-nogui uicommon)
+1	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	target_link_libraries(dolphin-nogui use_pch)
+8	build-deps	Source/Core/DolphinNoGUI/CMakeLists.txt	target_sources(dolphin-nogui)
+1	app-channel	Source/Core/DolphinNoGUI/Embed.cpp	GetStdHandle
+1	app-channel	Source/Core/DolphinNoGUI/Embed.cpp	STDERR_FILENO
+2	app-channel	Source/Core/DolphinNoGUI/Embed.cpp	STDOUT_FILENO
+1	app-channel	Source/Core/DolphinNoGUI/Embed.cpp	STD_ERROR_HANDLE
+1	app-channel	Source/Core/DolphinNoGUI/Embed.cpp	STD_OUTPUT_HANDLE
+2	app-channel	Source/Core/DolphinNoGUI/Embed.cpp	stderr
+5	app-channel	Source/Core/DolphinNoGUI/Embed.cpp	stdout
+1	file-open	Source/Core/DolphinNoGUI/Embed.cpp	fdopen(
+5	peer-parse	Source/Core/DolphinNoGUI/Embed.cpp	ParseInt(
+3	peer-parse	Source/Core/DolphinNoGUI/Embed.cpp	ParseRect(
+1	peer-parse	Source/Core/DolphinNoGUI/Embed.cpp	std::strtol(
+1	peer-parse	Source/Core/DolphinNoGUI/Embed.cpp	std::strtoull(
+1	peer-parse	Source/Core/DolphinNoGUI/Embed.h	ParseRect(
+4	app-channel	Source/Core/DolphinNoGUI/MainNoGUI.cpp	Orca::Status::Error(
+1	app-channel	Source/Core/DolphinNoGUI/MainNoGUI.cpp	Orca::Status::Error("cancelled"
+1	app-channel	Source/Core/DolphinNoGUI/MainNoGUI.cpp	Orca::Status::Error("profile"
+1	app-channel	Source/Core/DolphinNoGUI/MainNoGUI.cpp	Orca::Status::ExitCode(
+7	app-channel	Source/Core/DolphinNoGUI/MainNoGUI.cpp	Orca::Status::Finish(
+1	app-channel	Source/Core/DolphinNoGUI/MainNoGUI.cpp	Orca::Status::PrintCaps(
+1	app-channel	Source/Core/DolphinNoGUI/MainNoGUI.cpp	Orca::Status::SetErrorListener(
+1	app-channel	Source/Core/DolphinNoGUI/MainNoGUI.cpp	Orca::Status::SetFirstFrameListener(
+1	app-channel	Source/Core/DolphinNoGUI/MainNoGUI.cpp	Orca::Status::SetOutput(
+1	app-channel	Source/Core/DolphinNoGUI/MainNoGUI.cpp	STDERR_FILENO
+11	app-channel	Source/Core/DolphinNoGUI/MainNoGUI.cpp	fmt::print(
+21	app-channel	Source/Core/DolphinNoGUI/MainNoGUI.cpp	stderr
+3	app-channel	Source/Core/DolphinNoGUI/MainNoGUI.cpp	stdout
+2	env	Source/Core/DolphinNoGUI/MainNoGUI.cpp	Orca::GetEnv("ORCA_TEST_COMMANDS"
+1	env	Source/Core/DolphinNoGUI/MainNoGUI.cpp	Orca::GetEnv("ORCA_TEST_PERF"
+1	env	Source/Core/DolphinNoGUI/MainNoGUI.cpp	setenv("ORCA_PROFILE"
+1	env	Source/Core/DolphinNoGUI/MainNoGUI.cpp	setenv("ORCA_SESSION"
+1	env	Source/Core/DolphinNoGUI/MainNoGUI.cpp	std::getenv("HOME"
+2	file-open	Source/Core/DolphinNoGUI/MainNoGUI.cpp	File::CreateFullPath(
+1	file-open	Source/Core/DolphinNoGUI/MainNoGUI.cpp	File::DeleteDirRecursively(
+1	file-user	Source/Core/DolphinNoGUI/MainNoGUI.cpp	File::Copy(
+1	app-channel	Source/Core/DolphinNoGUI/Platform.cpp	Orca::Status::Cap("gfx"
+1	app-channel	Source/Core/DolphinNoGUI/Platform.cpp	Orca::Status::Cap("music"
+1	app-channel	Source/Core/DolphinNoGUI/Platform.cpp	Orca::Status::CapsSettled(
+2	app-channel	Source/Core/DolphinNoGUI/Platform.cpp	Orca::Status::PrintCaps(
+1	app-channel	Source/Core/DolphinNoGUI/Platform.cpp	Orca::Status::SetAppCaps(
+1	app-channel	Source/Core/DolphinNoGUI/Platform.cpp	Orca::Status::Stopping(
+1	app-channel	Source/Core/DolphinNoGUI/Platform.cpp	Orca::Status::UpdateCaps(
+1	app-channel	Source/Core/DolphinNoGUI/Platform.cpp	fmt::print(
+1	app-channel	Source/Core/DolphinNoGUI/Platform.cpp	stderr
+3	env	Source/Core/DolphinNoGUI/Platform.cpp	Orca::GetEnv("ORCA_TEST_COMMANDS"
+1	file-open	Source/Core/DolphinNoGUI/Platform.cpp	File::CreateFullPath(
+1	peer-parse	Source/Core/DolphinNoGUI/Platform.cpp	Chat::Parse(
+2	peer-parse	Source/Core/DolphinNoGUI/Platform.cpp	Embed::ParseRect(
+1	peer-parse	Source/Core/DolphinNoGUI/Platform.cpp	Perf::ParseGfx(
+1	peer-parse	Source/Core/DolphinNoGUI/Platform.cpp	YgOrb::ParseNotice(
+1	peer-parse	Source/Core/DolphinNoGUI/Platform.cpp	YgOrb::ParseOrb(
+3	peer-parse	Source/Core/DolphinNoGUI/Platform.cpp	std::from_chars(
+1	app-channel	Source/Core/DolphinNoGUI/PlatformHeadless.cpp	stdout
+2	app-channel	Source/Core/DolphinNoGUI/PlatformMacos.mm	stderr
+1	process	Source/Core/DolphinNoGUI/PlatformMacos.mm	NSWorkspace
+1	app-channel	Source/Core/DolphinNoGUI/PlatformWin32.cpp	Orca::Status::Error(
+6	app-channel	Source/Core/DolphinNoGUI/PlatformWin32.cpp	stderr
+4	dynload	Source/Core/DolphinNoGUI/PlatformWin32.cpp	GetModuleHandle(
+3	app-channel	Source/Core/DolphinNoGUI/PlatformX11.cpp	stderr
+1	env	Source/Core/DolphinNoGUI/PlatformX11.cpp	std::getenv("DISPLAY"
+1	env	Source/Core/UICommon/UICommon.cpp	getenv("DOLPHIN_EMU_USERPATH"
+1	env	Source/Core/UICommon/UICommon.cpp	getenv("HOME"
+1	env	Source/Core/UICommon/UICommon.cpp	getenv("PWD"
+1	env	Source/Core/UICommon/UICommon.cpp	getenv("XDG_CACHE_HOME"
+1	env	Source/Core/UICommon/UICommon.cpp	getenv("XDG_CONFIG_HOME"
+1	env	Source/Core/UICommon/UICommon.cpp	getenv("XDG_DATA_HOME"
+1	file-open	Source/Core/UICommon/UICommon.cpp	File::CreateFullPath(
+1	file-user	Source/Core/UICommon/UICommon.cpp	File::CreateEmptyFile(
+46	file-user	Source/Core/UICommon/UICommon.cpp	File::CreateFullPath(
+1	dynload	Source/Core/VideoBackends/D3D/D3DBase.cpp	#include Common/DynamicLibrary.h
+3	dynload	Source/Core/VideoBackends/D3D/D3DBase.cpp	DynamicLibrary
+1	dynload	Source/Core/VideoBackends/D3D/D3DBase.cpp	GetModuleHandleExW(
+1	build-deps	Source/Core/VideoBackends/D3DCommon/CMakeLists.txt	target_link_libraries(videod3dcommon common)
+1	build-deps	Source/Core/VideoBackends/D3DCommon/CMakeLists.txt	target_link_libraries(videod3dcommon spirv_cross)
+1	build-deps	Source/Core/VideoBackends/D3DCommon/CMakeLists.txt	target_link_libraries(videod3dcommon use_pch)
+1	build-deps	Source/Core/VideoBackends/D3DCommon/CMakeLists.txt	target_link_libraries(videod3dcommon videocommon)
+1	dynload	Source/Core/VideoBackends/D3DCommon/D3DCommon.cpp	#include Common/DynamicLibrary.h
+2	dynload	Source/Core/VideoBackends/D3DCommon/D3DCommon.cpp	DynamicLibrary
+1	dynload	Source/Core/VideoBackends/D3DCommon/D3DCommon.cpp	GetProcAddress(
+1	dynload	Source/Core/VideoBackends/D3DCommon/D3DCommon.cpp	LoadLibraryExW(
+1	dynload	Source/Core/VideoBackends/D3DCommon/FxcCache.cpp	GetModuleHandleW(
+4	file-open	Source/Core/VideoBackends/D3DCommon/FxcCache.cpp	File::IOFile
+1	file-open	Source/Core/VideoBackends/D3DCommon/FxcCache.cpp	File::ReadFileToString(
+1	file-open	Source/Core/VideoBackends/D3DCommon/Shader.cpp	#include fstream
+1	file-open	Source/Core/VideoBackends/D3DCommon/Shader.cpp	File::OpenFStream(
+1	file-open	Source/Core/VideoBackends/D3DCommon/Shader.cpp	std::ofstream
+3	app-channel	Source/Core/VideoBackends/D3DCommon/SwapChain.cpp	stderr
+1	file-open	Source/Core/VideoBackends/Metal/MTLGfx.mm	#include fstream
+1	file-open	Source/Core/VideoBackends/Metal/MTLGfx.mm	std::ofstream
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon ${AUDIOTOOLBOX_LIBRARY})
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon ${COREMEDIA_LIBRARY})
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon ${COREVIDEO_LIBRARY})
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon ${VIDEOTOOLBOX_LIBRARY})
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon FFmpeg::avcodec)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon FFmpeg::avformat)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon FFmpeg::avutil)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon FFmpeg::swresample)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon FFmpeg::swscale)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon core)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon fmt::fmt)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon glslang::SPIRV)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon glslang::glslang)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon imgui)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon implot)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon spng::spng)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon tinygltf)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon use_pch)
+1	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_link_libraries(videocommon xxhash::xxhash)
+4	build-deps	Source/Core/VideoCommon/CMakeLists.txt	target_sources(videocommon)
+1	file-open	Source/Core/VideoCommon/PostProcessing.cpp	File::ReadFileToString(
+1	env	Source/Core/VideoCommon/Present.cpp	std::getenv("ORCA_TEST_PRESENT"
+2	app-channel	Source/Core/VideoCommon/ShaderCache.cpp	Orca::Status::Shaders(
+1	file-open	Source/Core/VideoCommon/ShaderCache.cpp	File::Delete(
+1	file-open	Source/Core/VideoCommon/ShaderCache.cpp	File::IOFile
+2	file-open	Source/Core/VideoCommon/ShaderCache.h	File::IOFile

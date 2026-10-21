@@ -396,6 +396,7 @@ add_library(core
   IOS/FS/HostBackend/File.cpp
   IOS/FS/HostBackend/FS.cpp
   IOS/FS/HostBackend/FS.h
+  IOS/FS/HostBackend/Journal.cpp
   IOS/IOS.cpp
   IOS/IOS.h
   IOS/IOSC.cpp
@@ -506,6 +507,169 @@ add_library(core
   NetPlayCommon.h
   NetPlayServer.cpp
   NetPlayServer.h
+  Orca/Activity.cpp
+  Orca/Activity.h
+  Orca/BootLogs.cpp
+  Orca/BootLogs.h
+  Orca/BootMemory.cpp
+  Orca/BootMemory.h
+  Orca/Branding.cpp
+  Orca/Branding.h
+  Orca/Bridge.cpp
+  Orca/Bridge.h
+  Orca/CrashNote.cpp
+  Orca/CrashNote.h
+  Orca/Disc.cpp
+  Orca/Disc.h
+  Orca/DiscVerify.cpp
+  Orca/DiscVerify.h
+  Orca/Engine/Display.h
+  Orca/Engine/GuestMemory.cpp
+  Orca/Engine/GuestMemory.h
+  Orca/Engine/MatchTypes.cpp
+  Orca/Engine/MatchTypes.h
+  Orca/Engine/Module.cpp
+  Orca/Engine/Module.h
+  Orca/Engine/Regions.cpp
+  Orca/Engine/Regions.h
+  Orca/Engine/Ruleset.cpp
+  Orca/Engine/Ruleset.h
+  Orca/Engine/Schema.cpp
+  Orca/Engine/Schema.h
+  Orca/Engine/StrictJson.cpp
+  Orca/Engine/StrictJson.h
+  Orca/GpuDiagnostics.cpp
+  Orca/GpuDiagnostics.h
+  Orca/GpuLost.cpp
+  Orca/GpuLost.h
+  Orca/JitWarm.cpp
+  Orca/JitWarm.h
+  Orca/Launch.cpp
+  Orca/Launch.h
+  Orca/LocalStore.cpp
+  Orca/LocalStore.h
+  Orca/Bundle.cpp
+  Orca/Bundle.h
+  Orca/Mod.cpp
+  Orca/Mod.h
+  Orca/Music.cpp
+  Orca/Music.h
+  Orca/PanicDiag.cpp
+  Orca/PanicDiag.h
+  Orca/Perf.cpp
+  Orca/Perf.h
+  Orca/Policy/CharOrder.cpp
+  Orca/Policy/CharOrder.h
+  Orca/Policy/CssRules.h
+  Orca/Policy/Queue.cpp
+  Orca/Policy/Queue.h
+  Orca/Profile.cpp
+  Orca/Profile.h
+  Orca/SafeJson.cpp
+  Orca/SafeJson.h
+  Orca/Sandbox.cpp
+  Orca/Sandbox.h
+  Orca/Status.cpp
+  Orca/Status.h
+  Orca/ThreadPriority.cpp
+  Orca/Session/DirectLink.cpp
+  Orca/Session/DirectLink.h
+  Orca/Session/Events.cpp
+  Orca/Session/Events.h
+  Orca/Session/Keyframe.cpp
+  Orca/Session/Keyframe.h
+  Orca/Session/Online.cpp
+  Orca/Session/Online.h
+  Orca/Session/PadCodec.h
+  Orca/Session/Session.cpp
+  Orca/Session/Session.h
+  Orca/Session/YouGameRoom.cpp
+  Orca/Session/YouGameRoom.h
+  Orca/Games/Brawl/BrawlStages.cpp
+  Orca/Games/Brawl/BrawlGame.cpp
+  Orca/Games/Brawl/BrawlGame.h
+  Orca/Games/Brawl/BrawlModule.cpp
+  Orca/Games/Brawl/BrawlModule.h
+  Orca/Games/Generic/GenericModule.cpp
+  Orca/Games/Generic/GenericModule.h
+  Orca/Games/Brawl/BrawlStages.h
+  Orca/Games/Brawl/CharOrder.cpp
+  Orca/Games/Brawl/CharOrder.h
+  Orca/UX/Chat.cpp
+  Orca/UX/Chat.h
+  Orca/Games/Brawl/CssTitle.cpp
+  Orca/Games/Brawl/CssTitle.h
+  Orca/UX/Controllers.cpp
+  Orca/UX/Controllers.h
+  Orca/UX/ControllerSource.cpp
+  Orca/UX/ControllerSource.h
+  Orca/Games/Brawl/FreeSpace.h
+  Orca/UX/GameFont.cpp
+  Orca/UX/GameFont.h
+  Orca/UX/GamePatches.cpp
+  Orca/UX/GamePatches.h
+  Orca/UX/Kit.cpp
+  Orca/UX/Kit.h
+  Orca/UX/MenuEvents.cpp
+  Orca/UX/MenuEvents.h
+  Orca/Games/Brawl/SetBlock.cpp
+  Orca/Games/Brawl/SetBlock.h
+  Orca/Games/Brawl/MatchBlock.cpp
+  Orca/Games/Brawl/MatchBlock.h
+  Orca/Games/Brawl/MenuText.cpp
+  Orca/Games/Brawl/MenuText.h
+  Orca/Games/Brawl/NameTags.cpp
+  Orca/Games/Brawl/NameTags.h
+  Orca/Games/Brawl/NativeText.cpp
+  Orca/Games/Brawl/NativeText.h
+  Orca/Games/Brawl/OnlineMenu.cpp
+  Orca/Games/Brawl/OnlineMenu.h
+  Orca/Games/Brawl/OnlineRules.cpp
+  Orca/Games/Brawl/OnlineRules.h
+  Orca/Games/Brawl/OnlineSeats.cpp
+  Orca/Games/Brawl/OnlineSeats.h
+  Orca/UX/Overlay.cpp
+  Orca/UX/Overlay.h
+  Orca/UX/Probe.cpp
+  Orca/UX/Probe.h
+  Orca/UX/QueueApp.cpp
+  Orca/UX/QueueApp.h
+  Orca/Games/Brawl/Queue.cpp
+  Orca/Games/Brawl/Queue.h
+  Orca/Games/Brawl/RankedSet.cpp
+  Orca/Games/Brawl/RankedSet.h
+  Orca/Games/Brawl/PPlus/RankedPPlus.cpp
+  Orca/Games/Brawl/PPlus/RankedPPlus.h
+  Orca/UX/RankedSteps.cpp
+  Orca/UX/RankedSteps.h
+  Orca/Games/Brawl/Relabel.cpp
+  Orca/Games/Brawl/Relabel.h
+  Orca/Games/Brawl/Results.cpp
+  Orca/Games/Brawl/Results.h
+  Orca/Games/Brawl/Rulesets.cpp
+  Orca/Games/Brawl/Rulesets.h
+  Orca/UX/Rumble.cpp
+  Orca/UX/Rumble.h
+  Orca/UX/SetEnd.cpp
+  Orca/UX/SetEnd.h
+  Orca/UX/Search.cpp
+  Orca/UX/Search.h
+  Orca/Games/Brawl/StageCursors.cpp
+  Orca/Games/Brawl/StageCursors.h
+  Orca/UX/UX.cpp
+  Orca/UX/UX.h
+  Orca/UX/Widgets.cpp
+  Orca/UX/Widgets.h
+  Orca/UX/YgCard.cpp
+  Orca/UX/YgCard.h
+  Orca/UX/OrbCombo.cpp
+  Orca/UX/OrbCombo.h
+  Orca/UX/OverlayKey.cpp
+  Orca/UX/OverlayKey.h
+  Orca/UX/YgOrb.cpp
+  Orca/UX/YgOrb.h
+  Orca/UX/YgOrbDraw.cpp
+  Orca/UX/YgOrbDraw.h
   NetworkCaptureLogger.cpp
   NetworkCaptureLogger.h
   PatchEngine.cpp
@@ -569,6 +733,26 @@ add_library(core
   PowerPC/SignatureDB/MEGASignatureDB.h
   PowerPC/SignatureDB/SignatureDB.cpp
   PowerPC/SignatureDB/SignatureDB.h
+  Rollback/Cow.cpp
+  Rollback/Cow.h
+  Rollback/Diag.cpp
+  Rollback/Diag.h
+  Rollback/Harness.cpp
+  Rollback/Harness.h
+  Rollback/InputGate.cpp
+  Rollback/InputGate.h
+  Rollback/Loopback.cpp
+  Rollback/Loopback.h
+  Rollback/OnlineMatch.cpp
+  Rollback/OnlineMatch.h
+  Rollback/ReplayStream.cpp
+  Rollback/ReplayStream.h
+  Rollback/Rollback.cpp
+  Rollback/Rollback.h
+  Rollback/SessionPort.cpp
+  Rollback/SessionPort.h
+  Rollback/UndoLog.cpp
+  Rollback/UndoLog.h
   State.cpp
   State.h
   SyncIdentifier.h
@@ -697,12 +881,71 @@ PUBLIC
   videosoftware
 
 PRIVATE
+  CURL::libcurl
+  ed25519
+  imgui
+  LibJuice::LibJuice
+  zstd::zstd
   FatFs
   fmt::fmt
   LZO::LZO
   LZ4::LZ4
   ZLIB::ZLIB
 )
+
+# The Ed25519 key a flat bundle's mod.sig must be by (Core/Orca/Bundle.cpp): 64 lowercase hex digits.
+# Unset, the build trusts no key and every flat bundle is refused (legacy only). The bundle-flat TEST
+# key is trusted only with ORCA_BUNDLE_TRUST_TEST_KEY=ON (tests and gates); release scripts refuse it.
+set(ORCA_BUNDLE_PUBLIC_KEY "" CACHE STRING
+    "Ed25519 public key (64 lowercase hex digits) that signs Orca flat bundles; empty: none")
+option(ORCA_BUNDLE_TRUST_TEST_KEY "Also trust the bundle-flat TEST key (tests only, never a release)" OFF)
+set(ORCA_BUNDLE_DEFINITIONS "")
+if(ORCA_BUNDLE_PUBLIC_KEY)
+  if(NOT ORCA_BUNDLE_PUBLIC_KEY MATCHES "^[0-9a-f]+$")
+    message(FATAL_ERROR "ORCA_BUNDLE_PUBLIC_KEY must be 64 lowercase hex digits")
+  endif()
+  string(LENGTH "${ORCA_BUNDLE_PUBLIC_KEY}" ORCA_BUNDLE_PUBLIC_KEY_LENGTH)
+  if(NOT ORCA_BUNDLE_PUBLIC_KEY_LENGTH EQUAL 64)
+    message(FATAL_ERROR "ORCA_BUNDLE_PUBLIC_KEY must be 64 lowercase hex digits")
+  endif()
+  list(APPEND ORCA_BUNDLE_DEFINITIONS "ORCA_BUNDLE_PUBLIC_KEY=\"${ORCA_BUNDLE_PUBLIC_KEY}\"")
+  message(STATUS "Orca flat bundles: trusting key ${ORCA_BUNDLE_PUBLIC_KEY}")
+endif()
+if(ORCA_BUNDLE_TRUST_TEST_KEY)
+  list(APPEND ORCA_BUNDLE_DEFINITIONS ORCA_BUNDLE_TRUST_TEST_KEY)
+  message(WARNING "Orca flat bundles: trusting the TEST key (ORCA_BUNDLE_TRUST_TEST_KEY): never a release")
+endif()
+if(NOT ORCA_BUNDLE_DEFINITIONS)
+  message(STATUS "Orca flat bundles: no key (set ORCA_BUNDLE_PUBLIC_KEY): every bundle is refused")
+endif()
+# Read by Source/UnitTests/Core (OrcaBundle.PinnedKey checks the build trusts exactly these).
+set(ORCA_BUNDLE_DEFINITIONS "${ORCA_BUNDLE_DEFINITIONS}" CACHE INTERNAL "")
+set_source_files_properties(Orca/Bundle.cpp PROPERTIES COMPILE_DEFINITIONS "${ORCA_BUNDLE_DEFINITIONS}")
+# The running version a mod.json's engine.minOrca is checked against (Mod::EngineVersion).
+set_source_files_properties(Orca/Mod.cpp PROPERTIES COMPILE_DEFINITIONS
+                            "ORCA_ENGINE_VERSION=\"${ORCA_VERSION}\"")
+# Orca data compiled in byte for byte (Engine/Ruleset.cpp, Games/Brawl/Rulesets.cpp): the ruleset
+# schema and the builtin module's rulesets, each written as a list of char literals that a source
+# file includes. Changing one of them re-runs CMake.
+set(ORCA_EMBED_DIR "${CMAKE_CURRENT_BINARY_DIR}/OrcaEmbed")
+foreach(orca_embed_src
+    "${CMAKE_SOURCE_DIR}/Tools/orca/mods/ruleset.schema.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Orca/Games/Brawl/Rulesets/brawl-supernova-2025.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Orca/Games/Brawl/Rulesets/pplus-2024.json")
+  get_filename_component(orca_embed_name "${orca_embed_src}" NAME)
+  file(READ "${orca_embed_src}" orca_embed_hex HEX)
+  string(REGEX REPLACE "([0-9a-f][0-9a-f])" "'\\\\x\\1'," orca_embed_list "${orca_embed_hex}")
+  file(CONFIGURE OUTPUT "${ORCA_EMBED_DIR}/${orca_embed_name}.inc" CONTENT "${orca_embed_list}\n" @ONLY)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${orca_embed_src}")
+endforeach()
+target_include_directories(core PRIVATE "${ORCA_EMBED_DIR}")
+if(ORCA_BUNDLE_TRUST_TEST_KEY)
+  set_source_files_properties(Orca/UX/UX.cpp PROPERTIES COMPILE_DEFINITIONS ORCA_BUNDLE_TRUST_TEST_KEY)
+endif()
+# The SD image's SHA-256 uses CNG; GPU diagnostics read process memory and TDR registry values.
+if(WIN32)
+  target_link_libraries(core PRIVATE bcrypt psapi advapi32)
+endif()
 
 if(LIBUDEV_FOUND)
   target_include_directories(core PRIVATE ${LIBUDEV_INCLUDE_DIR})
@@ -849,6 +1092,25 @@ if(MSVC)
   target_link_libraries(core PRIVATE use_pch)
 endif()
 
+# Orca and Rollback work out values every peer must agree on (the input gate's steering and
+# presses, what the hooks write to emulated memory) on different hosts and compilers, so no fused
+# multiply-adds there: Apple clang contracts a * b + c into one by default on ARM64, which rounds
+# once where x86-64 rounds twice. That code keeps to integers anyway (ORCA.md "Determinism across hosts");
+# this is the belt to those braces. MSVC needs nothing: /fp:precise (CMakeLists.txt) never
+# contracts in VS 2022 and later, and the x86-64 baseline (no /arch:AVX2) has no FMA to emit.
+if(NOT MSVC)
+  get_target_property(ORCA_DETERMINISTIC_SOURCES core SOURCES)
+  list(FILTER ORCA_DETERMINISTIC_SOURCES INCLUDE REGEX "^(Orca|Rollback)/.*\\.cpp$")
+  set_property(SOURCE ${ORCA_DETERMINISTIC_SOURCES} APPEND PROPERTY COMPILE_OPTIONS -ffp-contract=off)
+  # The replay codec and the threads that pack and unpack replays catch their own size and
+  # allocation failures (try/catch, as MSVC's /EHsc builds them); the rest of a non-MSVC build has
+  # -fno-exceptions. The boot boundary must unwind its scope guards, and the cache allocator
+  # must throw rather than abort when its vector growth runs out of memory.
+  set_property(SOURCE Orca/Session/Keyframe.cpp Rollback/OnlineMatch.cpp
+               Core.cpp Orca/BootMemory.cpp PowerPC/PPCCache.cpp APPEND PROPERTY
+               COMPILE_OPTIONS -fexceptions)
+endif()
+
 if(USE_RETRO_ACHIEVEMENTS)
   target_link_libraries(core PUBLIC rcheevos)
   target_compile_definitions(core PUBLIC -DUSE_RETRO_ACHIEVEMENTS)
@@ -857,3 +1119,6 @@ if(USE_RETRO_ACHIEVEMENTS)
     target_compile_definitions(core PUBLIC -DRC_CLIENT_SUPPORTS_RAINTEGRATION)
   endif()
 endif()
+
+# Orca rollback harness hashes RAM with xxHash
+target_link_libraries(core PRIVATE xxhash::xxhash)

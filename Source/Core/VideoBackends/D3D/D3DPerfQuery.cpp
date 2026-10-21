@@ -6,6 +6,7 @@
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
 #include "VideoBackends/D3D/D3DBase.h"
+#include "VideoBackends/D3DCommon/DeviceLost.h"
 #include "VideoCommon/FramebufferManager.h"
 #include "VideoCommon/VideoCommon.h"
 #include "VideoCommon/VideoConfig.h"
@@ -110,6 +111,14 @@ void PerfQuery::FlushOne()
   {
     // TODO: Might cause us to be stuck in an infinite loop!
     hr = D3D::context->GetData(entry.query.Get(), &result, sizeof(result), 0);
+    // Orca: a lost device answers DXGI_ERROR_DEVICE_REMOVED forever; the count is 0 while the run
+    // stops (D3DCommon/DeviceLost.h). S_FALSE (not ready yet) is no failure.
+    if (FAILED(hr))
+    {
+      D3DCommon::CheckDeviceLost(hr, "a query");
+      result = 0;
+      break;
+    }
   }
 
   // NOTE: Reported pixel metrics should be referenced to native resolution

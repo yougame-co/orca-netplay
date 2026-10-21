@@ -12,6 +12,7 @@
 
 #include "VideoBackends/D3D/D3DState.h"
 #include "VideoBackends/D3DCommon/D3DCommon.h"
+#include "VideoBackends/D3DCommon/DeviceLost.h"
 
 namespace DX11
 {
@@ -36,7 +37,8 @@ bool D3DBoundingBox::Initialize()
   data.SysMemSlicePitch = 0;
   HRESULT hr;
   hr = D3D::device->CreateBuffer(&desc, &data, &m_buffer);
-  ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to create BoundingBox Buffer: {}", DX11HRWrap(hr));
+  ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "the bounding box buffer"),
+             "Failed to create BoundingBox Buffer: {}", DX11HRWrap(hr));
   if (FAILED(hr))
     return false;
   D3DCommon::SetDebugObjectName(m_buffer.Get(), "BoundingBox Buffer");
@@ -47,8 +49,8 @@ bool D3DBoundingBox::Initialize()
   desc.BindFlags = 0;
   desc.MiscFlags = 0;
   hr = D3D::device->CreateBuffer(&desc, nullptr, &m_staging_buffer);
-  ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to create BoundingBox Staging Buffer: {}",
-             DX11HRWrap(hr));
+  ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "the bounding box buffer"),
+             "Failed to create BoundingBox Staging Buffer: {}", DX11HRWrap(hr));
   if (FAILED(hr))
     return false;
   D3DCommon::SetDebugObjectName(m_staging_buffer.Get(), "BoundingBox Staging Buffer");
@@ -61,7 +63,8 @@ bool D3DBoundingBox::Initialize()
   UAVdesc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
   UAVdesc.Buffer.NumElements = NUM_BBOX_VALUES;
   hr = D3D::device->CreateUnorderedAccessView(m_buffer.Get(), &UAVdesc, &m_uav);
-  ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to create BoundingBox UAV: {}", DX11HRWrap(hr));
+  ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "the bounding box buffer"),
+             "Failed to create BoundingBox UAV: {}", DX11HRWrap(hr));
   if (FAILED(hr))
     return false;
   D3DCommon::SetDebugObjectName(m_uav.Get(), "BoundingBox UAV");
@@ -77,6 +80,9 @@ std::vector<BBoxType> D3DBoundingBox::Read(u32 index, u32 length)
 
   D3D11_MAPPED_SUBRESOURCE map;
   HRESULT hr = D3D::context->Map(m_staging_buffer.Get(), 0, D3D11_MAP_READ, 0, &map);
+  // Orca: a lost device reads zeros, and says so once (D3DCommon/DeviceLost.h).
+  if (FAILED(hr))
+    D3DCommon::CheckDeviceLost(hr, "the bounding box's map");
   if (SUCCEEDED(hr))
   {
     std::memcpy(values.data(), static_cast<const u8*>(map.pData) + sizeof(BBoxType) * index,

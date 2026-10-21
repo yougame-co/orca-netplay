@@ -1108,6 +1108,10 @@ u32 PPCAnalyzer::Analyze(u32 address, CodeBlock* block, CodeBuffer* buffer,
       }
       else if (bitexact_inputs)
       {
+        // fmr, fneg, fabs, fnabs and fsel write ps0 and keep d's ps1, so for them this describes
+        // ps0 only. An op that reads c's ps1 under fprIsSingle (ps_mul, ps_madd, ps_muls1) can then
+        // skip a rounding the interpreter does. Jit64 and JitArm64 share this flag, so the two JITs
+        // still agree with each other; only the interpreter can differ.
         fprIsSingle[op.fregOut] = (fprIsSingle & bitexact_inputs) == bitexact_inputs;
         fprIsDuplicated[op.fregOut] = false;
       }

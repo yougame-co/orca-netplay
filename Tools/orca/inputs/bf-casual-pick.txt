@@ -1,0 +1,48 @@
+# A casual Brawl game's stage pick (ORCA.md "Casual stage pick"), Mario (P1) vs Samus (P2), two
+# games. Run with ORCA_TEST_QUEUE=casual (the header's coin 0: port 1 names first) and
+# ORCA_UX_TEST_NAMES=ada,bo, e.g. the sync test:
+#   ORCA_SESSION=1 ORCA_TEST_QUEUE=casual ORCA_UX_TEST_NAMES=ada,bo YG_INPUT=<this> \
+#   YG_SYNCTEST=7 YG_SYNCTEST_FROM=1700 YG_EXIT_AFTER=<frames> dolphin-emu-nogui -p headless \
+#   -v Null -e <disc>
+# Both ports send the same menu inputs where it doesn't matter: only the turn's port acts (the
+# input gate). On the stage select A never takes a stage: the gate reads it as X, the turn's
+# preferred stage.
+# Game 1: port 1 names Battlefield with A; port 2's 7 s run out (a random legal stage for it); the
+# coin takes one, the flow moves the cursor there and presses A; port 2 walks off three times.
+# Game 2: port 1 names Battlefield again, port 2 names the stage under the cursor with A (where
+# port 1 left it: Battlefield), so both picks are Battlefield.
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain mash 30 99999 1 40 A
+@scSelctCharacter:1 53 56 1 A
+@scSelctCharacter:1 83 86 2 A
+@scSelctCharacter:1 113 153 1 SY=255
+@scSelctCharacter:1 113 153 2 SY=255
+@scSelctCharacter:1 173 176 1 A
+@scSelctCharacter:1 193 196 2 A
+@scSelctCharacter:1 233 236 1 START
+# Game 1: up to the top row, one step left onto Battlefield; port 1's A (port 2's is masked).
+@scSelStage:1 40 59 1 SY=255
+@scSelStage:1 40 59 2 SY=255
+@scSelStage:1 62 64 1 SX=1
+@scSelStage:1 62 64 2 SX=1
+@scSelStage:1 75 77 1 A
+@scSelStage:1 75 77 2 A
+# A held B and Start on the stage select do nothing (masked for both).
+@scSelStage:1 200 230 1 B
+@scSelStage:1 200 230 2 START
+# Each game: port 2 walks off the left edge, three stocks.
+@scMelee 250 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START
+# Game 2: the tokens are still down; port 1 starts.
+@scSelctCharacter:2 mash 60 99999 1 45 START
+@scSelStage:2 40 59 1 SY=255
+@scSelStage:2 40 59 2 SY=255
+@scSelStage:2 62 64 1 SX=1
+@scSelStage:2 62 64 2 SX=1
+@scSelStage:2 75 77 1 A
+@scSelStage:2 120 122 2 A

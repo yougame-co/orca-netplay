@@ -16,6 +16,7 @@
 #include <fmt/format.h>
 
 #include "Common/Hash.h"
+#include "Common/Network.h"
 
 #include "Core/AchievementManager.h"
 #include "Core/Config/AchievementSettings.h"
@@ -113,7 +114,7 @@ Discord::Handler::~Handler() = default;
 void Init()
 {
 #ifdef USE_DISCORD_PRESENCE
-  if (!Config::Get(Config::MAIN_USE_DISCORD_PRESENCE))
+  if (Common::OfflineReplay() || !Config::Get(Config::MAIN_USE_DISCORD_PRESENCE))
     return;
 
   DiscordEventHandlers handlers = {};
@@ -129,7 +130,7 @@ void Init()
 void UpdateClientID(const std::string& new_client)
 {
 #ifdef USE_DISCORD_PRESENCE
-  if (!Config::Get(Config::MAIN_USE_DISCORD_PRESENCE))
+  if (Common::OfflineReplay() || !Config::Get(Config::MAIN_USE_DISCORD_PRESENCE))
     return;
 
   s_using_custom_client = new_client.empty() || new_client.compare(DEFAULT_CLIENT_ID) != 0;
@@ -145,7 +146,7 @@ void UpdateClientID(const std::string& new_client)
 void CallPendingCallbacks()
 {
 #ifdef USE_DISCORD_PRESENCE
-  if (!Config::Get(Config::MAIN_USE_DISCORD_PRESENCE))
+  if (Common::OfflineReplay() || !Config::Get(Config::MAIN_USE_DISCORD_PRESENCE))
     return;
 
   Discord_RunCallbacks();
@@ -169,7 +170,7 @@ bool UpdateDiscordPresenceRaw(const std::string& details, const std::string& sta
                               const int party_max)
 {
 #ifdef USE_DISCORD_PRESENCE
-  if (!Config::Get(Config::MAIN_USE_DISCORD_PRESENCE))
+  if (Common::OfflineReplay() || !Config::Get(Config::MAIN_USE_DISCORD_PRESENCE))
     return false;
 
   // only /dev/dolphin sets this, don't let homebrew change official client ID raw presence
@@ -199,7 +200,7 @@ void UpdateDiscordPresence(int party_size, SecretType type, const std::string& s
                            const std::string& current_game, bool reset_timer)
 {
 #ifdef USE_DISCORD_PRESENCE
-  if (!Config::Get(Config::MAIN_USE_DISCORD_PRESENCE))
+  if (Common::OfflineReplay() || !Config::Get(Config::MAIN_USE_DISCORD_PRESENCE))
     return;
 
   // reset the client ID if running homebrew has changed it
@@ -304,7 +305,7 @@ std::string CreateSecretFromIPAddress(const std::string& ip_address, int port)
 void Shutdown()
 {
 #ifdef USE_DISCORD_PRESENCE
-  if (!Config::Get(Config::MAIN_USE_DISCORD_PRESENCE))
+  if (Common::OfflineReplay() || !Config::Get(Config::MAIN_USE_DISCORD_PRESENCE))
     return;
 
   Discord_ClearPresence();

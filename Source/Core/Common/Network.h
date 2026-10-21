@@ -22,6 +22,10 @@ struct sockaddr_in;
 
 namespace Common
 {
+// Product file playback has no network, including loopback. Match ReplayStream's ws(s) spelling;
+// an empty/unset source keeps ordinary play, and live watching keeps its existing transport.
+bool OfflineReplay();
+
 enum class MACConsumer
 {
   BBA,

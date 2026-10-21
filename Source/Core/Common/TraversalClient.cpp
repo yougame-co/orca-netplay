@@ -10,6 +10,7 @@
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
+#include "Common/Network.h"
 #include "Common/Random.h"
 #include "Core/NetPlayProto.h"
 
@@ -50,6 +51,9 @@ TraversalClient::FailureReason TraversalClient::GetFailureReason() const
 
 void TraversalClient::ReconnectToServer()
 {
+  if (OfflineReplay())
+    return;
+
   if (enet_address_set_host(&m_ServerAddress, m_Server.c_str()))
   {
     OnFailure(FailureReason::BadHost);
@@ -135,6 +139,9 @@ void TraversalClient::Update()
 
 void TraversalClient::HandleServerPacket(TraversalPacket* packet)
 {
+  if (OfflineReplay())
+    return;
+
   u8 ok = 1;
   switch (packet->type)
   {
@@ -247,6 +254,9 @@ void TraversalClient::OnFailure(FailureReason reason)
 
 void TraversalClient::ResendPacket(OutgoingTraversalPacketInfo* info)
 {
+  if (OfflineReplay())
+    return;
+
   bool testPacket =
       m_TestSocket != ENET_SOCKET_NULL && info->packet.type == TraversalPacketType::TestPlease;
   info->sendTime = enet_time_get();
@@ -296,6 +306,9 @@ void TraversalClient::HandlePing()
 
 void TraversalClient::NewTraversalTest()
 {
+  if (OfflineReplay())
+    return;
+
   // create test socket
   if (m_TestSocket != ENET_SOCKET_NULL)
     enet_socket_destroy(m_TestSocket);
@@ -444,6 +457,9 @@ static u16 g_OldListenPort;
 bool EnsureTraversalClient(const std::string& server, u16 server_port, u16 server_port_alt,
                            u16 listen_port)
 {
+  if (OfflineReplay())
+    return false;
+
   if (!g_MainNetHost || !g_TraversalClient || server != g_OldServer ||
       server_port != g_OldServerPort || server_port_alt != g_OldServerPortAlt ||
       listen_port != g_OldListenPort)

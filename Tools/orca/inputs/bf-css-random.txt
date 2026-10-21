@@ -1,0 +1,79 @@
+# Random in a ranked queue2 set (ORCA.md "The queue's character select": Random is allowed in casual
+# and ranked), Brawl, as bf-css-lockin.txt but every pick is RANDOM (character id 0x29,
+# Selch_Random; the tile at the right end of the grid's bottom row, about 22.8..28.7, -4.1..0.1):
+#   - game 1: on the player's own character select port 1 goes up 20 frames and right 58 (25.6,
+#     -3.2) onto RANDOM's bottom quarter (an A gate edge case), A, Start:
+#     `orca queue ready ranked 41 0`; port 2's pick (ORCA_TEST_QUEUE_PICK) is Random too, steered
+#     onto the host's RANDOM tile; both ready (the game resolves both Randoms as the character
+#     select ends), the stage select's two cursors (bf-sss-cursors.txt); port 2 walks off;
+#   - game 2's character order, port 1 (the winner) first: up 41 frames over another character with
+#     its token down on RANDOM, B takes the token up, down 21 (-3.2) and right 58 onto RANDOM again,
+#     A puts it there, Start locks Random in; port 2's token is still down on RANDOM from game 1,
+#     and its Start locks that in: the stage select at once; both agree on Battlefield
+#     (bf-sss-cursors.txt).
+# Run with ORCA_TEST_QUEUE=ranked:solo ORCA_UX_TEST_NAMES=ada,bo YG_RESULTS=1
+# ORCA_TEST_SET_RULES=1,8 ORCA_TEST_QUEUE_PICK=<the solo character select's frame +
+# 300>:41:0:25.7:-1.5:1532, e.g. the sync test from the main menu on (YG_SYNCTEST=7
+# YG_SYNCTEST_FROM=1440).
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+# PLAY ONLINE, With Anyone, Ranked (one below Casual).
+@muMenuMain:1 120 123 1 DOWN
+@muMenuMain:1 170 173 1 A
+@muMenuMain:1 220 223 1 RIGHT
+@muMenuMain:1 270 273 1 A
+@muMenuMain:1 320 323 1 DOWN
+@muMenuMain:1 370 373 1 A
+# The own character select: up 20 and right 58 onto RANDOM's bottom quarter (y -3.2), A, Start
+# (ready); then both ready.
+@scSelctCharacter:1 113 132 1 SY=255
+@scSelctCharacter:1 137 194 1 SX=255
+@scSelctCharacter:1 205 208 1 A
+@scSelctCharacter:1 240 243 1 START
+@scSelctCharacter:1 mash 600 99999 1 30 START
+@scSelctCharacter:1 mash 620 99999 2 30 START
+# Game 1's stage select with the two cursors, as bf-sss-cursors.txt: port 2 proposes Smashville,
+# port 1 strikes Battlefield, port 2 Yoshi's Island, both propose Pokemon Stadium: agreed.
+@scSelStage:1 40 60 1 SY=255
+@scSelStage:1 40 48 2 SX=255 SY=255
+@scSelStage:1 49 49 2 SY=255
+@scSelStage:1 64 66 2 A
+@scSelStage:1 70 72 1 X
+@scSelStage:1 80 83 2 SX=0 SY=255
+@scSelStage:1 84 94 2 SX=0
+@scSelStage:1 100 102 2 X
+@scSelStage:1 80 92 1 SX=255 SY=0
+@scSelStage:1 93 101 1 SY=0
+@scSelStage:1 110 112 1 A
+@scSelStage:1 140 141 1 SX=255 SY=255
+@scSelStage:1 142 146 1 SY=255
+@scSelStage:1 155 157 1 A
+@scSelStage:1 160 167 2 SX=255 SY=0
+@scSelStage:1 168 173 2 SX=255
+@scSelStage:1 185 187 2 A
+# Port 2 walks off; on through the results.
+@scMelee 250 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START
+# Game 2: port 1 (the winner) up over another character (its token is down on RANDOM), B takes the
+# token up, down and right onto RANDOM, A puts it there, Start locks Random in.
+@scSelctCharacter:2 30 70 1 SY=255
+@scSelctCharacter:2 80 80 1 B
+@scSelctCharacter:2 100 120 1 SY=1
+@scSelctCharacter:2 122 179 1 SX=255
+@scSelctCharacter:2 190 192 1 A
+@scSelctCharacter:2 210 212 1 START
+# Port 2: its token still down on RANDOM from game 1; Start locks that in: the stage select.
+@scSelctCharacter:2 260 262 2 START
+# Game 2's stage select, as bf-sss-cursors.txt: the loser proposes Battlefield, the winner skips
+# its ban with Y and proposes Battlefield: agreed.
+@scSelStage:2 40 46 2 SX=0 SY=255
+@scSelStage:2 47 60 2 SY=255
+@scSelStage:2 70 72 2 A
+@scSelStage:2 80 82 1 Y
+@scSelStage:2 90 110 1 SY=255
+@scSelStage:2 120 122 1 A
+@scMelee 250 99999 2 SX=1

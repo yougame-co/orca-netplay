@@ -12,6 +12,7 @@
 #include "Core/HW/Memmap.h"
 #include "Core/PowerPC/JitInterface.h"
 #include "Core/PowerPC/PowerPC.h"
+#include "Core/Rollback/Diag.h"
 #include "Core/System.h"
 
 namespace PowerPC
@@ -106,6 +107,8 @@ void Cache::Reset()
 
 void InstructionCache::Reset(JitInterface& jit_interface)
 {
+  if (Rollback::Diag::g_jit_code_log)
+    Rollback::Diag::JitCodeNote("icache reset");
   Cache::Reset();
   jit_interface.ClearSafe();
 }

@@ -1,0 +1,9 @@
+[
+  {
+    "pattern": "Scene frame \\d+: .* -> scMelee",
+    "action": "drop",
+    "role": 1,
+    "delay": 5,
+    "seconds": 16
+  }
+]

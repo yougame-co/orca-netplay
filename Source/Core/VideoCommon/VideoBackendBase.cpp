@@ -23,6 +23,7 @@
 #include "Core/DolphinAnalytics.h"
 #include "Core/HW/SystemTimers.h"
 #include "Core/HW/VideoInterface.h"
+#include "Core/Orca/Profile.h"
 #include "Core/System.h"
 
 // TODO: ugly
@@ -101,7 +102,7 @@ void VideoBackendBase::Video_OutputXFB(u32 xfb_addr, u32 fb_width, u32 fb_stride
   auto& system = Core::System::GetInstance();
   auto& core_timing = system.GetCoreTiming();
 
-  if (!g_ActiveConfig.bImmediateXFB)
+  if (!g_ActiveConfig.bImmediateXFB && !VideoCommon_IsSkippingRender())
   {
     system.GetFifo().SyncGPU(Fifo::SyncGPUReason::Swap);
 
@@ -312,6 +313,9 @@ bool VideoBackendBase::InitializeShared(std::unique_ptr<AbstractGfx> gfx,
 
   // do not initialize again for the config window
   m_initialized = true;
+  // Orca: render skipping stays off until rollback asks for it. ORCA_TEST_SKIP_RENDER=1 (tests
+  // only) skips rendering for the whole run.
+  VideoCommon_SetSkipRender(Orca::TestSkipRender());
 
   g_gfx = std::move(gfx);
   g_vertex_manager = std::move(vertex_manager);
@@ -366,11 +370,19 @@ bool VideoBackendBase::InitializeShared(std::unique_ptr<AbstractGfx> gfx,
   g_shader_cache->InitializeShaderCache();
   system.GetCustomResourceManager().Initialize();
 
+  ScreenshotRequests().SetRenderer(g_frame_dumper.get());
   return true;
 }
 
 void VideoBackendBase::ShutdownShared()
 {
+  // Wait out host screenshot requests before destroying any renderer components.
+  ScreenshotRequests().SetRenderer(nullptr);
+  // Orca: the overlay's own textures go first, while their device is alive. A texture kept past
+  // the backend keeps its device, and the driver's threads, alive after the backend has unloaded
+  // the graphics library they call back into.
+  OSD::ReleaseHostOverlay();
+
   auto& system = Core::System::GetInstance();
   system.GetCustomResourceManager().Shutdown();
 
