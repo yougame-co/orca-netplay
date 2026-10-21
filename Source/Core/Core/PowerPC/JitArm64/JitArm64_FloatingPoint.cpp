@@ -3,8 +3,6 @@
 
 #include "Core/PowerPC/JitArm64/Jit.h"
 
-#include <optional>
-
 #include "Common/Arm64Emitter.h"
 #include "Common/CPUDetect.h"
 #include "Common/CommonTypes.h"
@@ -62,6 +60,81 @@ void JitArm64::Force25BitPrecision(ARM64Reg output, ARM64Reg input)
   }
 }
 
+// Orca: PowerPC's fneg, fabs and fnabs (their paired forms and fnmadd/fnmsub's final negation too)
+// change only the sign bit, NaNs included, as Jit64 does with XORPD/ANDPD/ORPD. AArch64's FNEG and
+// FABS leave a NaN's sign alone while FPCR.AH is set (the guest's non-IEEE mode), which made Macs
+// and PCs compute NaNs of opposite sign and desync.
+// size: 32 or 64 (the lanes). packed: Vd and Vn are D (two singles) or Q (two doubles) registers
+// and every lane changes; otherwise only the low lane, and the rest of Vd is zeroed as FNEG did.
+void JitArm64::EmitSignOp(SignOp op, u8 size, ARM64Reg Vd, ARM64Reg Vn, bool packed,
+                          ARM64Reg scratch_gpr, ARM64Reg scratch_fpr)
+{
+  const u64 sign = size == 64 ? 0x8000000000000000ULL : 0x80000000ULL;
+  const u64 all = size == 64 ? ~0ULL : 0xFFFFFFFFULL;
+  if (!packed)
+  {
+    const bool wide = size == 64;
+    const ARM64Reg RA = wide ? EncodeRegTo64(scratch_gpr) : EncodeRegTo32(scratch_gpr);
+    const GPRSize gpr_size = wide ? GPRSize::B64 : GPRSize::B32;
+    const ARM64Reg FD = wide ? EncodeRegToDouble(Vd) : EncodeRegToSingle(Vd);
+    const ARM64Reg FN = wide ? EncodeRegToDouble(Vn) : EncodeRegToSingle(Vn);
+    m_float_emit.FMOV(RA, FN);
+    switch (op)
+    {
+    case SignOp::Negate:
+      EOR(RA, RA, LogicalImm(sign, gpr_size));
+      break;
+    case SignOp::Abs:
+      AND(RA, RA, LogicalImm(all & ~sign, gpr_size));
+      break;
+    case SignOp::NegativeAbs:
+      ORR(RA, RA, LogicalImm(sign, gpr_size));
+      break;
+    }
+    m_float_emit.FMOV(FD, RA);
+    return;
+  }
+
+  const ARM64Reg mask = IsQuad(Vd) ? EncodeRegToQuad(scratch_fpr) : EncodeRegToDouble(scratch_fpr);
+  if (size == 64)
+  {
+    MOVI2R(EncodeRegTo64(scratch_gpr), sign);
+    m_float_emit.DUP(64, mask, EncodeRegTo64(scratch_gpr));
+  }
+  else
+  {
+    m_float_emit.MOVI(32, mask, 0x80, 24);
+  }
+  switch (op)
+  {
+  case SignOp::Negate:
+    m_float_emit.EOR(Vd, Vn, mask);
+    break;
+  case SignOp::Abs:
+    m_float_emit.BIC(Vd, Vn, mask);
+    break;
+  case SignOp::NegativeAbs:
+    m_float_emit.ORR(Vd, Vn, mask);
+    break;
+  }
+}
+
+void JitArm64::EmitPPCDefaultNaN(ARM64Reg Vd, bool single)
+{
+  const ARM64Reg VD = EncodeRegToDouble(Vd);
+  if (single)
+  {
+    m_float_emit.MOVI(32, VD, 0x7F, 24);  // 0x7F000000
+    m_float_emit.ORR(32, VD, 0xC0, 16);   // 0x7FC00000
+  }
+  else
+  {
+    m_float_emit.MOVI(64, VD, 0xFFFF'0000'0000'0000ULL);
+    m_float_emit.BIC(16, VD, 0x80, 8);  // 0x7FFF'0000'0000'0000
+    m_float_emit.BIC(16, VD, 0x07, 0);  // 0x7FF8'0000'0000'0000
+  }
+}
+
 void JitArm64::fp_arith(UGeckoInstruction inst)
 {
   INSTRUCTION_START
@@ -87,8 +160,8 @@ void JitArm64::fp_arith(UGeckoInstruction inst)
   const bool round_c = use_c && output_is_single && !js.op->fprIsSingle[c];
 
   const auto inputs_are_singles_func = [&] {
-    return fpr.IsSingle(a, true) && (!use_b || fpr.IsSingle(b, true)) &&
-           (!use_c || fpr.IsSingle(c, true));
+    return IsSingleForArithmetic(a, true) && (!use_b || IsSingleForArithmetic(b, true)) &&
+           (!use_c || IsSingleForArithmetic(c, true));
   };
 
   const bool single = inputs_are_singles_func() && output_is_single &&
@@ -206,8 +279,12 @@ void JitArm64::fp_arith(UGeckoInstruction inst)
       break;
     }
 
+    // Taken before the accurate-NaN branch, which skips the negation (EmitSignOp).
+    Arm64GPRCache::ScopedARM64Reg negate_gpr = ARM64Reg::INVALID_REG;
+    if (negate_result)
+      negate_gpr = gpr.GetScopedReg();
+
     Common::SmallVector<FixupBranch, 4> nan_fixups;
-    std::optional<FixupBranch> nan_early_fixup;
     if (m_accurate_nans)
     {
       // Check if we need to handle NaNs
@@ -226,13 +303,11 @@ void JitArm64::fp_arith(UGeckoInstruction inst)
       if (use_c && VA != VC && (!use_b || VB != VC))
         inputs.push_back(VC);
 
-      // If any inputs are NaNs, pick the first NaN of them and set its quiet bit.
-      // However, we can skip checking the last input, because if exactly one input is NaN, AArch64
-      // arithmetic instructions automatically pick that NaN and make it quiet, just like we want.
-      for (size_t i = 0; i < inputs.size() - 1; ++i)
+      // If any inputs are NaNs, pick the first NaN of them and set its quiet bit: PowerPC's order,
+      // a, b, c, with c as it is before its 25-bit rounding. Orca: check the last input too, so a
+      // result with no NaN input gets PowerPC's default NaN, not the host's (sign varies with AH).
+      for (const ARM64Reg input : inputs)
       {
-        const ARM64Reg input = inputs[i];
-
         m_float_emit.FCMP(input);
         FixupBranch skip = B(CCFlags::CC_VC);
 
@@ -244,17 +319,10 @@ void JitArm64::fp_arith(UGeckoInstruction inst)
         SetJumpTarget(skip);
       }
 
-      if (negate_result)
-      {
-        // If we have a NaN, we must not execute FNEG.
-        if (result_reg != VD)
-          m_float_emit.MOV(EncodeRegToDouble(VD), EncodeRegToDouble(result_reg));
-        nan_fixups.push_back(B());
-      }
-      else
-      {
-        nan_early_fixup = B();
-      }
+      // No NaN input: PowerPC's positive default NaN. The NaN result is never negated
+      // (fnmadd/fnmsub), as on PowerPC.
+      EmitPPCDefaultNaN(VD, single);
+      nan_fixups.push_back(B());
 
       SwitchToNearCode();
     }
@@ -294,13 +362,11 @@ void JitArm64::fp_arith(UGeckoInstruction inst)
       BL(GetAsmRoutines()->fmadds_eft);
     }
 
-    if (nan_early_fixup)
-      SetJumpTarget(*nan_early_fixup);
-
     // PowerPC's nmadd/nmsub perform rounding before the final negation, which is not the case
     // for any of AArch64's FMA instructions, so we negate using a separate instruction.
     if (negate_result)
-      m_float_emit.FNEG(VD, result_reg);
+      EmitSignOp(SignOp::Negate, IsSingle(VD) ? 32 : 64, VD, result_reg, false, negate_gpr,
+                 ARM64Reg::INVALID_REG);
     else if (result_reg != VD)
       m_float_emit.MOV(EncodeRegToDouble(VD), EncodeRegToDouble(result_reg));
 
@@ -344,6 +410,16 @@ void JitArm64::fp_logic(UGeckoInstruction inst)
   const bool single = fpr.IsSingle(b, !packed);
   const u8 size = single ? 32 : 64;
 
+  // EmitSignOp's scratch registers (every case but fmr).
+  Arm64GPRCache::ScopedARM64Reg sign_gpr = ARM64Reg::INVALID_REG;
+  Arm64FPRCache::ScopedARM64Reg sign_fpr = ARM64Reg::INVALID_REG;
+  if (op10 != 72)
+  {
+    sign_gpr = gpr.GetScopedReg();
+    if (packed)
+      sign_fpr = fpr.GetScopedReg();
+  }
+
   if (packed)
   {
     const RegType type = single ? RegType::Single : RegType::Register;
@@ -355,17 +431,16 @@ void JitArm64::fp_logic(UGeckoInstruction inst)
     switch (op10)
     {
     case 40:
-      m_float_emit.FNEG(size, VD, VB);
+      EmitSignOp(SignOp::Negate, size, VD, VB, true, sign_gpr, sign_fpr);
       break;
     case 72:
       m_float_emit.ORR(VD, VB, VB);
       break;
     case 136:
-      m_float_emit.FABS(size, VD, VB);
-      m_float_emit.FNEG(size, VD, VD);
+      EmitSignOp(SignOp::NegativeAbs, size, VD, VB, true, sign_gpr, sign_fpr);
       break;
     case 264:
-      m_float_emit.FABS(size, VD, VB);
+      EmitSignOp(SignOp::Abs, size, VD, VB, true, sign_gpr, sign_fpr);
       break;
     default:
       ASSERT_MSG(DYNA_REC, 0, "fp_logic");
@@ -375,7 +450,6 @@ void JitArm64::fp_logic(UGeckoInstruction inst)
   else
   {
     const RegType type = single ? RegType::LowerPairSingle : RegType::LowerPair;
-    const auto reg_encoder = single ? EncodeRegToSingle : EncodeRegToDouble;
 
     const ARM64Reg VB = fpr.R(b, type);
     const ARM64Reg VD = fpr.RW(d, type);
@@ -383,17 +457,16 @@ void JitArm64::fp_logic(UGeckoInstruction inst)
     switch (op10)
     {
     case 40:
-      m_float_emit.FNEG(reg_encoder(VD), reg_encoder(VB));
+      EmitSignOp(SignOp::Negate, size, VD, VB, false, sign_gpr, sign_fpr);
       break;
     case 72:
       m_float_emit.INS(size, VD, 0, VB, 0);
       break;
     case 136:
-      m_float_emit.FABS(reg_encoder(VD), reg_encoder(VB));
-      m_float_emit.FNEG(reg_encoder(VD), reg_encoder(VD));
+      EmitSignOp(SignOp::NegativeAbs, size, VD, VB, false, sign_gpr, sign_fpr);
       break;
     case 264:
-      m_float_emit.FABS(reg_encoder(VD), reg_encoder(VB));
+      EmitSignOp(SignOp::Abs, size, VD, VB, false, sign_gpr, sign_fpr);
       break;
     default:
       ASSERT_MSG(DYNA_REC, 0, "fp_logic");
@@ -416,11 +489,15 @@ void JitArm64::fselx(UGeckoInstruction inst)
   const u32 c = inst.FC;
   const u32 d = inst.FD;
 
-  const bool b_and_c_singles = fpr.IsSingle(b, true) && fpr.IsSingle(c, true);
+  // a compares as a single only where that can't flush a denormal (IsSingleForArithmetic). b and c
+  // are only selected, bit for bit, so they stay singles unless one of them is a.
+  const bool a_single_ok = IsSingleForArithmetic(a, true);
+  const bool b_and_c_singles =
+      fpr.IsSingle(b, true) && fpr.IsSingle(c, true) && (a_single_ok || (a != b && a != c));
   const RegType b_and_c_type = b_and_c_singles ? RegType::LowerPairSingle : RegType::LowerPair;
   const auto b_and_c_reg_encoder = b_and_c_singles ? EncodeRegToSingle : EncodeRegToDouble;
 
-  const bool a_single = fpr.IsSingle(a, true) && (b_and_c_singles || (a != b && a != c));
+  const bool a_single = a_single_ok && (b_and_c_singles || (a != b && a != c));
   const RegType a_type = a_single ? RegType::LowerPairSingle : RegType::LowerPair;
   const auto a_reg_encoder = a_single ? EncodeRegToSingle : EncodeRegToDouble;
 
@@ -621,7 +698,9 @@ void JitArm64::fctiwx(UGeckoInstruction inst)
   const u32 b = inst.FB;
   const u32 d = inst.FD;
 
-  const bool single = fpr.IsSingle(b, true);
+  // With accurate NaNs (every Orca session), always from a double: its NaN check below, and no
+  // flushed denormal single (IsSingleForArithmetic) under a directed rounding mode.
+  const bool single = fpr.IsSingle(b, true) && !m_accurate_nans;
   const bool is_fctiwzx = inst.SUBOP10 == 15;
 
   const ARM64Reg VB = fpr.R(b, single ? RegType::LowerPairSingle : RegType::LowerPair);
@@ -653,15 +732,22 @@ void JitArm64::fctiwx(UGeckoInstruction inst)
   else
   {
     const auto WA = gpr.GetScopedReg();
+    Arm64GPRCache::ScopedARM64Reg WB = ARM64Reg::INVALID_REG;
+    if (m_accurate_nans)
+      WB = gpr.GetScopedReg();
 
-    if (is_fctiwzx)
-    {
-      m_float_emit.FCVTS(WA, EncodeRegToDouble(VB), RoundingMode::Z);
-    }
-    else
-    {
+    const ARM64Reg converted = is_fctiwzx ? EncodeRegToDouble(VB) : EncodeRegToDouble(VD);
+    if (!is_fctiwzx)
       m_float_emit.FRINTI(EncodeRegToDouble(VD), EncodeRegToDouble(VB));
-      m_float_emit.FCVTS(WA, EncodeRegToDouble(VD), RoundingMode::Z);
+    m_float_emit.FCVTS(WA, converted, RoundingMode::Z);
+
+    if (m_accurate_nans)
+    {
+      // Orca: a NaN converts to 0x80000000 on PowerPC (the interpreter) and Jit64; FCVTZS makes
+      // it 0. FRINTI keeps a NaN a NaN, so test its result for one.
+      m_float_emit.FCMP(converted);
+      CSET(WB, CCFlags::CC_VS);
+      ORR(WA, WA, WB, ArithOption(WB, ShiftType::LSL, 31));
     }
 
     ORR(EncodeRegTo64(WA), EncodeRegTo64(WA), LogicalImm(0xFFF8'0000'0000'0000ULL, GPRSize::B64));
@@ -919,4 +1005,20 @@ void JitArm64::ConvertSingleToDoublePair(size_t guest_reg, ARM64Reg dest_reg, AR
 bool JitArm64::IsFPRStoreSafe(size_t guest_reg) const
 {
   return js.fpr_is_store_safe[guest_reg];
+}
+
+bool JitArm64::DenormalInputsFlushed() const
+{
+  // cpu_info.bAFP is false on a CPU without FEAT_AFP and with ORCA_TEST_NO_AFP; FPCR.AH is set only
+  // where it is true (Common/ArmFPURoundMode.cpp).
+  return m_orca_session && !cpu_info.bAFP;
+}
+
+bool JitArm64::IsSingleForArithmetic(size_t guest_reg, bool lower_only) const
+{
+  // A store-safe value came out of a single-precision arithmetic operation in this block, which
+  // flushed it if it was a denormal (PPCAnalyst, fprIsStoreSafe); with FPSCR.NI clear nothing is
+  // flushed at all.
+  return fpr.IsSingle(guest_reg, lower_only) &&
+         (!DenormalInputsFlushed() || js.fpr_is_store_safe[guest_reg]);
 }

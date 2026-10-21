@@ -233,7 +233,7 @@ void DeviceQualifier::FromDevice(const Device* const dev)
 bool DeviceQualifier::operator==(const Device* const dev) const
 {
   if (dev->GetId() == cid)
-    if (dev->GetName() == name)
+    if (name == "*" || dev->GetName() == name)
       if (dev->GetSource() == source)
         return true;
 

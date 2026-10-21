@@ -15,6 +15,7 @@
 #include "VideoBackends/D3D/D3DState.h"
 #include "VideoBackends/D3D/DXTexture.h"
 #include "VideoBackends/D3DCommon/D3DCommon.h"
+#include "VideoBackends/D3DCommon/DeviceLost.h"
 #include "VideoCommon/FramebufferManager.h"
 #include "VideoCommon/VideoConfig.h"
 
@@ -131,11 +132,17 @@ bool Create(u32 adapter_index, bool enable_debug_layer)
   }
 
   stateman = std::make_unique<StateManager>();
+  // Orca: a failed call asks the device whether it was removed; a lost device stops the run
+  // (D3DCommon/DeviceLost.h).
+  D3DCommon::SetDeviceRemovedQuery("D3D11", [] {
+    return device != nullptr ? device->GetDeviceRemovedReason() : HRESULT(S_OK);
+  });
   return true;
 }
 
 void Destroy()
 {
+  D3DCommon::SetDeviceRemovedQuery("D3D11", nullptr);
   stateman.reset();
 
   context->ClearState();
@@ -159,9 +166,17 @@ void Destroy()
   }
 
   if (remaining_references)
+  {
     ERROR_LOG_FMT(VIDEO, "Unreleased references: {}.", remaining_references);
+    // Orca: the device lives on with its driver, whose threads call back into d3d11.dll, so the
+    // DLL stays loaded until the process ends: unloaded under them, the process crashes later.
+    HMODULE pinned;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"d3d11.dll", &pinned);
+  }
   else
+  {
     NOTICE_LOG_FMT(VIDEO, "Successfully released all device references!");
+  }
 
   dxgi_factory.Reset();
   D3DCommon::UnloadLibraries();

@@ -1,0 +1,25 @@
+# Project+ v3.2 under Orca (ORCA_PROFILE=PPLUS32). With no Brawl save in the session NAND (a fresh
+# user folder, and Orca.app until the canonical save exists) the Netplay Launcher first asks
+# "Create save file for Project+?" in scBoot (PPLUS32.patches skips it now). Then the main menu, and
+# A through VERSUS to character select. Both players join, take the character two rows up from
+# their panel, P1 starts, picks a stage, then both are fuzzed; the results screen goes back to
+# character select.
+# Rules count frames from entry into each scene (@scene), so menu timing can drift.
+@scBoot mash 30 99999 1 40 A
+# Orca boots Project+ to its main menu (PPLUS32.patches): A through VERSUS to its character select.
+@muMenuMain:1 mash 30 99999 1 40 A
+@scSelctCharacter 60 63 1 A
+@scSelctCharacter 70 73 2 A
+@scSelctCharacter 90 116 1 SY=255
+@scSelctCharacter 90 116 2 SY=255
+@scSelctCharacter 140 143 1 A
+@scSelctCharacter 150 153 2 A
+@scSelctCharacter 200 203 1 START
+@scSelStage 40 44 1 SY=255
+@scSelStage 60 63 1 A
+@scMelee fuzz 300 99999 1 11
+@scMelee fuzz 300 99999 2 22
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START

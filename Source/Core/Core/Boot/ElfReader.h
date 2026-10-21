@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include <functional>
+#include <span>
+#include <vector>
+
 #include "Common/CommonTypes.h"
 #include "Core/Boot/Boot.h"
 #include "Core/Boot/ElfTypes.h"
@@ -29,6 +33,12 @@ public:
   explicit ElfReader(File::IOFile file);
   explicit ElfReader(std::vector<u8> buffer);
   ~ElfReader() override;
+  // The header, segment and section pointers point into this reader's own m_image: a copy or a
+  // move would keep pointing into the source's.
+  ElfReader(const ElfReader&) = delete;
+  ElfReader& operator=(const ElfReader&) = delete;
+  ElfReader(ElfReader&&) = delete;
+  ElfReader& operator=(ElfReader&&) = delete;
   u32 Read32(int off) const { return base32[off >> 2]; }
   // Quick accessors
   ElfType GetType() const { return (ElfType)(header->e_type); }
@@ -63,8 +73,18 @@ public:
 
   bool DidRelocate() const { return bRelocate; }
 
+  // Orca, tests: sees the file's bytes (GetBytes()) and the copy this reader parses as the copy is
+  // made, before Initialize() byte-swaps it. Unset in a boot.
+  using CopyObserver = std::function<void(std::span<const u8> file, std::span<const u8> copy)>;
+  static void SetCopyObserverForTests(CopyObserver observer);
+
 private:
   bool Initialize();
+
+  // Orca: what this reader parses, a copy of the file's bytes made before Initialize() runs.
+  // Initialize() byte-swaps its header, segment and section tables in place, so m_bytes stays the
+  // file as read (a flat bundle's signature is checked on it, Core/Orca/Bundle.h).
+  std::vector<u8> m_image;
 
   char* base = nullptr;
   u32* base32 = nullptr;

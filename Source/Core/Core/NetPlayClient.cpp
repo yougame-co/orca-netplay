@@ -29,6 +29,7 @@
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
 #include "Common/NandPaths.h"
+#include "Common/Network.h"
 #include "Common/QoSSession.h"
 #include "Common/SFMLHelper.h"
 #include "Common/Timer.h"
@@ -127,6 +128,9 @@ NetPlayClient::NetPlayClient(const std::string& address, const u16 port, NetPlay
     : m_dialog(dialog), m_player_name(std::move(name))
 {
   ClearBuffers();
+
+  if (Common::OfflineReplay())
+    return;
 
   if (!traversal_config.use_traversal)
   {
@@ -754,8 +758,13 @@ void NetPlayClient::OnPadBuffer(sf::Packet& packet)
   u32 size = 0;
   packet >> size;
 
-  m_target_buffer_size = size;
-  m_dialog->OnPadBufferChanged(size);
+  if (size > MAX_TARGET_PAD_BUFFER_SIZE)
+  {
+    WARN_LOG_FMT(NETPLAY, "Ignoring invalid pad buffer size {}.", size);
+    return;
+  }
+
+  AdjustPadBufferSize(size);
 }
 
 void NetPlayClient::OnHostInputAuthority(sf::Packet& packet)
@@ -1204,12 +1213,18 @@ void NetPlayClient::OnSyncSaveDataWii(sf::Packet& packet)
     WiiSave::Header header;
     packet >> header.tid;
     packet >> header.banner_size;
+    if (!packet || header.banner_size > sizeof(header.banner))
+    {
+      WARN_LOG_FMT(NETPLAY, "Received invalid Wii save banner size.");
+      SyncSaveDataResponse(false);
+      return;
+    }
     packet >> header.permissions;
     packet >> header.unk1;
     for (u8& byte : header.md5)
       packet >> byte;
     packet >> header.unk2;
-    for (size_t i = 0; i < std::min<size_t>(header.banner_size, sizeof(header.banner)); i++)
+    for (size_t i = 0; i < header.banner_size; i++)
       packet >> header.banner[i];
 
     // BkHeader
