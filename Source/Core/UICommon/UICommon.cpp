@@ -23,6 +23,7 @@
 #include "Common/Logging/LogManager.h"
 #include "Common/MathUtil.h"
 #include "Common/MsgHandler.h"
+#include "Common/Network.h"
 
 #include "Core/Config/MainSettings.h"
 #include "Core/ConfigLoaders/BaseConfigLoader.h"
@@ -37,11 +38,14 @@
 #include "Core/HotkeyManager.h"
 #include "Core/IOS/IOS.h"
 #include "Core/IOS/STM/STM.h"
+#include "Core/Orca/Profile.h"
+#include "Core/Orca/Sandbox.h"
 #include "Core/System.h"
 #include "Core/WiiRoot.h"
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 #include "InputCommon/GCAdapter.h"
+#include "InputCommon/LocalInput.h"
 
 #include "UICommon/DiscordPresence.h"
 
@@ -138,6 +142,10 @@ void Init()
   g_Config.Init();
   Discord::Init();
   Common::Log::LogManager::Init();
+  if (InputCommon::LocalInputDisabled())
+    NOTICE_LOG_FMT(COMMON, "local input off (ORCA_NO_LOCAL_INPUT)");
+  if (Common::OfflineReplay())
+    NOTICE_LOG_FMT(COMMON, "replay offline (file source): network off");
   VideoBackendBase::ActivateBackend(Config::Get(Config::MAIN_GFX_BACKEND));
   Statistics::Init();
 
@@ -183,7 +191,9 @@ void InitControllers(const WindowSystemInfo& wsi)
                                       "mappings intended for the default device may not work.");
   }
 
-  GCAdapter::Init();
+  // Orca: in a session the app's helper owns the GameCube adapter (Orca/Sandbox.h).
+  if (Orca::Sandbox::AdapterAllowed(Orca::SessionActive()))
+    GCAdapter::Init();
   Pad::Initialize();
   Pad::InitializeGBA();
   Keyboard::Initialize();
@@ -484,6 +494,10 @@ void SetUserDirectory(std::string custom_path)
 
 bool TriggerSTMPowerEvent()
 {
+  // Orca: the power button would reach only this player's game; callers stop the core instead.
+  if (Orca::SessionActive())
+    return false;
+
   const auto ios = Core::System::GetInstance().GetIOS();
   if (!ios)
     return false;

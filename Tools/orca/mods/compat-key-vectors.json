@@ -1,0 +1,1654 @@
+{
+ "about": "Shared vectors for the lobby compatibility key (Tools/orca/compat-key-template.py and YouGame web/src/lib/orca-compat-keys.ts must both pass every one). `real` are keys a real Orca logged; `derive` are built from those packs by one change each; `xxh3` values come from xxhsum -H3 (xxHash's own CLI).",
+ "derive": [
+  {
+   "keys": [
+    "orca2:eca48e1166534313",
+    "orca2:25b6939edf829a83"
+   ],
+   "mod": {
+    "bootNandFrame": 1800,
+    "builtin": "brawl-rev2",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitwarm": "RSBE01.jitwarm",
+    "listing": "open-brawl",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "RSBE01.patches"
+    ],
+    "rulesets": [
+     "brawl"
+    ],
+    "serial": 900,
+    "textures": "engine"
+   },
+   "name": "bf-pack",
+   "parts": [
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=378c7bc39fdaa5db9069f4dad8f7236c4a1413a8eb733fd33274e90e58a73041|sd=-|disc=-|sys=-,e1e29b864607d23d,a4a2f890de222076,-,|thread=false|fma=true|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=false:false|ux=29",
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=378c7bc39fdaa5db9069f4dad8f7236c4a1413a8eb733fd33274e90e58a73041|sd=-|disc=-|sys=-,e1e29b864607d23d,a4a2f890de222076,-,|thread=false|fma=false|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=false:false|ux=29"
+   ],
+   "sd": null,
+   "template": "train-fri-005be8ff1f",
+   "tree": "378c7bc39fdaa5db9069f4dad8f7236c4a1413a8eb733fd33274e90e58a73041"
+  },
+  {
+   "keys": [
+    "orca2:d49cc136ffea5f4f",
+    "orca2:88ea909b0aae2d0e"
+   ],
+   "mod": {
+    "bootNandFrame": 600,
+    "builtin": "brawl-rev2-pplus",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "forced": {
+     "Dolphin.Core.CustomRTCValue": 1735689600
+    },
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitClearFrame": 2,
+    "jitwarm": "PPLUS32.jitwarm",
+    "keepGameCode": [
+     [
+      "0x8001CD24",
+      "0x38631198",
+      "0x806311A0"
+     ],
+     [
+      "0x8001CD2C",
+      "0x80630008",
+      "0x38630006"
+     ],
+     [
+      "0x800266B8",
+      "0x38672CAC",
+      "0x38672CB2"
+     ],
+     [
+      "0x8018CFC4",
+      "0x2C000000",
+      "0x28000030"
+     ],
+     [
+      "0x8018CFC8",
+      "0x41820034",
+      "0x41800034"
+     ]
+    ],
+    "launcher": "Project+ Netplay Launcher.dol",
+    "listing": "project-rollback",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "PPLUS32.patches"
+    ],
+    "rulesets": [
+     "pplus-2024"
+    ],
+    "saveTitle": "0x0001000052534245",
+    "sdImage": {
+     "bytes": 2097152000,
+     "file": "sd.raw",
+     "sha256": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd"
+    },
+    "serial": 900,
+    "textures": "engine",
+    "title": "Project+"
+   },
+   "name": "pp-pack",
+   "parts": [
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=ca156f050ca399ea7583ee3adc1cd3533392cb0f8b91edec168c1e59c47c410f|sd=4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd|disc=-|sys=-,-,-,e1e29b864607d23d,a4a2f890de222076,-,-,e1e29b864607d23d,a4a2f890de222076,-,|0.Core.WiiSDCard=True|0.Core.CustomRTCValue=1735689600|thread=false|fma=true|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=true:false|ux=29",
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=ca156f050ca399ea7583ee3adc1cd3533392cb0f8b91edec168c1e59c47c410f|sd=4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd|disc=-|sys=-,-,-,e1e29b864607d23d,a4a2f890de222076,-,-,e1e29b864607d23d,a4a2f890de222076,-,|0.Core.WiiSDCard=True|0.Core.CustomRTCValue=1735689600|thread=false|fma=false|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=true:false|ux=29"
+   ],
+   "sd": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd",
+   "template": "train-fri-005be8ff1f",
+   "tree": "ca156f050ca399ea7583ee3adc1cd3533392cb0f8b91edec168c1e59c47c410f"
+  },
+  {
+   "keys": [
+    "orca2:6efa57a01c28be6c",
+    "orca2:9d96b8439237f21a"
+   ],
+   "mod": {
+    "bootNandFrame": 1800,
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitwarm": "RSBE01.jitwarm",
+    "listing": "open-brawl",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "RSBE01.patches"
+    ],
+    "rulesets": [
+     "brawl"
+    ],
+    "serial": 900,
+    "textures": "engine"
+   },
+   "name": "no builtin (disc RSBE01 rev 2)",
+   "parts": [
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=-|disc=-|sys=-,e1e29b864607d23d,a4a2f890de222076,-,|thread=false|fma=true|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=false:false|ux=29",
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=-|disc=-|sys=-,e1e29b864607d23d,a4a2f890de222076,-,|thread=false|fma=false|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=false:false|ux=29"
+   ],
+   "sd": null,
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "keys": [
+    "orca2:21dc0e446b4c7e87",
+    "orca2:5ee59166a951b08f"
+   ],
+   "mod": {
+    "bootNandFrame": 1800,
+    "builtin": "brawl-rev2",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "forced": {
+     "Dolphin.Core.CustomRTCValue": 1700000000
+    },
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitwarm": "RSBE01.jitwarm",
+    "listing": "open-brawl",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "RSBE01.patches"
+    ],
+    "rulesets": [
+     "brawl"
+    ],
+    "serial": 900,
+    "textures": "engine"
+   },
+   "name": "forced clock",
+   "parts": [
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=-|disc=-|sys=-,e1e29b864607d23d,a4a2f890de222076,-,|0.Core.CustomRTCValue=1700000000|thread=false|fma=true|rtc=true:1700000000|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=false:false|ux=29",
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=-|disc=-|sys=-,e1e29b864607d23d,a4a2f890de222076,-,|0.Core.CustomRTCValue=1700000000|thread=false|fma=false|rtc=true:1700000000|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=false:false|ux=29"
+   ],
+   "sd": null,
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "keys": [
+    "orca2:3ca478c57004cffc",
+    "orca2:fe0b793c67c27a9d"
+   ],
+   "mod": {
+    "bootNandFrame": 1800,
+    "builtin": "brawl-rev2",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitwarm": "RSBE01.jitwarm",
+    "listing": "open-brawl",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "RSBE01.patches"
+    ],
+    "rulesets": [
+     "brawl"
+    ],
+    "sdImage": {
+     "bytes": 1048576,
+     "file": "sd.raw",
+     "sha256": "bc399bc362aa3c89e364c6216bc57495a3766ff29c04430f4d84d49a114511cb"
+    },
+    "serial": 900,
+    "textures": "engine"
+   },
+   "name": "an SD image without a launcher",
+   "parts": [
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=bc399bc362aa3c89e364c6216bc57495a3766ff29c04430f4d84d49a114511cb|disc=-|sys=-,e1e29b864607d23d,a4a2f890de222076,-,|0.Core.WiiSDCard=True|thread=false|fma=true|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=true:false|ux=29",
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=bc399bc362aa3c89e364c6216bc57495a3766ff29c04430f4d84d49a114511cb|disc=-|sys=-,e1e29b864607d23d,a4a2f890de222076,-,|0.Core.WiiSDCard=True|thread=false|fma=false|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=true:false|ux=29"
+   ],
+   "sd": "bc399bc362aa3c89e364c6216bc57495a3766ff29c04430f4d84d49a114511cb",
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "keys": [
+    "orca2:9e3b23d719074361",
+    "orca2:7918459f4e3ce3a3"
+   ],
+   "mod": {
+    "bootNandFrame": 600,
+    "builtin": "brawl-rev2-pplus",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "forced": {
+     "Dolphin.Core.CustomRTCValue": 1735689600
+    },
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitClearFrame": 2,
+    "jitwarm": "PPLUS32.jitwarm",
+    "keepGameCode": [
+     [
+      "0x8001CD24",
+      "0x38631198",
+      "0x806311A0"
+     ],
+     [
+      "0x8001CD2C",
+      "0x80630008",
+      "0x38630006"
+     ],
+     [
+      "0x800266B8",
+      "0x38672CAC",
+      "0x38672CB2"
+     ],
+     [
+      "0x8018CFC4",
+      "0x2C000000",
+      "0x28000030"
+     ],
+     [
+      "0x8018CFC8",
+      "0x41820034",
+      "0x41800034"
+     ]
+    ],
+    "launcher": "abc.dol",
+    "listing": "project-rollback",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "PPLUS32.patches"
+    ],
+    "rulesets": [
+     "pplus-2024"
+    ],
+    "saveTitle": "0x0001000052534245",
+    "sdImage": {
+     "bytes": 2097152000,
+     "file": "sd.raw",
+     "sha256": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd"
+    },
+    "serial": 900,
+    "textures": "engine",
+    "title": "Project+"
+   },
+   "name": "launcher with a 6-character boot id",
+   "parts": [
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd|disc=-|sys=-,-,-,-,-,e1e29b864607d23d,a4a2f890de222076,-,-,e1e29b864607d23d,a4a2f890de222076,-,|0.Core.WiiSDCard=True|0.Core.CustomRTCValue=1735689600|thread=false|fma=true|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=true:false|ux=29",
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd|disc=-|sys=-,-,-,-,-,e1e29b864607d23d,a4a2f890de222076,-,-,e1e29b864607d23d,a4a2f890de222076,-,|0.Core.WiiSDCard=True|0.Core.CustomRTCValue=1735689600|thread=false|fma=false|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=true:false|ux=29"
+   ],
+   "sd": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd",
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "keys": [
+    "orca2:e4b1b04d49b4acad",
+    "orca2:6f02efb7fcf97ec0"
+   ],
+   "mod": {
+    "bootNandFrame": 600,
+    "builtin": "brawl-rev2-pplus",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "forced": {
+     "Dolphin.Core.CustomRTCValue": 1735689600
+    },
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitClearFrame": 2,
+    "jitwarm": "PPLUS32.jitwarm",
+    "keepGameCode": [
+     [
+      "0x8001CD24",
+      "0x38631198",
+      "0x806311A0"
+     ],
+     [
+      "0x8001CD2C",
+      "0x80630008",
+      "0x38630006"
+     ],
+     [
+      "0x800266B8",
+      "0x38672CAC",
+      "0x38672CB2"
+     ],
+     [
+      "0x8018CFC4",
+      "0x2C000000",
+      "0x28000030"
+     ],
+     [
+      "0x8018CFC8",
+      "0x41820034",
+      "0x41800034"
+     ]
+    ],
+    "launcher": "loader",
+    "listing": "project-rollback",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "PPLUS32.patches"
+    ],
+    "rulesets": [
+     "pplus-2024"
+    ],
+    "saveTitle": "0x0001000052534245",
+    "sdImage": {
+     "bytes": 2097152000,
+     "file": "sd.raw",
+     "sha256": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd"
+    },
+    "serial": 900,
+    "textures": "engine",
+    "title": "Project+"
+   },
+   "name": "launcher with no dot",
+   "parts": [
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd|disc=-|sys=-,-,-,e1e29b864607d23d,a4a2f890de222076,-,-,e1e29b864607d23d,a4a2f890de222076,-,|0.Core.WiiSDCard=True|0.Core.CustomRTCValue=1735689600|thread=false|fma=true|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=true:false|ux=29",
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd|disc=-|sys=-,-,-,e1e29b864607d23d,a4a2f890de222076,-,-,e1e29b864607d23d,a4a2f890de222076,-,|0.Core.WiiSDCard=True|0.Core.CustomRTCValue=1735689600|thread=false|fma=false|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=true:false|ux=29"
+   ],
+   "sd": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd",
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "keys": [
+    "orca2:8e60c4bb5ecfcc8f",
+    "orca2:f42eb97410feb571"
+   ],
+   "mod": {
+    "bootNandFrame": 600,
+    "builtin": "brawl-rev2-pplus",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "forced": {
+     "Dolphin.Core.CustomRTCValue": 1735689600
+    },
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitClearFrame": 2,
+    "jitwarm": "PPLUS32.jitwarm",
+    "keepGameCode": [
+     [
+      "0x8001CD24",
+      "0x38631198",
+      "0x806311A0"
+     ],
+     [
+      "0x8001CD2C",
+      "0x80630008",
+      "0x38630006"
+     ],
+     [
+      "0x800266B8",
+      "0x38672CAC",
+      "0x38672CB2"
+     ],
+     [
+      "0x8018CFC4",
+      "0x2C000000",
+      "0x28000030"
+     ],
+     [
+      "0x8018CFC8",
+      "0x41820034",
+      "0x41800034"
+     ]
+    ],
+    "listing": "project-rollback",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "PPLUS32.patches"
+    ],
+    "rulesets": [
+     "pplus-2024"
+    ],
+    "saveTitle": "0x0001000052534245",
+    "sdImage": {
+     "bytes": 2097152000,
+     "file": "sd.raw",
+     "sha256": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd"
+    },
+    "serial": 900,
+    "textures": "engine",
+    "title": "Project+"
+   },
+   "name": "P+ builtin without a launcher",
+   "parts": [
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd|disc=-|sys=-,-,|0.Core.WiiSDCard=True|0.Core.CustomRTCValue=1735689600|thread=false|fma=true|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=true:false|ux=29",
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd|disc=-|sys=-,-,|0.Core.WiiSDCard=True|0.Core.CustomRTCValue=1735689600|thread=false|fma=false|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=true:false|ux=29"
+   ],
+   "sd": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd",
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "keys": [
+    "orca2:592572be0a2131d8",
+    "orca2:cb3bbc8da3200153"
+   ],
+   "mod": {
+    "bootNandFrame": 1800,
+    "builtin": "brawl-rev2",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitwarm": "RSBE01.jitwarm",
+    "listing": "open-brawl",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "RSBE01.patches"
+    ],
+    "rulesets": [
+     "brawl"
+    ],
+    "serial": 900,
+    "textures": "engine"
+   },
+   "name": "bumped: Brawl stays ux=29",
+   "parts": [
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=378c7bc39fdaa5db9069f4dad8f7236c4a1413a8eb733fd33274e90e58a73041|sd=-|disc=-|sys=-,e1e29b864607d23d,a4a2f890de222076,0123456789abcdef,|thread=false|fma=true|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=false:false|ux=29",
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=378c7bc39fdaa5db9069f4dad8f7236c4a1413a8eb733fd33274e90e58a73041|sd=-|disc=-|sys=-,e1e29b864607d23d,a4a2f890de222076,0123456789abcdef,|thread=false|fma=false|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=false:false|ux=29"
+   ],
+   "sd": null,
+   "template": "bumped",
+   "tree": "378c7bc39fdaa5db9069f4dad8f7236c4a1413a8eb733fd33274e90e58a73041"
+  },
+  {
+   "keys": [
+    "orca2:71d721852dfe8e00",
+    "orca2:fb47c042bdef7d82"
+   ],
+   "mod": {
+    "bootNandFrame": 600,
+    "builtin": "brawl-rev2-pplus",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "forced": {
+     "Dolphin.Core.CustomRTCValue": 1735689600
+    },
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitClearFrame": 2,
+    "jitwarm": "PPLUS32.jitwarm",
+    "keepGameCode": [
+     [
+      "0x8001CD24",
+      "0x38631198",
+      "0x806311A0"
+     ],
+     [
+      "0x8001CD2C",
+      "0x80630008",
+      "0x38630006"
+     ],
+     [
+      "0x800266B8",
+      "0x38672CAC",
+      "0x38672CB2"
+     ],
+     [
+      "0x8018CFC4",
+      "0x2C000000",
+      "0x28000030"
+     ],
+     [
+      "0x8018CFC8",
+      "0x41820034",
+      "0x41800034"
+     ]
+    ],
+    "listing": "project-rollback",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "PPLUS32.patches"
+    ],
+    "rulesets": [
+     "pplus-2024"
+    ],
+    "saveTitle": "0x0001000052534245",
+    "sdImage": {
+     "bytes": 2097152000,
+     "file": "sd.raw",
+     "sha256": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd"
+    },
+    "serial": 900,
+    "textures": "engine",
+    "title": "Project+"
+   },
+   "name": "bumped: P+ builtin without a launcher is ux=29.3",
+   "parts": [
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd|disc=-|sys=-,-,|0.Core.WiiSDCard=True|0.Core.CustomRTCValue=1735689600|thread=false|fma=true|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=true:false|ux=29.3",
+    "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c|sd=4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd|disc=-|sys=-,-,|0.Core.WiiSDCard=True|0.Core.CustomRTCValue=1735689600|thread=false|fma=false|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=true:false|ux=29.3"
+   ],
+   "sd": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd",
+   "template": "bumped",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "mod": {
+    "bootNandFrame": 600,
+    "builtin": "brawl-rev2-pplus",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "forced": {
+     "Dolphin.Core.CustomRTCValue": 1735689600
+    },
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitClearFrame": 2,
+    "jitwarm": "PPLUS32.jitwarm",
+    "keepGameCode": [
+     [
+      "0x8001CD24",
+      "0x38631198",
+      "0x806311A0"
+     ],
+     [
+      "0x8001CD2C",
+      "0x80630008",
+      "0x38630006"
+     ],
+     [
+      "0x800266B8",
+      "0x38672CAC",
+      "0x38672CB2"
+     ],
+     [
+      "0x8018CFC4",
+      "0x2C000000",
+      "0x28000030"
+     ],
+     [
+      "0x8018CFC8",
+      "0x41820034",
+      "0x41800034"
+     ]
+    ],
+    "launcher": "Project+ Netplay Launcher.dol",
+    "listing": "project-rollback",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "PPLUS32.patches"
+    ],
+    "rulesets": [
+     "pplus-2024"
+    ],
+    "saveTitle": "0x0001000052534245",
+    "sdImage": {
+     "bytes": 2097152000,
+     "file": "sd.raw",
+     "sha256": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd"
+    },
+    "serial": 900,
+    "textures": "engine",
+    "title": "Project+"
+   },
+   "name": "bumped: refused, a launcher's running revision",
+   "refused": "the build ships a revision-specific RSBE01 INI: a launcher pack's running revision (the disc's TMD) is not derivable",
+   "sd": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd",
+   "template": "bumped",
+   "tree": "ca156f050ca399ea7583ee3adc1cd3533392cb0f8b91edec168c1e59c47c410f"
+  },
+  {
+   "mod": {
+    "bootNandFrame": 1800,
+    "disc": {
+     "id": "GALE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitwarm": "RSBE01.jitwarm",
+    "listing": "open-brawl",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "RSBE01.patches"
+    ],
+    "rulesets": [
+     "brawl"
+    ],
+    "serial": 900,
+    "textures": "engine"
+   },
+   "name": "refused: a disc the template does not cover",
+   "refused": "the template does not cover GALE01's Sys INIs",
+   "sd": null,
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "mod": {
+    "bootNandFrame": 1800,
+    "builtin": "brawl-rev2",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "forced": {
+     "Dolphin.Core.CPUThread": 1
+    },
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitwarm": "RSBE01.jitwarm",
+    "listing": "open-brawl",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "RSBE01.patches"
+    ],
+    "rulesets": [
+     "brawl"
+    ],
+    "serial": 900,
+    "textures": "engine"
+   },
+   "name": "refused: a forced key mods may not force",
+   "refused": "forced.Dolphin.Core.CPUThread is not a setting a mod may force",
+   "sd": null,
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "mod": {
+    "bootNandFrame": 1800,
+    "builtin": "brawl-rev2",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "forced": {
+     "Dolphin.Core.CustomRTCValue": true
+    },
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitwarm": "RSBE01.jitwarm",
+    "listing": "open-brawl",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "RSBE01.patches"
+    ],
+    "rulesets": [
+     "brawl"
+    ],
+    "serial": 900,
+    "textures": "engine"
+   },
+   "name": "refused: a forced value that is not an integer",
+   "refused": "forced.Dolphin.Core.CustomRTCValue must be an integer from 0 to 4294967295",
+   "sd": null,
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "mod": {
+    "bootNandFrame": 1800,
+    "builtin": "brawl-rev2",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitwarm": "RSBE01.jitwarm",
+    "listing": "open-brawl",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "RSBE01.patches"
+    ],
+    "rulesets": [
+     "brawl"
+    ],
+    "serial": 900,
+    "textures": "engine"
+   },
+   "name": "refused: an SD hash without an sdImage",
+   "refused": "sd must be given exactly when mod.json has an sdImage",
+   "sd": "bc399bc362aa3c89e364c6216bc57495a3766ff29c04430f4d84d49a114511cb",
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "mod": {
+    "bootNandFrame": 600,
+    "builtin": "brawl-rev2-pplus",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "forced": {
+     "Dolphin.Core.CustomRTCValue": 1735689600
+    },
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitClearFrame": 2,
+    "jitwarm": "PPLUS32.jitwarm",
+    "keepGameCode": [
+     [
+      "0x8001CD24",
+      "0x38631198",
+      "0x806311A0"
+     ],
+     [
+      "0x8001CD2C",
+      "0x80630008",
+      "0x38630006"
+     ],
+     [
+      "0x800266B8",
+      "0x38672CAC",
+      "0x38672CB2"
+     ],
+     [
+      "0x8018CFC4",
+      "0x2C000000",
+      "0x28000030"
+     ],
+     [
+      "0x8018CFC8",
+      "0x41820034",
+      "0x41800034"
+     ]
+    ],
+    "launcher": "Project+ Netplay Launcher.dol",
+    "listing": "project-rollback",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "PPLUS32.patches"
+    ],
+    "rulesets": [
+     "pplus-2024"
+    ],
+    "saveTitle": "0x0001000052534245",
+    "sdImage": {
+     "bytes": 2097152000,
+     "file": "sd.raw",
+     "sha256": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd"
+    },
+    "serial": 900,
+    "textures": "engine",
+    "title": "Project+"
+   },
+   "name": "refused: an sdImage without its hash",
+   "refused": "sd must be given exactly when mod.json has an sdImage",
+   "sd": null,
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "mod": {
+    "bootNandFrame": 1800,
+    "builtin": "brawl-rev2",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitwarm": "RSBE01.jitwarm",
+    "listing": "open-brawl",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "RSBE01.patches"
+    ],
+    "rulesets": [
+     "brawl"
+    ],
+    "serial": 900,
+    "textures": "engine"
+   },
+   "name": "refused: a tree that is not 64 hex",
+   "refused": "tree must be 64 lowercase hex",
+   "sd": null,
+   "template": "train-fri-005be8ff1f",
+   "tree": "BFB11122CB146494CD3878034FCC36175165E8F933A8254F75D682497F292F1C"
+  },
+  {
+   "mod": {
+    "bootNandFrame": 1800,
+    "builtin": "brawl-rev2",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "format": 1,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitwarm": "RSBE01.jitwarm",
+    "listing": "open-brawl",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "RSBE01.patches"
+    ],
+    "rulesets": [
+     "brawl"
+    ],
+    "serial": 900,
+    "textures": "engine"
+   },
+   "name": "refused: format 1",
+   "refused": "only flat packs (mod.json format 2) have derived keys",
+   "sd": null,
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "mod": {
+    "bootNandFrame": 1800,
+    "builtin": "melee",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitwarm": "RSBE01.jitwarm",
+    "listing": "open-brawl",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "RSBE01.patches"
+    ],
+    "rulesets": [
+     "brawl"
+    ],
+    "serial": 900,
+    "textures": "engine"
+   },
+   "name": "refused: an unknown builtin",
+   "refused": "the template knows no builtin 'melee'",
+   "sd": null,
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  },
+  {
+   "mod": {
+    "bootNandFrame": 600,
+    "builtin": "brawl-rev2-pplus",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "forced": {
+     "Dolphin.Core.CustomRTCValue": 1735689600
+    },
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitClearFrame": 2,
+    "jitwarm": "PPLUS32.jitwarm",
+    "keepGameCode": [
+     [
+      "0x8001CD24",
+      "0x38631198",
+      "0x806311A0"
+     ],
+     [
+      "0x8001CD2C",
+      "0x80630008",
+      "0x38630006"
+     ],
+     [
+      "0x800266B8",
+      "0x38672CAC",
+      "0x38672CB2"
+     ],
+     [
+      "0x8018CFC4",
+      "0x2C000000",
+      "0x28000030"
+     ],
+     [
+      "0x8018CFC8",
+      "0x41820034",
+      "0x41800034"
+     ]
+    ],
+    "launcher": "a/b.dol",
+    "listing": "project-rollback",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "PPLUS32.patches"
+    ],
+    "rulesets": [
+     "pplus-2024"
+    ],
+    "saveTitle": "0x0001000052534245",
+    "sdImage": {
+     "bytes": 2097152000,
+     "file": "sd.raw",
+     "sha256": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd"
+    },
+    "serial": 900,
+    "textures": "engine",
+    "title": "Project+"
+   },
+   "name": "refused: a launcher path",
+   "refused": "mod.json launcher must be a file name",
+   "sd": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd",
+   "template": "train-fri-005be8ff1f",
+   "tree": "bfb11122cb146494cd3878034fcc36175165e8f933a8254f75d682497f292f1c"
+  }
+ ],
+ "real": [
+  {
+   "key": "orca2:eca48e1166534313",
+   "mod": {
+    "bootNandFrame": 1800,
+    "builtin": "brawl-rev2",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitwarm": "RSBE01.jitwarm",
+    "listing": "open-brawl",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "RSBE01.patches"
+    ],
+    "rulesets": [
+     "brawl"
+    ],
+    "serial": 900,
+    "textures": "engine"
+   },
+   "name": "bf-pack",
+   "parts": "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=378c7bc39fdaa5db9069f4dad8f7236c4a1413a8eb733fd33274e90e58a73041|sd=-|disc=-|sys=-,e1e29b864607d23d,a4a2f890de222076,-,|thread=false|fma=true|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=false:false|ux=29",
+   "sd": null,
+   "source": "a headless Orca run of this build (dolphin-emu-nogui, ORCA_SESSION=1, online)",
+   "template": "train-fri-005be8ff1f",
+   "tree": "378c7bc39fdaa5db9069f4dad8f7236c4a1413a8eb733fd33274e90e58a73041"
+  },
+  {
+   "key": "orca2:d49cc136ffea5f4f",
+   "mod": {
+    "bootNandFrame": 600,
+    "builtin": "brawl-rev2-pplus",
+    "disc": {
+     "id": "RSBE01",
+     "revision": 2
+    },
+    "engine": {
+     "api": 1,
+     "minOrca": "0.3.35"
+    },
+    "firstKeyframeFrame": 300,
+    "forced": {
+     "Dolphin.Core.CustomRTCValue": 1735689600
+    },
+    "format": 2,
+    "frameHook": {
+     "address": "0x80017504",
+     "word": "0x90170100"
+    },
+    "jitClearFrame": 2,
+    "jitwarm": "PPLUS32.jitwarm",
+    "keepGameCode": [
+     [
+      "0x8001CD24",
+      "0x38631198",
+      "0x806311A0"
+     ],
+     [
+      "0x8001CD2C",
+      "0x80630008",
+      "0x38630006"
+     ],
+     [
+      "0x800266B8",
+      "0x38672CAC",
+      "0x38672CB2"
+     ],
+     [
+      "0x8018CFC4",
+      "0x2C000000",
+      "0x28000030"
+     ],
+     [
+      "0x8018CFC8",
+      "0x41820034",
+      "0x41800034"
+     ]
+    ],
+    "launcher": "Project+ Netplay Launcher.dol",
+    "listing": "project-rollback",
+    "offers": [
+     "results",
+     "locks",
+     "queue2"
+    ],
+    "patches": [
+     "PPLUS32.patches"
+    ],
+    "rulesets": [
+     "pplus-2024"
+    ],
+    "saveTitle": "0x0001000052534245",
+    "sdImage": {
+     "bytes": 2097152000,
+     "file": "sd.raw",
+     "sha256": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd"
+    },
+    "serial": 900,
+    "textures": "engine",
+    "title": "Project+"
+   },
+   "name": "pp-pack",
+   "parts": "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree=ca156f050ca399ea7583ee3adc1cd3533392cb0f8b91edec168c1e59c47c410f|sd=4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd|disc=-|sys=-,-,-,e1e29b864607d23d,a4a2f890de222076,-,-,e1e29b864607d23d,a4a2f890de222076,-,|0.Core.WiiSDCard=True|0.Core.CustomRTCValue=1735689600|thread=false|fma=true|rtc=true:1735689600|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard=true:false|ux=29",
+   "sd": "4e352981e08ae5bea9e0043c984b90d7ada1b6f106f43c59fff6a5d61ba844cd",
+   "source": "a headless Orca run of this build (dolphin-emu-nogui, ORCA_SESSION=1, online)",
+   "template": "train-fri-005be8ff1f",
+   "tree": "ca156f050ca399ea7583ee3adc1cd3533392cb0f8b91edec168c1e59c47c410f"
+  }
+ ],
+ "templates": {
+  "bumped": {
+   "fill": {
+    "disc": [
+     "-"
+    ],
+    "fma": [
+     "true",
+     "false"
+    ],
+    "forced": [
+     "Dolphin.Core.CustomRTCValue"
+    ],
+    "launcherRunning": "disc",
+    "rtc": 1735689600,
+    "sdcardOff": "false",
+    "sysIni": {
+     "covers": [
+      "PPLUS32",
+      "RSBE01"
+     ],
+     "files": {
+      "ID-gbi.ini": "dd71b646b6174143",
+      "ID-gbihf.ini": "df7dd4deb61063d6",
+      "ID-gbisr.ini": "fb767dd0a89bdff5",
+      "RSB.ini": "e1e29b864607d23d",
+      "RSBE01.ini": "a4a2f890de222076",
+      "RSBE01r2.ini": "0123456789abcdef"
+     }
+    },
+    "systems": {
+     "Dolphin": 0
+    },
+    "ux": {
+     "engine": 29,
+     "games": {
+      "": 0,
+      "brawl-rev2": 0,
+      "brawl-rev2-pplus": 3
+     }
+    }
+   },
+   "format": "orca-compat-key-template 1",
+   "keyCode": "c6a3154642413e35",
+   "orca": {
+    "commit": "005be8ff1f7f75b8aa72f5ad3480991a09446108",
+    "version": "0.3.41-vector"
+   },
+   "parts": "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree={tree}|sd={sd}|disc={disc}|sys={sys}|{forced}thread=false|fma={fma}|rtc=true:{rtc}|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard={sdcard}:false|ux={ux}",
+   "prefix": "orca2:"
+  },
+  "train-fri-005be8ff1f": {
+   "fill": {
+    "disc": [
+     "-"
+    ],
+    "fma": [
+     "true",
+     "false"
+    ],
+    "forced": [
+     "Dolphin.Core.CustomRTCValue"
+    ],
+    "launcherRunning": "disc",
+    "rtc": 1735689600,
+    "sdcardOff": "false",
+    "sysIni": {
+     "covers": [
+      "PPLUS32",
+      "RSBE01"
+     ],
+     "files": {
+      "ID-gbi.ini": "dd71b646b6174143",
+      "ID-gbihf.ini": "df7dd4deb61063d6",
+      "ID-gbisr.ini": "fb767dd0a89bdff5",
+      "RSB.ini": "e1e29b864607d23d",
+      "RSBE01.ini": "a4a2f890de222076"
+     }
+    },
+    "systems": {
+     "Dolphin": 0
+    },
+    "ux": {
+     "engine": 29,
+     "games": {
+      "": 0,
+      "brawl-rev2": 0,
+      "brawl-rev2-pplus": 0
+     }
+    }
+   },
+   "format": "orca-compat-key-template 1",
+   "keyCode": "c6a3154642413e35",
+   "orca": {
+    "commit": "005be8ff1f7f75b8aa72f5ad3480991a09446108",
+    "version": "0.3.41"
+   },
+   "parts": "orca2|005be8ff1f7f75b8aa72f5ad3480991a09446108|api=1|tree={tree}|sd={sd}|disc={disc}|sys={sys}|{forced}thread=false|fma={fma}|rtc=true:{rtc}|si=6,6,6,6|efb=true|xfb=true|access=false|bbox=false|save=0000000000000000|test=false|sdcard={sdcard}:false|ux={ux}",
+   "prefix": "orca2:"
+  }
+ },
+ "xxh3": {
+  "bytes": "byte i of a case is (i * 31 + 7) mod 256",
+  "cases": [
+   {
+    "len": 0,
+    "xxh3": "2d06800538d394c2"
+   },
+   {
+    "len": 1,
+    "xxh3": "4c5cca45d0f4811f"
+   },
+   {
+    "len": 2,
+    "xxh3": "a7e250c97710ff27"
+   },
+   {
+    "len": 3,
+    "xxh3": "15f7093b173d005c"
+   },
+   {
+    "len": 4,
+    "xxh3": "dca012f95811b6b9"
+   },
+   {
+    "len": 5,
+    "xxh3": "b290cafc7b254345"
+   },
+   {
+    "len": 7,
+    "xxh3": "7561869c23da3c1b"
+   },
+   {
+    "len": 8,
+    "xxh3": "dec6a9a43575982e"
+   },
+   {
+    "len": 9,
+    "xxh3": "cbe393399f17ffbd"
+   },
+   {
+    "len": 15,
+    "xxh3": "545e19990471dc37"
+   },
+   {
+    "len": 16,
+    "xxh3": "7e484c18d74895d0"
+   },
+   {
+    "len": 17,
+    "xxh3": "208bde5ee2bed407"
+   },
+   {
+    "len": 31,
+    "xxh3": "a937652b0119ca11"
+   },
+   {
+    "len": 32,
+    "xxh3": "03df0ac5255d1446"
+   },
+   {
+    "len": 33,
+    "xxh3": "199a362122d71f46"
+   },
+   {
+    "len": 63,
+    "xxh3": "76d4eec1f092847f"
+   },
+   {
+    "len": 64,
+    "xxh3": "dd30702ab46b3745"
+   },
+   {
+    "len": 65,
+    "xxh3": "fab36b851b94ce20"
+   },
+   {
+    "len": 96,
+    "xxh3": "d245cd2541582982"
+   },
+   {
+    "len": 97,
+    "xxh3": "60e3e1d0d43785b3"
+   },
+   {
+    "len": 127,
+    "xxh3": "a915ed6396db8cc0"
+   },
+   {
+    "len": 128,
+    "xxh3": "f92b70eaa21a6288"
+   },
+   {
+    "len": 129,
+    "xxh3": "f8f76713f2bb60fa"
+   },
+   {
+    "len": 160,
+    "xxh3": "c90911ffcef461e2"
+   },
+   {
+    "len": 200,
+    "xxh3": "12fdb864685f344d"
+   },
+   {
+    "len": 239,
+    "xxh3": "caa9b7a588464745"
+   },
+   {
+    "len": 240,
+    "xxh3": "ccc7375172c41f03"
+   },
+   {
+    "len": 241,
+    "xxh3": "0b3b630948ce4a00"
+   },
+   {
+    "len": 255,
+    "xxh3": "89932170686cdd9a"
+   },
+   {
+    "len": 256,
+    "xxh3": "ec85b75bafe6ca74"
+   },
+   {
+    "len": 257,
+    "xxh3": "12ef0ff633841459"
+   },
+   {
+    "len": 383,
+    "xxh3": "2fc2de660407eb10"
+   },
+   {
+    "len": 384,
+    "xxh3": "205f2de015d3bacd"
+   },
+   {
+    "len": 511,
+    "xxh3": "0fec8fb6eae1df8b"
+   },
+   {
+    "len": 512,
+    "xxh3": "efc2e52d1c2ffbaa"
+   },
+   {
+    "len": 513,
+    "xxh3": "eb39b64b9df98485"
+   },
+   {
+    "len": 767,
+    "xxh3": "f4d730c71d2898f5"
+   },
+   {
+    "len": 1023,
+    "xxh3": "f0d330ce2b3300fb"
+   },
+   {
+    "len": 1024,
+    "xxh3": "23bc880ebf0d29c6"
+   },
+   {
+    "len": 1025,
+    "xxh3": "c09fdfbc398c7d82"
+   },
+   {
+    "len": 1100,
+    "xxh3": "ceee0f86a8474bed"
+   },
+   {
+    "len": 1500,
+    "xxh3": "486b334c5917c521"
+   },
+   {
+    "len": 2047,
+    "xxh3": "c49f1b36d955611e"
+   },
+   {
+    "len": 2048,
+    "xxh3": "19f6f9c987331373"
+   },
+   {
+    "len": 2049,
+    "xxh3": "5045460f5d85c275"
+   },
+   {
+    "len": 3000,
+    "xxh3": "6eb4b5bfe14d9786"
+   },
+   {
+    "len": 4096,
+    "xxh3": "a3c19f8174cde0bb"
+   },
+   {
+    "len": 9000,
+    "xxh3": "afc3c8924b486af8"
+   }
+  ],
+  "strings": [
+   {
+    "text": "",
+    "xxh3": "2d06800538d394c2"
+   },
+   {
+    "text": "a",
+    "xxh3": "e6c632b61e964e1f"
+   },
+   {
+    "text": "abc",
+    "xxh3": "78af5f94892f3950"
+   },
+   {
+    "text": "orca2|",
+    "xxh3": "bee2d8c816a84144"
+   },
+   {
+    "text": "hello world",
+    "xxh3": "d447b1ea40e6988b"
+   },
+   {
+    "text": "orca2:0123456789abcdef",
+    "xxh3": "264561c25978cd54"
+   },
+   {
+    "text": "Dolphin.Core.CustomRTCValue",
+    "xxh3": "ebdbb32c3755b2a9"
+   },
+   {
+    "text": "\u00e9\u00e8 utf-8",
+    "xxh3": "f793e1e0cd095280"
+   }
+  ]
+ }
+}

@@ -6,14 +6,20 @@
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
+#include <string>
+#include <utility>
 #include <wrl/client.h>
+
+#include <fmt/format.h>
 
 #include "Common/Assert.h"
 #include "Common/DynamicLibrary.h"
+#include "Common/FileUtil.h"
 #include "Common/HRWrap.h"
 #include "Common/MsgHandler.h"
 #include "Common/StringUtil.h"
 
+#include "VideoBackends/D3DCommon/FxcCache.h"
 #include "VideoCommon/TextureConfig.h"
 #include "VideoCommon/VideoConfig.h"
 
@@ -23,7 +29,29 @@ pD3DCompile d3d_compile;
 
 static Common::DynamicLibrary s_dxgi_library;
 static Common::DynamicLibrary s_d3dcompiler_library;
+// Orca: the compiler beside the exe, loaded by its full path (LoadCompilerBesideExe).
+static HMODULE s_d3dcompiler_beside = nullptr;
 static bool s_libraries_loaded = false;
+
+// Orca: the d3dcompiler_47.dll that ships beside Orca.exe, by its full path. Loaded by name, the
+// sandbox's prefer-System32 rule (or a DLL planted elsewhere on the search path) would swap in
+// another build of the compiler, and every shader in the cache keyed to the shipped one would be
+// compiled again (FxcCache.cpp). Null when there is none there (a dev build): the name is the
+// fallback.
+static HMODULE LoadCompilerBesideExe()
+{
+  const std::string path = File::GetExeDirectory() + "/" + D3DCOMPILER_DLL_A;
+  if (!File::Exists(path))
+    return nullptr;
+  // LoadLibraryEx wants backslashes in a path.
+  std::wstring wide = UTF8ToWString(path);
+  for (wchar_t& c : wide)
+  {
+    if (c == L'/')
+      c = L'\\';
+  }
+  return LoadLibraryExW(wide.c_str(), nullptr, 0);
+}
 
 static HRESULT (*create_dxgi_factory)(REFIID riid, _COM_Outptr_ void** ppFactory);
 static HRESULT (*create_dxgi_factory2)(UINT Flags, REFIID riid, void** ppFactory);
@@ -39,7 +67,8 @@ bool LoadLibraries()
     return false;
   }
 
-  if (!s_d3dcompiler_library.Open(D3DCOMPILER_DLL_A))
+  s_d3dcompiler_beside = LoadCompilerBesideExe();
+  if (!s_d3dcompiler_beside && !s_d3dcompiler_library.Open(D3DCOMPILER_DLL_A))
   {
     PanicAlertFmtT("Failed to load {0}. If you are using Windows 7, try installing the "
                    "KB4019990 update package.",
@@ -49,10 +78,16 @@ bool LoadLibraries()
   }
 
   // Required symbols.
-  if (!s_d3dcompiler_library.GetSymbol("D3DCompile", &d3d_compile) ||
-      !s_dxgi_library.GetSymbol("CreateDXGIFactory", &create_dxgi_factory))
+  if (s_d3dcompiler_beside)
+  {
+    d3d_compile = reinterpret_cast<pD3DCompile>(GetProcAddress(s_d3dcompiler_beside, "D3DCompile"));
+  }
+  if ((!s_d3dcompiler_beside && !s_d3dcompiler_library.GetSymbol("D3DCompile", &d3d_compile)) ||
+      !d3d_compile || !s_dxgi_library.GetSymbol("CreateDXGIFactory", &create_dxgi_factory))
   {
     PanicAlertFmtT("Failed to find one or more D3D symbols");
+    if (s_d3dcompiler_beside)
+      FreeLibrary(std::exchange(s_d3dcompiler_beside, nullptr));
     s_d3dcompiler_library.Close();
     s_dxgi_library.Close();
     return false;
@@ -66,9 +101,13 @@ bool LoadLibraries()
 
 void UnloadLibraries()
 {
+  // Orca: close the FXC cache along with the compiler it caches.
+  FxcCache::Close();
   create_dxgi_factory = nullptr;
   create_dxgi_factory2 = nullptr;
   d3d_compile = nullptr;
+  if (s_d3dcompiler_beside)
+    FreeLibrary(std::exchange(s_d3dcompiler_beside, nullptr));
   s_d3dcompiler_library.Close();
   s_dxgi_library.Close();
   s_libraries_loaded = false;
@@ -105,6 +144,10 @@ std::vector<std::string> GetAdapterNames()
     return {};
 
   std::vector<std::string> adapters;
+  // Orca: which ones are software renderers (Windows 8+ lists the Microsoft Basic Render Driver,
+  // WARP, after the real cards). Trailing ones are left off the list, so a machine with one card
+  // shows one, and every index left still picks the adapter EnumAdapters gives it.
+  std::vector<bool> software;
   Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
   while (factory->EnumAdapters(static_cast<UINT>(adapters.size()), &adapter) !=
          DXGI_ERROR_NOT_FOUND)
@@ -113,11 +156,42 @@ std::vector<std::string> GetAdapterNames()
     DXGI_ADAPTER_DESC desc;
     if (SUCCEEDED(adapter->GetDesc(&desc)))
       name = WStringToUTF8(desc.Description);
+    bool is_software = false;
+    Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter1;
+    DXGI_ADAPTER_DESC1 desc1;
+    if (SUCCEEDED(adapter.As(&adapter1)) && SUCCEEDED(adapter1->GetDesc1(&desc1)))
+      is_software = (desc1.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
 
     adapters.push_back(std::move(name));
+    software.push_back(is_software);
+  }
+  while (adapters.size() > 1 && software.back())
+  {
+    adapters.pop_back();
+    software.pop_back();
   }
 
   return adapters;
+}
+
+std::string GetAdapterDriverVersion(int index)
+{
+  Microsoft::WRL::ComPtr<IDXGIFactory> factory;
+  if (FAILED(create_dxgi_factory(IID_PPV_ARGS(&factory))))
+    return {};
+  Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
+  if (index < 0 || FAILED(factory->EnumAdapters(static_cast<UINT>(index), &adapter)))
+  {
+    if (FAILED(factory->EnumAdapters(0, &adapter)))
+      return {};
+  }
+  // DXGI's one way to read the UMD version: four 16-bit parts, high to low.
+  LARGE_INTEGER umd;
+  if (FAILED(adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd)))
+    return {};
+  const auto high = static_cast<u32>(umd.HighPart);
+  const auto low = static_cast<u32>(umd.LowPart);
+  return fmt::format("{}.{}.{}.{}", high >> 16, high & 0xFFFF, low >> 16, low & 0xFFFF);
 }
 
 DXGI_FORMAT GetDXGIFormatForAbstractFormat(AbstractTextureFormat format, bool typeless)

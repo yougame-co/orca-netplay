@@ -16,6 +16,7 @@
 #include "VideoBackends/D3D/D3DGfx.h"
 #include "VideoBackends/D3D/D3DState.h"
 #include "VideoBackends/D3DCommon/D3DCommon.h"
+#include "VideoBackends/D3DCommon/DeviceLost.h"
 
 #include "VideoCommon/BoundingBox.h"
 #include "VideoCommon/GeometryShaderManager.h"
@@ -36,8 +37,8 @@ static ComPtr<ID3D11Buffer> AllocateConstantBuffer(u32 size)
                                   D3D11_CPU_ACCESS_WRITE);
   ComPtr<ID3D11Buffer> cbuf;
   const HRESULT hr = D3D::device->CreateBuffer(&cbdesc, nullptr, &cbuf);
-  ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to create shader constant buffer (size={}): {}", cbsize,
-             DX11HRWrap(hr));
+  ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a constant buffer"),
+             "Failed to create shader constant buffer (size={}): {}", cbsize, DX11HRWrap(hr));
   if (FAILED(hr))
     return nullptr;
 
@@ -47,8 +48,18 @@ static ComPtr<ID3D11Buffer> AllocateConstantBuffer(u32 size)
 
 static void UpdateConstantBuffer(ID3D11Buffer* const buffer, const void* data, u32 data_size)
 {
+  // Orca: never write through a map that failed, or into a buffer a lost device couldn't make
+  // (D3DCommon/DeviceLost.h): that was an access violation.
+  if (!buffer || D3DCommon::IsDeviceLost())
+    return;
   D3D11_MAPPED_SUBRESOURCE map;
-  D3D::context->Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &map);
+  const HRESULT hr = D3D::context->Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &map);
+  if (FAILED(hr))
+  {
+    if (!D3DCommon::CheckDeviceLost(hr, "a constant buffer's map"))
+      WARN_LOG_FMT(VIDEO, "Failed to map a constant buffer: {}", DX11HRWrap(hr));
+    return;
+  }
   memcpy(map.pData, data, data_size);
   D3D::context->Unmap(buffer, 0);
 
@@ -63,7 +74,8 @@ CreateTexelBufferView(ID3D11Buffer* buffer, TexelBufferFormat format, DXGI_FORMA
                                             VertexManager::TEXEL_STREAM_BUFFER_SIZE /
                                                 VertexManager::GetTexelBufferElementSize(format));
   HRESULT hr = D3D::device->CreateShaderResourceView(buffer, &srv_desc, &srv);
-  ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to create SRV for texel buffer: {}", DX11HRWrap(hr));
+  ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a texel buffer's view"),
+             "Failed to create SRV for texel buffer: {}", DX11HRWrap(hr));
   return srv;
 }
 
@@ -83,7 +95,8 @@ bool VertexManager::Initialize()
   for (auto& buffer : m_buffers)
   {
     HRESULT hr = D3D::device->CreateBuffer(&bufdesc, nullptr, &buffer);
-    ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to create buffer: {}", DX11HRWrap(hr));
+    ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a vertex buffer"),
+               "Failed to create buffer: {}", DX11HRWrap(hr));
     if (buffer)
       D3DCommon::SetDebugObjectName(buffer.Get(), "Buffer of VertexManager");
   }
@@ -97,7 +110,8 @@ bool VertexManager::Initialize()
   CD3D11_BUFFER_DESC texel_buf_desc(TEXEL_STREAM_BUFFER_SIZE, D3D11_BIND_SHADER_RESOURCE,
                                     D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE);
   HRESULT hr = D3D::device->CreateBuffer(&texel_buf_desc, nullptr, &m_texel_buffer);
-  ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Creating texel buffer failed: {}", DX11HRWrap(hr));
+  ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a texel buffer"),
+             "Creating texel buffer failed: {}", DX11HRWrap(hr));
   if (!m_texel_buffer)
     return false;
 
@@ -131,11 +145,14 @@ void VertexManager::UploadUtilityUniforms(const void* uniforms, u32 uniforms_siz
 
 bool VertexManager::MapTexelBuffer(u32 required_size, D3D11_MAPPED_SUBRESOURCE& sr)
 {
+  if (D3DCommon::IsDeviceLost())
+    return false;
   if ((m_texel_buffer_offset + required_size) > TEXEL_STREAM_BUFFER_SIZE)
   {
     // Restart buffer.
     HRESULT hr = D3D::context->Map(m_texel_buffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &sr);
-    ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to map texel buffer: {}", DX11HRWrap(hr));
+    ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a texel buffer's map"),
+               "Failed to map texel buffer: {}", DX11HRWrap(hr));
     if (FAILED(hr))
       return false;
 
@@ -145,7 +162,8 @@ bool VertexManager::MapTexelBuffer(u32 required_size, D3D11_MAPPED_SUBRESOURCE& 
   {
     // Don't overwrite the earlier-used space.
     HRESULT hr = D3D::context->Map(m_texel_buffer.Get(), 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &sr);
-    ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to map texel buffer: {}", DX11HRWrap(hr));
+    ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a texel buffer's map"),
+               "Failed to map texel buffer: {}", DX11HRWrap(hr));
     if (FAILED(hr))
       return false;
   }
@@ -243,7 +261,17 @@ void VertexManager::CommitBuffer(u32 num_vertices, u32 vertex_stride, u32 num_in
   *out_base_vertex = vertex_stride > 0 ? (cursor / vertex_stride) : 0;
   *out_base_index = (cursor + vertexBufferSize) / sizeof(u16);
 
-  D3D::context->Map(m_buffers[m_current_buffer].Get(), 0, MapType, 0, &map);
+  // Orca: never write through a map that failed (a lost device's: D3DCommon/DeviceLost.h). The
+  // draw that follows draws nothing on a lost device (Gfx::DrawIndexed).
+  if (D3DCommon::IsDeviceLost())
+    return;
+  const HRESULT hr = D3D::context->Map(m_buffers[m_current_buffer].Get(), 0, MapType, 0, &map);
+  if (FAILED(hr))
+  {
+    if (!D3DCommon::CheckDeviceLost(hr, "a vertex buffer's map"))
+      WARN_LOG_FMT(VIDEO, "Failed to map the vertex buffer: {}", DX11HRWrap(hr));
+    return;
+  }
   u8* mappedData = static_cast<u8*>(map.pData);
   if (vertexBufferSize > 0)
     std::memcpy(mappedData + cursor, m_base_buffer_pointer, vertexBufferSize);

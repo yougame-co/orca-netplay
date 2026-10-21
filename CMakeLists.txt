@@ -690,11 +690,10 @@ dolphin_find_optional_system_library_pkgconfig(SPNG spng spng::spng Externals/li
 message(STATUS "Using static FreeSurround from Externals")
 add_subdirectory(Externals/FreeSurround)
 
-if (APPLE OR WIN32)
-  message(STATUS "Using ed25519 from Externals")
-  add_subdirectory(Externals/ed25519)
-  include_directories(Externals/ed25519)
-endif()
+# The updater's (macOS and Windows), and Orca's flat bundle signatures (Core/Orca/Bundle.cpp).
+message(STATUS "Using ed25519 from Externals")
+add_subdirectory(Externals/ed25519)
+include_directories(Externals/ed25519)
 
 if(ENABLE_CUBEB)
   dolphin_find_optional_system_library(CUBEB Externals/cubeb)
@@ -720,6 +719,11 @@ endif()
 
 dolphin_find_optional_system_library(MBEDTLS Externals/mbedtls 2.28)
 
+# Orca: the netcode needs libcurl's WebSocket support (7.86+), which macOS's system libcurl and some
+# distro builds lack, so default to the bundled curl on every platform.
+if(NOT DEFINED USE_SYSTEM_CURL)
+  set(USE_SYSTEM_CURL OFF CACHE STRING "Use the system libcurl (Orca needs WebSocket support)")
+endif()
 dolphin_find_optional_system_library(CURL Externals/curl)
 
 if(NOT ANDROID)
@@ -760,6 +764,9 @@ if (USE_RETRO_ACHIEVEMENTS)
 endif()
 
 add_subdirectory(Externals/watcher)
+
+# Orca's direct links between players (ICE: STUN and TURN).
+add_subdirectory(Externals/libjuice)
 
 # Any other platform or BSD is currently unsupported by cpp-ipc
 if(WIN32 OR LINUX OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR CMAKE_SYSTEM_NAME STREQUAL "QNX")

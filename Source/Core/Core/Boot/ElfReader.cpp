@@ -69,17 +69,39 @@ static void byteswapSection(Elf32_Shdr& sec)
   bswap(sec.sh_type);
 }
 
-ElfReader::ElfReader(std::vector<u8> buffer) : BootExecutableReader(std::move(buffer))
+namespace
+{
+ElfReader::CopyObserver s_copy_observer;
+
+// Orca: the reader's own copy of the file's bytes, which only the copy's parse rewrites.
+std::vector<u8> CopyToParse(const std::vector<u8>& file)
+{
+  std::vector<u8> copy = file;
+  if (s_copy_observer)
+    s_copy_observer(file, copy);
+  return copy;
+}
+}  // namespace
+
+void ElfReader::SetCopyObserverForTests(CopyObserver observer)
+{
+  s_copy_observer = std::move(observer);
+}
+
+ElfReader::ElfReader(std::vector<u8> buffer)
+    : BootExecutableReader(std::move(buffer)), m_image(CopyToParse(m_bytes))
 {
   m_is_valid = Initialize();
 }
 
-ElfReader::ElfReader(File::IOFile file) : BootExecutableReader(std::move(file))
+ElfReader::ElfReader(File::IOFile file)
+    : BootExecutableReader(std::move(file)), m_image(CopyToParse(m_bytes))
 {
   m_is_valid = Initialize();
 }
 
-ElfReader::ElfReader(const std::string& filename) : BootExecutableReader(filename)
+ElfReader::ElfReader(const std::string& filename)
+    : BootExecutableReader(filename), m_image(CopyToParse(m_bytes))
 {
   m_is_valid = Initialize();
 }
@@ -88,15 +110,15 @@ ElfReader::~ElfReader() = default;
 
 bool ElfReader::Initialize()
 {
-  if (m_bytes.size() < sizeof(Elf32_Ehdr))
+  if (m_image.size() < sizeof(Elf32_Ehdr))
   {
     ERROR_LOG_FMT(BOOT, "ELF file is too small.");
     return false;
   }
 
-  base = reinterpret_cast<char*>(m_bytes.data());
-  base32 = reinterpret_cast<u32*>(m_bytes.data());
-  header = reinterpret_cast<Elf32_Ehdr*>(m_bytes.data());
+  base = reinterpret_cast<char*>(m_image.data());
+  base32 = reinterpret_cast<u32*>(m_image.data());
+  header = reinterpret_cast<Elf32_Ehdr*>(m_image.data());
   if (header->e_ident[EI_MAG0] != ELFMAG0 || header->e_ident[EI_MAG1] != ELFMAG1 ||
       header->e_ident[EI_MAG2] != ELFMAG2 || header->e_ident[EI_MAG3] != ELFMAG3 ||
       header->e_ident[EI_CLASS] != ELFCLASS32 || header->e_ident[EI_DATA] != ELFDATA2MSB)
@@ -108,7 +130,7 @@ bool ElfReader::Initialize()
   byteswapHeader(*header);
 
   const auto is_range_valid = [this](size_t offset, size_t size) {
-    return offset <= m_bytes.size() && size <= m_bytes.size() - offset;
+    return offset <= m_image.size() && size <= m_image.size() - offset;
   };
   if (header->e_ehsize != sizeof(Elf32_Ehdr) ||
       (header->e_phnum != 0 && header->e_phentsize != sizeof(Elf32_Phdr)) ||

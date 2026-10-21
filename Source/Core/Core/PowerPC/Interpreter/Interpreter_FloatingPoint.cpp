@@ -3,6 +3,7 @@
 
 #include "Core/PowerPC/Interpreter/Interpreter.h"
 
+#include <bit>
 #include <cmath>
 #include <utility>
 
@@ -40,7 +41,10 @@ double RoundToIntegerMode(double number)
   // numbers can only store subsequent integers, and no longer any decimals
   // This keeps the sign of the unrounded value because it needs to scale it
   // upwards when added
-  const double int_precision = std::copysign(4503599627370496.0, number);
+  // Orca: the sign with integer operations; std::copysign of a double is wrong on ARM64 under
+  // FPCR.AH (see Common::ApproximateReciprocal).
+  const double int_precision = std::bit_cast<double>(std::bit_cast<u64>(4503599627370496.0) |
+                                                     (std::bit_cast<u64>(number) & (1ULL << 63)));
 
   // By adding this value to the original number,
   // it will be forced to decide a integer to round to
@@ -264,7 +268,9 @@ void Interpreter::fmrx(Interpreter& interpreter, UGeckoInstruction inst)
 void Interpreter::fabsx(Interpreter& interpreter, UGeckoInstruction inst)
 {
   auto& ppc_state = interpreter.m_ppc_state;
-  ppc_state.ps[inst.FD].SetPS0(fabs(ppc_state.ps[inst.FB].PS0AsDouble()));
+  // Orca: bitwise, as fneg and fnabs are (and PowerPC is): the host's FABS keeps a NaN's sign on
+  // ARM64 under FPCR.AH.
+  ppc_state.ps[inst.FD].SetPS0(ppc_state.ps[inst.FB].PS0AsU64() & ~(UINT64_C(1) << 63));
 
   // This is a binary instruction. Does not alter FPSCR
   if (inst.Rc)

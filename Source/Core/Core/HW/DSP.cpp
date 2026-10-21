@@ -37,6 +37,7 @@
 #include "Core/HW/MMIO.h"
 #include "Core/HW/Memmap.h"
 #include "Core/HW/ProcessorInterface.h"
+#include "Core/Orca/Music.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/System.h"
 
@@ -430,8 +431,15 @@ void DSPManager::UpdateAudioDMA()
     // external audio fifo in the emulator, to be mixed with the disc
     // streaming output.
     auto& memory = m_system.GetMemory();
-    void* address = memory.GetPointerForRange(m_audio_dma.current_source_address, 32);
-    AudioCommon::SendAIBuffer(m_system, static_cast<short*>(address), 8);
+    const u32 source = m_audio_dma.current_source_address;
+    const void* address = memory.GetPointerForRange(source, 32);
+    // Orca's Music switch: the mixer's frame without the music, while RAM holds what it wrote.
+    if (address && !Orca::Music::On())
+    {
+      if (const u8* quiet = Orca::Music::GetShadow().Find(source, static_cast<const u8*>(address)))
+        address = quiet;
+    }
+    AudioCommon::SendAIBuffer(m_system, static_cast<const short*>(address), 8);
 
     if (m_audio_dma.remaining_blocks_count != 0)
     {

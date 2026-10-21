@@ -26,6 +26,7 @@
 #include "Common/Contains.h"
 #include "Common/FileUtil.h"
 #include "Common/IOFile.h"
+#include "Common/LocaleUtil.h"
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
 #include "Common/StringUtil.h"
@@ -45,6 +46,7 @@
 #include "Core/HW/Wiimote.h"
 #include "Core/Movie.h"
 #include "Core/NetPlayProto.h"
+#include "Core/Orca/Profile.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/System.h"
 
@@ -212,6 +214,12 @@ static bool CheckIfStateLoadIsAllowed(Core::System& system)
     return false;
   }
 
+  if (Orca::SessionActive())
+  {
+    OSD::AddMessage("Loading savestates is disabled in an online match");
+    return false;
+  }
+
   if (AchievementManager::GetInstance().IsHardcoreModeActive())
   {
     OSD::AddMessage("Loading savestates is disabled in RetroAchievements hardcore mode");
@@ -258,6 +266,16 @@ static std::size_t SaveToBuffer(Core::System& system, Common::UniqueBuffer<u8>& 
   return 0;
 }
 
+std::size_t SaveToBufferForRollback(Core::System& system, Common::UniqueBuffer<u8>& buffer)
+{
+  return SaveToBuffer(system, buffer);
+}
+
+bool LoadFromBufferForRollback(Core::System& system, std::span<u8> buffer)
+{
+  return LoadFromBuffer(system, buffer);
+}
+
 namespace
 {
 struct SlotWithTimestamp
@@ -300,7 +318,7 @@ static std::string SystemTimeAsDoubleToString(double time)
     return "";
 
   // fmt is locale agnostic by default, so explicitly use current locale.
-  return fmt::format(std::locale{""}, "{:%x %X}", *local_time);
+  return fmt::format(Common::GetEnvironmentLocale(), "{:%x %X}", *local_time);
 }
 
 static std::string MakeStateFilename(u32 number)
@@ -809,6 +827,10 @@ static void LoadFileStateData(const std::string& filename, Common::UniqueBuffer<
 
 static void LoadAsFromCore(Core::System& system, std::string filename)
 {
+  // Every path that loads a savestate file ends here (undo and "load last" too). A rollback
+  // session's own snapshots load through LoadFromBufferForRollback instead.
+  if (Orca::SessionActive())
+    return;
   // Ensure all data has reached the filesystem before trying to use it.
   s_compress_and_dump_thread.WaitForCompletion();
 

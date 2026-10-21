@@ -1,0 +1,12 @@
+# What B does on Project+'s Versus character select (ORCA.md "B only takes the token back up"), no
+# header (no locks), ORCA_PROFILE=PPLUS32: as bf-css-b.txt (the same watches), B held from the
+# token down backing out 31 frames after the press began.
+@scBoot mash 30 99999 1 40 A
+@muMenuMain:1 mash 30 99999 1 40 A
+@scSelctCharacter:1 90 116 1 SY=255
+@scSelctCharacter:1 140 143 1 A
+@scSelctCharacter:1 200 200 1 B
+@scSelctCharacter:1 240 243 1 A
+@scSelctCharacter:1 300 301 1 B
+@scSelctCharacter:1 340 343 1 A
+@scSelctCharacter:1 400 700 1 B
