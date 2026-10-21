@@ -2799,6 +2799,13 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.66
+
+- On Mac, the game stays with YouGame when entering or leaving full screen, and waits for the
+  app's window to settle before appearing again.
+- The game keeps full priority on Mac while it runs.
+- On Linux, Vulkan graphics are included (fixes a crash on the character screen with some AMD graphics drivers).
+
 ### 0.3.65
 
 - Faster start: the game boots at full speed until its first frame, and a warm start no longer

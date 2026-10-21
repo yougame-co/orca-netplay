@@ -27,8 +27,8 @@
     <string>${ORCA_VERSION}</string>
     <key>NSHumanReadableCopyright</key>
     <string>Free software under the GNU General Public License. See COPYING.</string>
-    <key>LSApplicationCategoryType</key>
-    <string>public.app-category.games</string>
+    <key>LSUIElement</key>
+    <true/>
     <key>LSMinimumSystemVersion</key>
     <string>${CMAKE_OSX_DEPLOYMENT_TARGET}</string>
     <key>NSHighResolutionCapable</key>

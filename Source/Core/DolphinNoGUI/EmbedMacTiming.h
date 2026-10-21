@@ -14,6 +14,37 @@ namespace Embed::Mac
 constexpr auto PARENT_QUERY_INTERVAL = std::chrono::milliseconds(100);
 constexpr auto ABOVE_QUERY_INTERVAL = std::chrono::milliseconds(250);
 constexpr auto FORCED_QUERY_FLOOR = std::chrono::milliseconds(20);
+constexpr auto SETTLE = std::chrono::milliseconds(500);
+
+// AppKit-free parent bounds: x, y, width, height, compared exactly in screen points.
+class SettleGate
+{
+public:
+  using Clock = std::chrono::steady_clock;
+  using Bounds = std::array<double, 4>;
+
+  // Missing bounds mean the parent is absent. A hidden parent cannot accrue stable time.
+  void Observe(Clock::time_point now, bool on_screen, std::optional<Bounds> bounds)
+  {
+    if (!on_screen || !bounds)
+    {
+      m_since.reset();
+      m_bounds.reset();
+      return;
+    }
+    if (!m_bounds || *m_bounds != *bounds)
+    {
+      m_since = now;
+      m_bounds = bounds;
+    }
+  }
+
+  bool Ready(Clock::time_point now) const { return m_since && now - *m_since >= SETTLE; }
+
+private:
+  std::optional<Clock::time_point> m_since;
+  std::optional<Bounds> m_bounds;
+};
 
 class QueryTimer
 {
