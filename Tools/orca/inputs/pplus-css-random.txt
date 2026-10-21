@@ -1,0 +1,68 @@
+# Random in a ranked queue2 set (ORCA.md "The queue's character select": Random is allowed in casual
+# and ranked), Project+ (ORCA_PROFILE=PPLUS32), as pplus-css-lockin.txt but every pick is RANDOM
+# (character id 0x29; the tile in the grid's bottom row, about -3..4, -1.5..2.5):
+#   - game 1: on the player's own character select port 1 goes up 20 frames and right 24 (0.6, 0.7)
+#     onto RANDOM, A, Start: `orca queue ready ranked 41 0`; port 2's pick (ORCA_TEST_QUEUE_PICK) is
+#     Random too, steered onto the host's RANDOM tile; both ready (the game resolves both Randoms
+#     as the character select ends), the stage select's two cursors agree on Battlefield; port 2
+#     walks off;
+#   - game 2's character order, port 1 (the winner) first: up 27 frames over another character with
+#     its token down on RANDOM, B takes the token up, down 7 and right 24 onto RANDOM again, A puts
+#     it there, Start locks Random in; port 2's token is still down on RANDOM from game 1, and its
+#     Start locks that in: the stage select at once; both agree on Battlefield.
+# Run with ORCA_TEST_QUEUE=ranked:solo ORCA_UX_TEST_NAMES=ada,bo YG_RESULTS=1
+# ORCA_TEST_QUEUE_PICK=<the solo character select's frame + 300>:41:0:0.5:0.5:1532, e.g. the sync
+# test from the main menu on (YG_SYNCTEST=7 YG_SYNCTEST_FROM=200).
+@scBoot mash 30 99999 1 40 A
+# PLAY ONLINE, With Anyone, Ranked (one below Casual).
+@muMenuMain:1 120 123 1 DOWN
+@muMenuMain:1 170 173 1 A
+@muMenuMain:1 220 223 1 RIGHT
+@muMenuMain:1 270 273 1 A
+@muMenuMain:1 320 323 1 DOWN
+@muMenuMain:1 370 373 1 A
+# The own character select: up 20 and right 24 onto RANDOM, A, Start (ready); then both ready.
+@scSelctCharacter:1 90 109 1 SY=255
+@scSelctCharacter:1 112 135 1 SX=255
+@scSelctCharacter:1 150 153 1 A
+@scSelctCharacter:1 200 203 1 START
+@scSelctCharacter:1 mash 600 99999 1 30 START
+@scSelctCharacter:1 mash 620 99999 2 30 START
+# Game 1's stage select with the two cursors, as pplus-sss-cursors-ranked.txt: port 1 strikes
+# Temple of Time, port 2 Luigi's Mansion, both propose Battlefield: agreed. Port 2 walks off;
+# on through the results.
+@scSelStage:1 40 43 1 SX=0 SY=255
+@scSelStage:1 44 45 1 SX=0
+@scSelStage:1 55 57 1 X
+@scSelStage:1 40 43 2 SX=255 SY=255
+@scSelStage:1 44 46 2 SX=255
+@scSelStage:1 65 67 2 X
+@scSelStage:1 75 84 2 SX=0
+@scSelStage:1 95 97 2 A
+@scSelStage:1 75 84 1 SX=255
+@scSelStage:1 105 107 1 A
+@scMelee 250 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START
+# Game 2: port 1 (the winner) up over another character (its token is down on RANDOM), B takes the
+# token up, down and right onto RANDOM, A puts it there, Start locks Random in.
+@scSelctCharacter:2 30 56 1 SY=255
+@scSelctCharacter:2 70 70 1 B
+@scSelctCharacter:2 90 96 1 SY=1
+@scSelctCharacter:2 100 123 1 SX=255
+@scSelctCharacter:2 140 142 1 A
+@scSelctCharacter:2 170 172 1 START
+# Port 2: its token still down on RANDOM from game 1; Start locks that in: the stage select.
+@scSelctCharacter:2 220 222 2 START
+# Game 2's stage select: both cursors onto Battlefield (no strikes), both propose it: agreed.
+@scSelStage:2 40 43 1 SX=0 SY=255
+@scSelStage:2 44 45 1 SX=0
+@scSelStage:2 75 84 1 SX=255
+@scSelStage:2 105 107 1 A
+@scSelStage:2 40 43 2 SX=255 SY=255
+@scSelStage:2 44 46 2 SX=255
+@scSelStage:2 75 84 2 SX=0
+@scSelStage:2 95 97 2 A
+@scMelee 250 99999 2 SX=1

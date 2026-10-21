@@ -22,7 +22,9 @@
 #include "Core/Config/MainSettings.h"
 #include "Core/Core.h"
 #include "Core/HW/SystemTimers.h"
+#include "Core/Orca/Perf.h"
 #include "Core/PowerPC/PowerPC.h"
+#include "Core/Rollback/Rollback.h"
 #include "Core/System.h"
 
 #include "VideoCommon/Fifo.h"
@@ -34,6 +36,8 @@
 
 namespace CoreTiming
 {
+std::vector<std::string>* g_rollback_event_trace = nullptr;
+
 static constexpr int MAX_SLICE_LENGTH = 20000;
 
 static void EmptyTimedCallback(Core::System& system, u64 userdata, s64 cyclesLate)
@@ -366,6 +370,12 @@ void CoreTimingManager::Advance()
     Event evt = m_event_queue.front();
     std::ranges::pop_heap(m_event_queue, std::ranges::greater{});
     m_event_queue.pop_back();
+    if (g_rollback_event_trace)
+    {
+      g_rollback_event_trace->push_back(fmt::format("{} t={} late={} ud={}", *evt.type->name,
+                                                    evt.time, m_globals.global_timer - evt.time,
+                                                    evt.userdata));
+    }
     evt.type->callback(m_system, evt.userdata, m_globals.global_timer - evt.time);
   }
 
@@ -396,7 +406,25 @@ TimePoint CoreTimingManager::CalculateTargetHostTimeInternal(s64 target_cycle)
 
 bool CoreTimingManager::IsSpeedUnlimited() const
 {
-  return m_throttle_adj_clock_per_sec == 0 || Core::GetIsThrottlerTempDisabled();
+  // Orca: frames re-run after a rollback load catch up to the present as fast as possible.
+  return m_throttle_adj_clock_per_sec == 0 || Core::GetIsThrottlerTempDisabled() ||
+         Rollback::IsResimulating();
+}
+
+std::pair<s64, TimePoint> CoreTimingManager::GetThrottleReference() const
+{
+  return {m_throttle_reference_cycle, m_throttle_reference_time};
+}
+
+void CoreTimingManager::SetThrottleReference(const std::pair<s64, TimePoint>& reference)
+{
+  m_throttle_reference_cycle = reference.first;
+  m_throttle_reference_time = reference.second;
+}
+
+void CoreTimingManager::ResetThrottleToNow()
+{
+  ResetThrottle(static_cast<s64>(GetTicks()));
 }
 
 TimePoint CoreTimingManager::GetTargetHostTime(s64 target_cycle)
@@ -423,6 +451,8 @@ void CoreTimingManager::SleepUntil(TimePoint time_point)
     // Count amount of time sleeping for analytics
     const TimePoint time_after_sleep = Clock::now();
     m_system.GetPerfMetrics().CountThrottleSleep(time_after_sleep - time);
+    // Orca: and for this machine's own speed, which leaves waits out (Orca/Perf.h).
+    Orca::Perf::AddSleep(time_after_sleep - time);
   }
   else
   {

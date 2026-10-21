@@ -1,0 +1,18 @@
+# Long-host runs (Tools/orca/long-join.py): Group > Brawl, a CPU on panel 2
+# (bf-cpu-dropin-live.txt's presses), P1 picks; then 1-on-1 fights vs that CPU forever: Start on
+# every later select, A on every stage select once it is interactive, P1 fuzzed in fights, results
+# mashed back to the select.
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain:1 120 123 1 A
+@muMenuMain:1 170 173 1 A
+@scSelctCharacter:1 60 77 1 SX=255
+@scSelctCharacter:1 100 103 1 A
+@scSelctCharacter:1 170 210 1 SY=255
+@scSelctCharacter:1 230 233 1 A
+@scSelctCharacter mash 430 99999 1 60 START
+@scSelStage mash 150 99999 1 40 A
+@scMelee fuzz 300 99999 1 11
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 600 99999 1 40 START

@@ -26,6 +26,7 @@
 #include "Core/IOS/Uids.h"
 #include "Core/Movie.h"
 #include "Core/NetPlayClient.h"
+#include "Core/Orca/Profile.h"
 #include "Core/SysConf.h"
 #include "Core/System.h"
 
@@ -128,7 +129,10 @@ static void InitializeDeterministicWiiSaves(FS::FileSystem* session_fs,
                                             const BootSessionData& boot_session_data)
 {
   auto& movie = Core::System::GetInstance().GetMovie();
-  const u64 title_id = SConfig::GetInstance().GetTitleID();
+  u64 title_id = SConfig::GetInstance().GetTitleID();
+  // Orca: a launcher profile boots a loader (title 0) that boots the game; seed the game's save.
+  if (const Orca::Profile* profile = Orca::ActiveProfile(); profile && profile->save_title)
+    title_id = *profile->save_title;
   const auto configured_fs = FS::MakeFileSystem(FS::Location::Configured);
   if (movie.IsRecordingInput())
   {
@@ -142,6 +146,21 @@ static void InitializeDeterministicWiiSaves(FS::FileSystem* session_fs,
       const std::string path = Common::GetTitleDataPath(title_id) + "/banner.bin";
       movie.SetClearSave(!configured_fs->GetMetadata(IOS::PID_KERNEL, IOS::PID_KERNEL, path));
     }
+  }
+
+  // Orca: both players start from the save prepared in the session's user directory (or, in
+  // Orca.app, none), never from anything else on their own NANDs.
+  if (Orca::SessionActive())
+  {
+    if (Orca::SeedSessionSave())
+    {
+      INFO_LOG_FMT(CORE, "Orca: copying save {:016x} into the session NAND", title_id);
+      CopySave(configured_fs.get(), session_fs, title_id);
+    }
+    Orca::SetSeedSaveHash(Orca::HashSessionSave(title_id));
+    NOTICE_LOG_FMT(CORE, "Orca: session save {:016x} hash {:016x} (0 = no save)", title_id,
+                   Orca::GetSeedSaveHash());
+    return;
   }
 
   if ((NetPlay::IsNetPlayRunning() && SConfig::GetInstance().bCopyWiiSaveNetplay) ||
@@ -369,6 +388,10 @@ void InitializeWiiFileSystemContents(
 
 void CleanUpWiiFileSystemContents(const BootSessionData& boot_session_data)
 {
+  // Orca: the session NAND is thrown away; nothing goes back to the player's own NAND.
+  if (Orca::SessionActive())
+    return;
+
   // In TAS mode, copy back always.
   // In Netplay, only copy back when we're the host and writing back is enabled.
   const bool wii_root_is_temporary = WiiRootIsTemporary();

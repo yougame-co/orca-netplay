@@ -560,7 +560,8 @@ void AXUCode::SetMainLR(u32 src_addr)
   }
 }
 
-void AXUCode::RunCompressor(u16 threshold, u16 release_frames, u32 table_addr, u32 millis)
+void AXUCode::RunCompressor(u16 threshold, u16 release_frames, u32 table_addr, u32 millis,
+                            int* also_left, int* also_right)
 {
   // check for L/R samples exceeding the threshold
   bool triggered = false;
@@ -605,6 +606,10 @@ void AXUCode::RunCompressor(u16 threshold, u16 release_frames, u32 table_addr, u
     u16 coef = Common::swap16(*ramp++);
     m_samples_main_left[i] = (s64(m_samples_main_left[i]) * coef) >> 15;
     m_samples_main_right[i] = (s64(m_samples_main_right[i]) * coef) >> 15;
+    if (also_left)
+      also_left[i] = (s64(also_left[i]) * coef) >> 15;
+    if (also_right)
+      also_right[i] = (s64(also_right[i]) * coef) >> 15;
   }
 }
 

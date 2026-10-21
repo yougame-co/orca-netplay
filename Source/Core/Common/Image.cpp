@@ -116,7 +116,7 @@ bool SavePNG(const std::string& path, const u8* input, ImageByteFormat format, u
   spng_decoded_image_size(ctx.get(), SPNG_FMT_PNG, &image_len);
   INFO_LOG_FMT(FRAMEDUMP, "{} byte {} by {} image saved to {} at level {} in {} ms", image_len,
                width, height, path, level, timer.ElapsedMs());
-  return true;
+  return outfile.Close();
 }
 
 static Common::UniqueBuffer<u8> RGBAToRGB(const u8* input, u32 width, u32 height, u32 row_stride)

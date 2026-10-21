@@ -1,0 +1,37 @@
+{
+  "format": 1,
+  "id": "pplus-2024",
+  "block": 2,
+  "name": "Project+ 2024",
+  "stages": [
+    { "name": "Battlefield", "kind": 1, "role": "starter" },
+    { "name": "Pokémon Stadium 2", "kind": 46, "role": "starter" },
+    { "name": "Smashville", "kind": 33, "role": "starter" },
+    { "name": "Luigi's Mansion", "kind": 4, "role": "starter" },
+    { "name": "Temple of Time", "kind": 9, "role": "starter" },
+    { "name": "Green Hill Zone", "kind": 35, "role": "counterpick" },
+    { "name": "Bowser's Castle", "kind": 6, "role": "counterpick" },
+    { "name": "Frigate Husk", "kind": 12, "role": "counterpick" },
+    { "name": "Dream Land", "kind": 45, "role": "counterpick" }
+  ],
+  "steps": {
+    "game1Seconds": [30, 30, 10],
+    "later": { "kind": "strike", "count": 2, "optional": false, "seconds": 30 },
+    "pickSeconds": 30,
+    "graceFrames": 180,
+    "casualSeconds": 15,
+    "casualGraceFrames": 30
+  },
+  "dsr": true,
+  "clauses": {},
+  "set": {
+    "wins": 2,
+    "stocks": 4,
+    "minutes": 8,
+    "timeOut": "results",
+    "voidAfterTies": 5
+  },
+  "queue": { "readySeconds": 30, "skipFrames": 90 },
+  "characterOrder": { "pickSeconds": 45 },
+  "css": { "readySeconds": 60 }
+}

@@ -9,7 +9,10 @@
 
 #include <curl/curl.h>
 
+#include "Common/CurlTLS.h"
+
 #include "Common/Logging/Log.h"
+#include "Common/Network.h"
 #include "Common/ScopeGuard.h"
 #include "Common/StringUtil.h"
 
@@ -125,6 +128,7 @@ HttpRequest::Impl::Impl(std::chrono::milliseconds timeout_ms, ProgressCallback c
   m_curl.reset(curl_easy_init());
   if (!m_curl)
     return;
+  ConfigureCurlTLS(m_curl.get());
 
   curl_easy_setopt(m_curl.get(), CURLOPT_NOPROGRESS, m_callback == nullptr);
 
@@ -232,6 +236,9 @@ HttpRequest::Response HttpRequest::Impl::Fetch(const std::string& url, Method me
                                                size_t size, AllowedReturnCodes codes,
                                                std::span<Multiform> multiform)
 {
+  if (OfflineReplay())
+    return std::nullopt;
+
   m_response_headers.clear();
   curl_easy_setopt(m_curl.get(), CURLOPT_POST, method == Method::POST);
   curl_easy_setopt(m_curl.get(), CURLOPT_URL, url.c_str());

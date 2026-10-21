@@ -54,6 +54,8 @@ public:
   void TriggerSyncButtonHeldEvent() override;
 
 private:
+  friend class BluetoothRealDeviceTestPeer;
+
   using BufferType = LibUSBBluetoothAdapter::BufferType;
 
   std::unique_ptr<LibUSBBluetoothAdapter> m_lib_usb_bt_adapter;

@@ -134,3 +134,7 @@
 	path = Externals/wil
 	url = https://github.com/microsoft/wil.git
 	shallow = true
+[submodule "Externals/libjuice/libjuice"]
+	path = Externals/libjuice/libjuice
+	url = https://github.com/paullouisageneau/libjuice.git
+	shallow = true

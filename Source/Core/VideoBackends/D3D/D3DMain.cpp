@@ -118,6 +118,7 @@ void VideoBackend::FillBackendInfo()
   g_backend_info.bSupportsHDROutput = true;
 
   g_backend_info.Adapters = D3DCommon::GetAdapterNames();
+  g_backend_info.DriverVersion = D3DCommon::GetAdapterDriverVersion(g_Config.iAdapter);
   g_backend_info.AAModes = D3D::GetAAModes(g_Config.iAdapter);
 
   // Override optional features if we are actually booting.

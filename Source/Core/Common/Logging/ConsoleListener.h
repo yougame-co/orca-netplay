@@ -17,4 +17,8 @@ private:
 #if !defined _WIN32 && !defined ANDROID
   bool m_use_color = false;
 #endif
+#ifdef _WIN32
+  // stdout is a file or pipe (e.g. `> log.txt`), so lines go there as well as to the debugger.
+  bool m_stdout_redirected = false;
+#endif
 };

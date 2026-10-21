@@ -1,0 +1,40 @@
+# The whole casual queue2 flow in one run (ORCA.md "The queue's character select"),
+# Project+ (ORCA_PROFILE=PPLUS32): boot -> the main menu -> PLAY ONLINE > With Anyone >
+# Casual -> the player's own character select (the solo header): port 1 takes the character two
+# rows up from its panel and presses Start (ready) -> from ORCA_TEST_QUEUE_PICK's frame port 2 plugs
+# in with its pick, the header becomes the room's (queue2) and the pick is steered in -> both press
+# Start (ready) -> Orca presses Start -> the casual stage pick (port 1 names Battlefield, port 2
+# Bowser's Castle; the coin takes one) -> port 2 walks off -> results -> game 2's character select,
+# both ready again.
+# Run with ORCA_TEST_QUEUE=casual:solo ORCA_UX_TEST_NAMES=ada,bo
+# ORCA_TEST_QUEUE_PICK=<the solo character select's frame + 300>:43:2:-7.4:7.7, e.g. the sync test
+# from the main menu on (YG_SYNCTEST=7 YG_SYNCTEST_FROM=200).
+@scBoot mash 30 99999 1 40 A
+# PLAY ONLINE, With Anyone, Casual.
+@muMenuMain:1 120 123 1 DOWN
+@muMenuMain:1 170 173 1 A
+@muMenuMain:1 220 223 1 RIGHT
+@muMenuMain:1 270 273 1 A
+@muMenuMain:1 320 323 1 A
+# The player's own character select: up into the grid, A, Start (ready: the page would search now).
+@scSelctCharacter:1 90 116 1 SY=255
+@scSelctCharacter:1 140 143 1 A
+@scSelctCharacter:1 200 203 1 START
+# The room's character select (port 2 from the pick's frame, about 300 frames in): both ready.
+@scSelctCharacter:1 mash 600 99999 1 30 START
+@scSelctCharacter:1 mash 620 99999 2 30 START
+# The casual stage pick: the cursor starts on Random; one push up is Battlefield (port 1 names it:
+# its A reads as X), another Bowser's Castle (port 2's turn).
+@scSelStage:1 40 43 1 SY=255
+@scSelStage:1 40 43 2 SY=255
+@scSelStage:1 60 62 1 A
+@scSelStage:1 60 62 2 A
+@scSelStage:1 80 83 2 SY=255
+@scSelStage:1 100 102 2 A
+@scMelee 250 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START
+@scSelctCharacter:2 mash 120 99999 1 30 START
+@scSelctCharacter:2 mash 140 99999 2 30 START
