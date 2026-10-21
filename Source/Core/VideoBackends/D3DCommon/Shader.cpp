@@ -3,8 +3,10 @@
 
 #include "VideoBackends/D3DCommon/Shader.h"
 
+#include <chrono>
 #include <fstream>
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include <fmt/format.h>
@@ -19,6 +21,10 @@
 #include "Common/MsgHandler.h"
 #include "Common/StringUtil.h"
 #include "Common/Version.h"
+
+#include "Core/Orca/Profile.h"
+
+#include "VideoBackends/D3DCommon/FxcCache.h"
 
 #include "VideoCommon/ShaderCompileUtils.h"
 #include "VideoCommon/Spirv.h"
@@ -243,20 +249,39 @@ std::optional<Shader::BinaryData>
 Shader::CompileShader(D3D_FEATURE_LEVEL feature_level, ShaderStage stage, std::string_view source,
                       VideoCommon::ShaderIncluder* shader_includer)
 {
+  using Clock = std::chrono::steady_clock;
+  const auto translate_start = Clock::now();
   const auto hlsl = GetHLSL(feature_level, stage, source, shader_includer);
   if (!hlsl)
     return std::nullopt;
+  const auto translate_end = Clock::now();
 
   static constexpr D3D_SHADER_MACRO macros[] = {{"API_D3D", "1"}, {nullptr, nullptr}};
-  const UINT flags = g_ActiveConfig.bEnableValidationLayer ?
-                         (D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION) :
-                         (D3DCOMPILE_OPTIMIZATION_LEVEL3 | D3DCOMPILE_SKIP_VALIDATION);
+  const UINT default_flags = g_ActiveConfig.bEnableValidationLayer ?
+                                 (D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION) :
+                                 (D3DCOMPILE_OPTIMIZATION_LEVEL3 | D3DCOMPILE_SKIP_VALIDATION);
+  const UINT flags = Orca::TestFxcFlags().value_or(default_flags);
   const char* target = GetCompileTarget(feature_level, stage);
+
+  // Orca: reuse the bytecode if an earlier run compiled this exact shader (see FxcCache.h).
+  std::string macro_text;
+  for (const D3D_SHADER_MACRO* macro = macros; macro->Name; ++macro)
+    macro_text += fmt::format("{}={};", macro->Name, macro->Definition);
+  static constexpr char entry[] = "main";
+  const std::optional<FxcCache::Key> key =
+      FxcCache::MakeKey(*hlsl, entry, target, flags, macro_text);
+  if (key)
+  {
+    if (std::optional<BinaryData> cached = FxcCache::Find(*key))
+      return cached;
+  }
 
   Microsoft::WRL::ComPtr<ID3DBlob> code;
   Microsoft::WRL::ComPtr<ID3DBlob> errors;
-  HRESULT hr = d3d_compile(hlsl->data(), hlsl->size(), nullptr, macros, nullptr, "main", target,
+  const auto compile_start = Clock::now();
+  HRESULT hr = d3d_compile(hlsl->data(), hlsl->size(), nullptr, macros, nullptr, entry, target,
                            flags, 0, &code, &errors);
+  const auto compile_end = Clock::now();
   if (FAILED(hr))
   {
     static int num_failures = 0;
@@ -290,7 +315,23 @@ Shader::CompileShader(D3D_FEATURE_LEVEL feature_level, ShaderStage stage, std::s
                  static_cast<const char*>(errors->GetBufferPointer()));
   }
 
-  return CreateByteCode(code->GetBufferPointer(), code->GetBufferSize());
+  BinaryData bytecode = CreateByteCode(code->GetBufferPointer(), code->GetBufferSize());
+  if (key)
+    FxcCache::Store(*key, bytecode);
+
+  // Orca: log slow compiles (mostly ubershaders) to show where boot time goes.
+  const auto ms = [](Clock::duration d) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
+  };
+  if (compile_end - compile_start >= std::chrono::milliseconds(250))
+  {
+    NOTICE_LOG_FMT(VIDEO,
+                   "Orca: FXC compiled a {} in {} ms ({} KB of HLSL, from GLSL in {} ms; {} KB "
+                   "out)",
+                   target, ms(compile_end - compile_start), hlsl->size() / 1024,
+                   ms(translate_end - translate_start), bytecode.size() / 1024);
+  }
+  return bytecode;
 }
 
 AbstractShader::BinaryData Shader::CreateByteCode(const void* data, size_t length)

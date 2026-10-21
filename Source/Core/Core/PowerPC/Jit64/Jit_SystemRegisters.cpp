@@ -333,6 +333,8 @@ void Jit64::mfspr(UGeckoInstruction inst)
     CVTSI2SS(XMM0, PPCSTATE(downcount));
     MULSS(XMM0, MDisp(rcx, offsetof(CoreTiming::Globals, last_OC_factor_inverted)));
     CVTSS2SI(rdx, R(XMM0));  // RDX is downcount scaled by the overclocking factor
+    // Sign-extend: downcount can be negative here, and CVTSS2SI wrote only EDX.
+    MOVSX(64, 32, rdx, R(rdx));
     MOV(32, rax, MDisp(rcx, offsetof(CoreTiming::Globals, slice_length)));
     SUB(64, rax, rdx);  // cycles since the last CoreTiming::Advance() event is (slicelength -
                         // Scaled_downcount)
@@ -727,8 +729,9 @@ void Jit64::mffsx(UGeckoInstruction inst)
 
   MOV(32, R(RSCRATCH), PPCSTATE(fpscr));
 
+  // mffs writes ps0 only; d's ps1 is kept, so d is read too.
   int d = inst.FD;
-  RCX64Reg Rd = fpr.Bind(d, RCMode::Write);
+  RCX64Reg Rd = fpr.Bind(d, RCMode::ReadWrite);
   RegCache::Realize(Rd);
   MOV(64, R(RSCRATCH2), Imm64(0xFFF8000000000000));
   OR(64, R(RSCRATCH), R(RSCRATCH2));

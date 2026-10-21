@@ -1,0 +1,7 @@
+{
+  "comment": "sign-bundle.py vector: Python's Ed25519 (ed25519ref.py) against Orca's (Externals/ed25519)",
+  "seed": "8d55c8766101b8c9552cc86e24cbf7c0a2e707687e605a18b9d0237234aa92b8",
+  "public": "6b9b8d3571a00a77d6587953d063d52ea96b6c8be1e45c5aa5b52bdbe64b8bf0",
+  "message": "orca-flat-bundle 1\nPPLUS32.patches\ta59b054e8ef7a3a30bbc7135d8060cd4fad8572b6ef2332669f9798870f86caa\t7\nmod.json\t44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\t2\n",
+  "signature": "2cd4aaaf3f6171c65ca0e9a670ac6578e3a8b9d629356bf14cb7719499a0ce10045ccf95d16f61bf9f0095d41fe5fbfcee0f06cdb31928f47d8a9d1cf9035905"
+}

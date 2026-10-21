@@ -36,6 +36,7 @@
 #include "Core/PowerPC/JitCommon/ConstantPropagation.h"
 #include "Core/PowerPC/JitInterface.h"
 #include "Core/PowerPC/PowerPC.h"
+#include "Core/Rollback/Diag.h"
 #include "Core/System.h"
 
 using namespace Arm64Gen;
@@ -325,7 +326,20 @@ void JitArm64::HLEFunction(u32 hook_index)
   gpr.Flush(FlushMode::Full, ARM64Reg::INVALID_REG);
   fpr.Flush(FlushMode::Full, ARM64Reg::INVALID_REG);
 
+  // The rollback frame boundary saves and loads snapshots: settle this block's cycles so far first,
+  // so the time a snapshot records does not depend on where the compiled block started.
+  if (HLE::NeedsExactTime(hook_index))
+  {
+    DoDownCount();
+    js.downcountAmount = 0;
+  }
+
   ABI_CallFunction(&HLE::ExecuteFromJIT, js.compilerPC, hook_index, &m_system);
+
+  // The boundary may load a snapshot, which replaces every register: values this block knew at
+  // compile time no longer hold.
+  if (HLE::NeedsExactTime(hook_index))
+    m_constant_propagation.Clear();
 }
 
 void JitArm64::DoNothing(UGeckoInstruction inst)
@@ -982,7 +996,9 @@ void JitArm64::Jit(u32 em_address, bool clear_cache_and_retry_on_failure)
 
   if (SConfig::GetInstance().bJITNoBlockCache)
     ClearCache();
-  FreeRanges();
+  // Orca: not from a hook (JitBase::CompileFromHook).
+  if (!m_compiling_from_hook)
+    FreeRanges();
 
   const Common::ScopedJITPageWriteAndNoExecute enable_jit_page_writes;
 
@@ -1032,7 +1048,25 @@ void JitArm64::Jit(u32 em_address, bool clear_cache_and_retry_on_failure)
     u8* far_start = m_far_code.GetWritableCodePtr();
 
     JitBlock* b = blocks.AllocateBlock(em_address);
-    if (DoJit(em_address, b, nextPC))
+    const bool compiled = DoJit(em_address, b, nextPC);
+    if (!compiled && m_compiling_from_hook)
+    {
+      // Orca: never clear the cache under the hook's caller (JitBase::CompileFromHook). Drop the
+      // unfinished block and the fastmem entries its partial code registered; that code is in free
+      // space.
+      blocks.DiscardUnfinalizedBlock(*b);
+      for (const auto& [from, to] : {std::pair<const u8*, const u8*>(near_start, GetCodeEnd()),
+                                     std::pair<const u8*, const u8*>(
+                                         far_start, m_far_code.GetCodeEnd())})
+      {
+        // Keyed by where each access ends, as FreeRanges erases them: (from, to].
+        m_fault_to_handler.erase(m_fault_to_handler.upper_bound(from),
+                                 m_fault_to_handler.upper_bound(to));
+      }
+      m_hook_compile_dropped = true;
+      return;
+    }
+    if (compiled)
     {
       // Code generation succeeded.
 
@@ -1065,12 +1099,19 @@ void JitArm64::Jit(u32 em_address, bool clear_cache_and_retry_on_failure)
       return;
     }
   }
+  else if (m_compiling_from_hook)
+  {
+    m_hook_compile_dropped = true;  // no free code region: as above, never clear here
+    return;
+  }
 
   if (clear_cache_and_retry_on_failure)
   {
     // Code generation failed due to not enough free space in either the near or far code regions.
     // Clear the entire JIT cache and retry.
     WARN_LOG_FMT(DYNA_REC, "flushing code caches, please report if this happens a lot");
+    if (Rollback::Diag::g_jit_code_log)
+      Rollback::Diag::JitCodeNote("code space full");
     ClearCache();
     Jit(em_address, false);
     return;
@@ -1093,6 +1134,26 @@ std::vector<JitBase::MemoryStats> JitArm64::GetMemoryStats() const
           {"near_1", m_free_ranges_near_1.get_stats()},
           {"far_0", m_free_ranges_far_0.get_stats()},
           {"far_1", m_free_ranges_far_1.get_stats()}};
+}
+
+bool JitArm64::CanCompileFromHook() const
+{
+  // Far more than any block: Common::CodeBlock::IsAlmostFull counts 64 KiB as more than the biggest
+  // block ever.
+  constexpr std::size_t ROOM = 1024 * 1024;
+  const auto largest = [](const Common::RangeSizeSet<u8*>& ranges) -> std::size_t {
+    const auto it = ranges.by_size_begin();
+    return it == ranges.by_size_end() ? 0 : static_cast<std::size_t>(it.to() - it.from());
+  };
+  // SetEmitterStateToFreeCodeRegion takes region 1 while both its parts have ROOM, else the region
+  // whose smaller part is larger: either way the one it takes has ROOM when this holds.
+  const std::size_t region_0 =
+      std::min(largest(m_free_ranges_near_0), largest(m_free_ranges_far_0));
+  const std::size_t region_1 =
+      std::min(largest(m_free_ranges_near_1), largest(m_free_ranges_far_1));
+  // Jit() clears the cache when a stack fault is pending.
+  return !m_cleanup_after_stackfault && !IsDebuggingEnabled() &&
+         !SConfig::GetInstance().bJITNoBlockCache && std::max(region_0, region_1) >= ROOM;
 }
 
 std::size_t JitArm64::DisassembleNearCode(const JitBlock& block, std::ostream& stream) const

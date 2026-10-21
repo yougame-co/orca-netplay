@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+# Copyright 2026 YouGame
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Which Orca layers a change touches, and what it would take to ship it.
+
+  Tools/orca/layer-of-diff                    the working tree against HEAD (plus untracked files)
+  Tools/orca/layer-of-diff A...B              what branch B changed since it left A (merge-base);
+                                              use this for a branch, not A..B
+  Tools/orca/layer-of-diff A..B               the tree diff from A to B (a stale branch shows A's
+                                              newer changes too, reversed)
+  Tools/orca/layer-of-diff C                  one commit, against its first parent
+  Tools/orca/layer-of-diff A B                same as A..B
+  git diff ... | Tools/orca/layer-of-diff -   a unified diff on stdin
+  Tools/orca/layer-of-diff --files P [P ...]  just class these paths
+
+Options:
+  --list            one line per path: class, dev, +/- lines, path, the rule that classed it
+  --json            machine-readable output
+  --max LAYER       exit 1 if any path (dev paths included) is above LAYER; for gating a diff
+                    against its brief (a game-data brief refuses a diff that touches game logic)
+  --rules FILE      a layers.txt other than this checkout's
+  --rules-rev REV   read layers.txt at REV (gate a branch with the stable map, not its own); the
+                    running tools must then be REV's too, or it refuses (exit 2)
+  --repo DIR        the repository to read (default: the one this script is in)
+
+As a gate, run the stable branch's copy against the branch:
+  <main checkout>/Tools/orca/layer-of-diff --repo <branch worktree> --rules-rev origin/main \
+      --max <brief layer> origin/main...<branch>
+
+Layers, least to most risky: game-data, game-logic, engine, engine-sensitive (layers.txt).
+"What it takes to ship" counts only paths that ship in an Orca build (not `dev`):
+  none shipped        no Orca build (docs, tests, tools)
+  game-data           a mod version, once bundles boot (S4); an Orca release until then
+  game-logic          an Orca release until scripts (S7), then a mod version
+  engine              an Orca release
+  engine-sensitive    an Orca release, after a person reviews the diff
+Paths whose rule has the `review` flag (game logic carrying competitive policy) are listed under
+"review": a person reviews the diff whatever its layer.
+"""
+
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import layerlib  # noqa: E402
+
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+SHIP = {
+    None: "no Orca build (nothing that ships changed)",
+    "game-data": "a mod version once bundles boot (S4); an Orca release today",
+    "game-logic": "an Orca release until scripts land (S7), then a mod version",
+    "engine": "an Orca release",
+    "engine-sensitive": "an Orca release, after a person reviews the diff",
+}
+
+
+def collect(args, repo):
+    if args.files:
+        return [layerlib.FileChange(p) for p in args.files], "paths"
+    if args.spec == ["-"]:
+        return layerlib.parse_unified_diff(sys.stdin.read()), "stdin"
+    spec = list(args.spec)
+    if not spec:
+        changes = layerlib.diff_numstat(repo, ["HEAD"])
+        seen = set(c.path for c in changes)
+        untracked = layerlib.git(repo, "ls-files", "-z", "--others", "--exclude-standard")
+        for p in untracked.split("\0"):
+            if p and p not in seen:
+                full = os.path.join(repo, p)
+                try:
+                    with open(full, "rb") as f:
+                        data = f.read()
+                    lines = 0 if b"\0" in data else data.count(b"\n") + (0 if data.endswith(b"\n") or not data else 1)
+                    changes.append(layerlib.FileChange(p, lines, 0, b"\0" in data))
+                except OSError:
+                    changes.append(layerlib.FileChange(p))
+        return changes, "working tree vs HEAD"
+    if len(spec) == 1 and ".." not in spec[0]:
+        # One commit: what it changed against its first parent (a merge: what it brought in).
+        parents = layerlib.git(repo, "rev-list", "--parents", "-n1", spec[0]).split()
+        spec = [parents[1] if len(parents) > 1 else EMPTY_TREE, parents[0]]
+    return layerlib.diff_numstat(repo, spec), " ".join(args.spec)
+
+
+def summarize(changes, rules):
+    rows = []
+    for c in changes:
+        m = rules.classify(c.path)
+        rows.append({
+            "path": c.path,
+            "class": m.cls,
+            "dev": m.dev,
+            "added": c.added,
+            "deleted": c.deleted,
+            "binary": c.binary,
+            "rule": "%s (line %d)" % (m.rule.glob, m.rule.line),
+            "fallback": m.fallback,
+            "review": m.review,
+            "ambiguous": ["%s %s (line %d)" % (r.cls, r.source, r.line) for r in m.ties],
+        })
+    layers = {}
+    for cls in layerlib.CLASSES:
+        sel = [r for r in rows if r["class"] == cls]
+        if sel:
+            layers[cls] = {
+                "files": len(sel),
+                "shipped_files": sum(1 for r in sel if not r["dev"]),
+                "added": sum(r["added"] for r in sel),
+                "deleted": sum(r["deleted"] for r in sel),
+            }
+
+    def top(sel):
+        return max((r["class"] for r in sel), key=lambda c: layerlib.RANK[c], default=None)
+
+    highest = top(rows)
+    shipped = top([r for r in rows if not r["dev"]])
+    return {
+        "files": rows,
+        "layers": layers,
+        "highest": highest,
+        "highest_shipped": shipped,
+        "ships_as": SHIP[shipped],
+        "fallback_paths": [r["path"] for r in rows if r["fallback"]],
+        "review_paths": [r["path"] for r in rows if r["review"]],
+        "ambiguous_paths": [r["path"] for r in rows if r["ambiguous"]],
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Which Orca layers a diff touches (Tools/orca/layers.txt).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__.split("\n\n", 1)[1],
+    )
+    ap.add_argument("spec", nargs="*", help="A..B, a commit, two revisions, or - for stdin")
+    ap.add_argument("--files", nargs="+", metavar="PATH")
+    ap.add_argument("--list", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--max", choices=layerlib.CLASSES)
+    ap.add_argument("--rules")
+    ap.add_argument("--rules-rev")
+    ap.add_argument("--repo", help="repository (default: the one this script is in)")
+    args = ap.parse_args()
+
+    try:
+        repo = args.repo or layerlib.repo_root()
+        if args.rules_rev:
+            layerlib.check_tools_at(repo, args.rules_rev)
+            rules = layerlib.load_rules(repo=repo, rev=args.rules_rev)
+        else:
+            rules = layerlib.load_rules(args.rules)
+        changes, what = collect(args, repo)
+    except (layerlib.GitError, layerlib.RulesError, OSError, ValueError) as e:
+        layerlib.die("layer-of-diff: %s" % e)
+
+    s = summarize(changes, rules)
+    s["diff"] = what
+    over = args.max and s["highest"] and layerlib.RANK[s["highest"]] > layerlib.RANK[args.max]
+    if args.json:
+        json.dump(s, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 1 if over or s["ambiguous_paths"] else 0
+
+    out = sys.stdout.write
+    out("diff: %s, %d path%s\n" % (what, len(changes), "" if len(changes) == 1 else "s"))
+    if not changes:
+        out("nothing changed\n")
+        return 0
+    for cls in reversed(layerlib.CLASSES):
+        l = s["layers"].get(cls)
+        if l:
+            dev = l["files"] - l["shipped_files"]
+            out("  %-17s %4d file%s  +%-6d -%-6d%s\n" % (
+                cls, l["files"], " " if l["files"] == 1 else "s", l["added"], l["deleted"],
+                "  (%d dev-only)" % dev if dev else ""))
+    out("layer: %s\n" % s["highest"])
+    out("ships as: %s\n" % s["ships_as"])
+    if s["review_paths"]:
+        out("review: a person reviews %s (competitive policy)\n" % ", ".join(s["review_paths"]))
+    if args.list:
+        out("\n")
+        for r in sorted(s["files"], key=lambda r: (-layerlib.RANK[r["class"]], r["path"])):
+            size = "bin" if r["binary"] else "+%d -%d" % (r["added"], r["deleted"])
+            out("%-17s %-3s %-12s %s  [%s%s%s]\n" % (
+                r["class"], "dev" if r["dev"] else "", size, r["path"], r["rule"],
+                ", review" if r["review"] else "", ", fallback" if r["fallback"] else ""))
+    if s["ambiguous_paths"]:
+        out("\nAMBIGUOUS in layers.txt (fix the map):\n")
+        for r in s["files"]:
+            if r["ambiguous"]:
+                out("  %s: %s vs %s\n" % (r["path"], r["rule"], "; ".join(r["ambiguous"])))
+    if over:
+        out("\nREFUSED: touches %s, above --max %s\n" % (s["highest"], args.max))
+    return 1 if over or s["ambiguous_paths"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

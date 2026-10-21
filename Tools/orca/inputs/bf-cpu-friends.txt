@@ -1,0 +1,26 @@
+# No CPUs on With Friends' character select (ORCA.md "No CPUs online"), Brawl, no test knob:
+# Group > Brawl, a CPU on panel 3, a pick, Start, B on the stage select, B out to the top page,
+# PLAY ONLINE > With Friends: the third character select. There port 1 presses A on panel 4's
+# player-type button, which does nothing (panels 2-4 are hidden), then goes up and picks. The
+# select starts with port 1 alone, as Brawl's own menu resets the record. YG_EXIT_AFTER=2950.
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain:1 120 123 1 A
+@muMenuMain:1 170 173 1 A
+@scSelctCharacter:1 60 95 1 SX=255
+@scSelctCharacter:1 120 123 1 A
+@scSelctCharacter:1 136 176 1 SY=255
+@scSelctCharacter:1 190 193 1 A
+@scSelctCharacter:1 250 253 1 START
+@scSelStage:1 60 63 1 B
+@scSelctCharacter:2 60 260 1 B
+@muMenuMain:2 200 203 1 B
+@muMenuMain:2 250 253 1 DOWN
+@muMenuMain:2 300 303 1 A
+@muMenuMain:2 350 353 1 A
+@scSelctCharacter:3 60 113 1 SX=255
+@scSelctCharacter:3 125 128 1 A
+@scSelctCharacter:3 140 180 1 SY=255
+@scSelctCharacter:3 200 203 1 A
+@scSelctCharacter:3 260 263 1 START

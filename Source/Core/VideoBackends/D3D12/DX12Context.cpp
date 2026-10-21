@@ -16,6 +16,7 @@
 #include "VideoBackends/D3D12/Common.h"
 #include "VideoBackends/D3D12/D3D12StreamBuffer.h"
 #include "VideoBackends/D3D12/DescriptorHeapManager.h"
+#include "VideoBackends/D3DCommon/DeviceLost.h"
 #include "VideoCommon/FramebufferManager.h"
 #include "VideoCommon/VideoConfig.h"
 
@@ -125,6 +126,12 @@ bool DXContext::Create(u32 adapter_index, bool enable_debug_layer)
     return false;
   }
 
+  // Orca: a failed call asks the device whether it was removed, as D3D11 does (D3DBase.cpp); a
+  // lost device stops the run (D3DCommon/DeviceLost.h).
+  D3DCommon::SetDeviceRemovedQuery("D3D12", [] {
+    return g_dx_context && g_dx_context->m_device ? g_dx_context->m_device->GetDeviceRemovedReason() :
+                                                    HRESULT(S_OK);
+  });
   return true;
 }
 
@@ -137,7 +144,10 @@ bool DXContext::CreateGlobalResources()
 void DXContext::Destroy()
 {
   if (g_dx_context)
+  {
+    D3DCommon::SetDeviceRemovedQuery("D3D12", nullptr);
     g_dx_context.reset();
+  }
 
   s_d3d12_serialize_root_signature = nullptr;
   s_d3d12_get_debug_interface = nullptr;

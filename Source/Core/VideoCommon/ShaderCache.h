@@ -69,6 +69,10 @@ public:
   // Accesses ShaderGen shader caches asynchronously.
   // The optional will be empty if this pipeline is now background compiling.
   std::optional<const AbstractPipeline*> GetPipelineForUidAsync(const GXPipelineUid& uid);
+  // Orca: like GetUberPipelineForUid, but returns nullopt while a needed ubershader is still
+  // compiling in the background, so the caller can skip the draw instead of compiling it on the
+  // emulation thread.
+  std::optional<const AbstractPipeline*> GetUberPipelineForUidIfReady(const GXUberPipelineUid& uid);
 
   // Shared shaders
   const AbstractShader* GetScreenQuadVertexShader() const
@@ -118,10 +122,21 @@ private:
   static constexpr size_t NUM_PALETTE_CONVERSION_SHADERS = 3;
 
   void WaitForAsyncCompiler();
+  // Orca: WaitForAsyncCompiler for a session's boot. Gives up after a time limit and reports
+  // progress to the app while it waits.
+  void WaitForBootCompile();
   void LoadCaches();
   void ClearCaches();
   void LoadPipelineUIDCache();
   void ClosePipelineUIDCache();
+  // Orca: EFB/XFB copy pipelines have no disk cache or ubershader fallback, so the first copy of
+  // each kind would compile on the emulation thread mid-match. Their UIDs are saved per game and
+  // compiled before the first frame.
+  void LoadEFBCopyUIDCache();
+  void OpenEFBCopyUIDCache();
+  static constexpr u32 EFB_COPY_UID_MAGIC = 0x59504345;  // ECPY
+  static constexpr u32 EFB_COPY_UID_VERSION = 1;
+  void AppendEFBCopyUID(const TextureConversionShaderGen::TCShaderUid& uid);
   void CompileMissingPipelines();
   void QueueUberShaderPipelines();
   bool CompileSharedPipelines();
@@ -188,6 +203,8 @@ private:
   enum : u32
   {
     COMPILE_PRIORITY_ONDEMAND_PIPELINE = 100,
+    // Orca: shader cache pipelines in a session, ahead of the ubershaders.
+    COMPILE_PRIORITY_SESSION_SHADERCACHE_PIPELINE = 150,
     COMPILE_PRIORITY_UBERSHADER_PIPELINE = 200,
     COMPILE_PRIORITY_SHADERCACHE_PIPELINE = 300
   };
@@ -229,6 +246,7 @@ private:
   std::map<GXUberPipelineUid, std::pair<std::unique_ptr<AbstractPipeline>, bool>>
       m_gx_uber_pipeline_cache;
   File::IOFile m_gx_pipeline_uid_cache_file;
+  File::IOFile m_efb_copy_uid_cache_file;
   Common::LinearDiskCache<SerializedGXPipelineUid, u8> m_gx_pipeline_disk_cache;
   Common::LinearDiskCache<SerializedGXUberPipelineUid, u8> m_gx_uber_pipeline_disk_cache;
 

@@ -163,6 +163,36 @@ VolumeWii::~VolumeWii() = default;
 
 bool VolumeWii::Read(u64 offset, u64 length, u8* buffer, const Partition& partition) const
 {
+  if (!ReadUnpatched(offset, length, buffer, partition))
+    return false;
+  ApplyReadPatches(m_read_patches, offset, length, buffer, partition);
+  return true;
+}
+
+bool VolumeWii::SetReadPatches(std::vector<ReadPatch> patches)
+{
+  for (const ReadPatch& patch : patches)
+  {
+    u8 byte;
+    if (!ReadUnpatched(patch.offset, 1, &byte, patch.partition) || byte != patch.original)
+      return false;
+  }
+  m_read_patches = std::move(patches);
+  return true;
+}
+
+void VolumeWii::ApplyReadPatches(const std::vector<ReadPatch>& patches, u64 offset, u64 length,
+                                 u8* buffer, const Partition& partition)
+{
+  for (const ReadPatch& patch : patches)
+  {
+    if (patch.partition == partition && patch.offset >= offset && patch.offset - offset < length)
+      buffer[patch.offset - offset] = patch.value;
+  }
+}
+
+bool VolumeWii::ReadUnpatched(u64 offset, u64 length, u8* buffer, const Partition& partition) const
+{
   if (partition == PARTITION_NONE)
     return m_reader->Read(offset, length, buffer);
 
