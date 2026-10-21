@@ -252,11 +252,15 @@ void Jit64::fp_arith(UGeckoInstruction inst)
     sseOp = packed ? &XEmitter::DIVPD : &XEmitter::DIVSD;
     break;
   case 20:
+    preserve_inputs = m_accurate_nans;
     avxOp = packed ? &XEmitter::VSUBPD : &XEmitter::VSUBSD;
     sseOp = packed ? &XEmitter::SUBPD : &XEmitter::SUBSD;
     break;
   case 21:
-    reversible = !m_accurate_nans;
+    // Orca: reversible with accurate NaNs too, since HandleNaNs picks the NaN from a and b in
+    // PowerPC's order itself.
+    reversible = true;
+    preserve_inputs = m_accurate_nans;
     avxOp = packed ? &XEmitter::VADDPD : &XEmitter::VADDSD;
     sseOp = packed ? &XEmitter::ADDPD : &XEmitter::ADDSD;
     break;
@@ -278,6 +282,10 @@ void Jit64::fp_arith(UGeckoInstruction inst)
 
   X64Reg dest = X64Reg(Rd);
   if (preserve_inputs && (a == d || arg2 == d))
+    dest = XMM1;
+  // A double result replaces ps0 only. Unless the op works on d in place, compute it in XMM1:
+  // scalar AVX ops copy a's upper lane, and MOVSD from memory clears it.
+  if (!single && a != d && !(reversible && arg2 == d))
     dest = XMM1;
   if (round_rhs)
   {
@@ -325,19 +333,13 @@ void Jit64::fp_arith(UGeckoInstruction inst)
 
   if (m_accurate_nans)
   {
-    std::optional<FixupBranch> handled_nans;
-    switch (inst.SUBOP5)
-    {
-    case 18:
-      handled_nans = HandleNaNs(inst, dest, XMM0, Ra, Rarg2, std::nullopt);
-      break;
-    case 25:
-      handled_nans = HandleNaNs(inst, dest, XMM0, Ra, std::nullopt, Rarg2);
-      break;
-    }
-
-    if (handled_nans)
-      SetJumpTarget(*handled_nans);
+    // Orca: fadd and fsub too. x86-64 picks among NaN inputs as PowerPC does there (the first
+    // operand), but inf - inf makes x86's default NaN, which is negative, where PowerPC's (and
+    // JitArm64's in accurate-NaN mode) is positive.
+    const FixupBranch handled_nans = inst.SUBOP5 == 25 ?
+                                         HandleNaNs(inst, dest, XMM0, Ra, std::nullopt, Rarg2) :
+                                         HandleNaNs(inst, dest, XMM0, Ra, Rarg2, std::nullopt);
+    SetJumpTarget(handled_nans);
   }
 
   if (single)
@@ -651,10 +653,11 @@ void Jit64::fmaddXX(UGeckoInstruction inst)
 
   if (m_accurate_nans && result_xmm == XMM0)
   {
-    // HandleNaNs needs to clobber XMM0
-    result_xmm = error_free_transformation ? XMM1 : Rd;
+    // HandleNaNs needs to clobber XMM0. A double result keeps d's ps1, so it goes through XMM1.
+    result_xmm = error_free_transformation || !single ? XMM1 : Rd;
     MOVAPD(result_xmm, R(XMM0));
-    DEBUG_ASSERT(!preserve_d);
+    // d is an input HandleNaNs still reads: the result must not be in d's register yet.
+    DEBUG_ASSERT(!preserve_d || result_xmm != Rd);
   }
 
   std::optional<FixupBranch> handled_nans;
@@ -840,28 +843,33 @@ void Jit64::fsign(UGeckoInstruction inst)
   int b = inst.FB;
   bool packed = inst.OPCD == 4;
 
+  // fneg, fabs and fnabs write ps0 only and keep d's ps1; the paired forms write both.
   RCOpArg src = fpr.Use(b, RCMode::Read);
-  RCX64Reg Rd = fpr.Bind(d, RCMode::Write);
+  RCX64Reg Rd = fpr.Bind(d, packed ? RCMode::Write : RCMode::ReadWrite);
   RegCache::Realize(src, Rd);
 
+  // In place, the scalar masks leave the upper lane alone; otherwise work in XMM0 and copy ps0.
+  const X64Reg out = packed || src.IsSimpleReg(Rd) ? X64Reg(Rd) : XMM0;
   switch (inst.SUBOP10)
   {
   case 40:  // neg
-    avx_op(&XEmitter::VXORPD, &XEmitter::XORPD, Rd, src, MConst(packed ? psSignBits2 : psSignBits),
+    avx_op(&XEmitter::VXORPD, &XEmitter::XORPD, out, src, MConst(packed ? psSignBits2 : psSignBits),
            packed);
     break;
   case 136:  // nabs
-    avx_op(&XEmitter::VORPD, &XEmitter::ORPD, Rd, src, MConst(packed ? psSignBits2 : psSignBits),
+    avx_op(&XEmitter::VORPD, &XEmitter::ORPD, out, src, MConst(packed ? psSignBits2 : psSignBits),
            packed);
     break;
   case 264:  // abs
-    avx_op(&XEmitter::VANDPD, &XEmitter::ANDPD, Rd, src, MConst(packed ? psAbsMask2 : psAbsMask),
+    avx_op(&XEmitter::VANDPD, &XEmitter::ANDPD, out, src, MConst(packed ? psAbsMask2 : psAbsMask),
            packed);
     break;
   default:
     PanicAlertFmt("fsign bleh");
     break;
   }
+  if (out != X64Reg(Rd))
+    MOVSD(Rd, R(out));
 }
 
 void Jit64::fselx(UGeckoInstruction inst)
@@ -1105,8 +1113,9 @@ void Jit64::fctiwx(UGeckoInstruction inst)
   int d = inst.RD;
   int b = inst.RB;
 
+  // d's ps1 is kept, so d is read too.
   RCOpArg Rb = fpr.Use(b, RCMode::Read);
-  RCX64Reg Rd = fpr.Bind(d, RCMode::Write);
+  RCX64Reg Rd = fpr.Bind(d, RCMode::ReadWrite);
   RegCache::Realize(Rb, Rd);
 
   // Intel uses 0x80000000 as a generic error code while PowerPC uses clamping:
@@ -1164,9 +1173,10 @@ void Jit64::frsqrtex(UGeckoInstruction inst)
   int b = inst.FB;
   int d = inst.FD;
 
+  // d's ps1 is kept, so d is read too.
   RCX64Reg scratch_guard = gpr.Scratch(RSCRATCH_EXTRA);
   RCOpArg Rb = fpr.Use(b, RCMode::Read);
-  RCX64Reg Rd = fpr.Bind(d, RCMode::Write);
+  RCX64Reg Rd = fpr.Bind(d, RCMode::ReadWrite);
   RegCache::Realize(scratch_guard, Rb, Rd);
 
   MOVAPD(XMM0, Rb);

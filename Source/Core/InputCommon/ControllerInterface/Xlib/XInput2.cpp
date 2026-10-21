@@ -268,28 +268,35 @@ KeyboardMouse::~KeyboardMouse()
 // Update the mouse cursor controls
 void KeyboardMouse::UpdateCursor(bool should_center_mouse)
 {
-  double root_x, root_y, win_x, win_y;
-  Window root, child;
+  double root_x = 0, root_y = 0, win_x = 0, win_y = 0;
+  Window root = 0, child = 0;
 
-  XWindowAttributes win_attribs;
-  XGetWindowAttributes(m_display, m_window, &win_attribs);
+  // Orca: a window that went away (the YouGame app's, embedded) answers an X error, which no longer
+  // ends the process: read nothing then, rather than freeing a mask that was never filled in.
+  XWindowAttributes win_attribs = {};
+  if (!XGetWindowAttributes(m_display, m_window, &win_attribs))
+    return;
   const auto win_width = std::max(win_attribs.width, 1);
   const auto win_height = std::max(win_attribs.height, 1);
 
   {
-    XIButtonState button_state;
-    XIModifierState mods;
-    XIGroupState group;
+    XIButtonState button_state = {};
+    XIModifierState mods = {};
+    XIGroupState group = {};
 
-    // Get the absolute position of the mouse pointer and the button state.
+    // Get the absolute position of the mouse pointer and the button state. Orca: zeroed above, so
+    // a failed query (an X error) leaves no mask to copy or free.
     XIQueryPointer(m_display, pointer_deviceid, m_window, &root, &child, &root_x, &root_y, &win_x,
                    &win_y, &button_state, &mods, &group);
 
     // X buttons are 1-indexed, so to get 32 button bits we need a larger type
     // for the shift.
     u64 buttons_zero_indexed = 0;
-    std::memcpy(&buttons_zero_indexed, button_state.mask,
-                std::min<size_t>(button_state.mask_len, sizeof(m_state.buttons)));
+    if (button_state.mask)
+    {
+      std::memcpy(&buttons_zero_indexed, button_state.mask,
+                  std::min<size_t>(button_state.mask_len, sizeof(m_state.buttons)));
+    }
     m_state.buttons = buttons_zero_indexed >> 1;
 
     free(button_state.mask);

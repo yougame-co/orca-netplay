@@ -19,6 +19,7 @@
 #include "Core/CoreTiming.h"
 #include "Core/HW/CPU.h"
 #include "Core/MemTools.h"
+#include "Core/Orca/Profile.h"
 #include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PPCAnalyst.h"
 #include "Core/PowerPC/PowerPC.h"
@@ -120,12 +121,22 @@ bool JitBase::DoesConfigNeedRefresh() const
   });
 }
 
+bool JitBase::CompileFromHook(u32 em_address)
+{
+  m_compiling_from_hook = true;
+  m_hook_compile_dropped = false;
+  Jit(em_address);
+  m_compiling_from_hook = false;
+  return !m_hook_compile_dropped;
+}
+
 void JitBase::RefreshConfig()
 {
   const bool wanted_page_table_mappings = WantsPageTableMappings();
 
   for (const auto& [member, config_info] : JIT_SETTINGS)
     this->*member = Config::Get(*config_info);
+  m_orca_session = Orca::SessionActive();
 
   if (m_accurate_cpu_cache_enabled)
   {

@@ -1,0 +1,31 @@
+# Tools/orca/firewall baseline: the include-game and float hits allowed today.
+# Rewrite with `Tools/orca/firewall --update-baseline`; a person reviews the diff.
+# <count>\t<rule>\t<path>\t<token>
+6	float	Source/Core/Core/Orca/Games/Brawl/BrawlStages.cpp	float
+20	float	Source/Core/Core/Orca/Games/Brawl/BrawlStages.cpp	literal
+2	float	Source/Core/Core/Orca/Games/Brawl/BrawlStages.h	float
+4	float	Source/Core/Core/Orca/Games/Brawl/OnlineRules.cpp	float
+6	float	Source/Core/Core/Orca/Games/Brawl/OnlineRules.h	float
+3	float	Source/Core/Core/Orca/Games/Brawl/OnlineRules.h	literal
+1	float	Source/Core/Core/Orca/Games/Brawl/OnlineSeats.h	float
+1	float	Source/Core/Core/Orca/Games/Brawl/OnlineSeats.h	literal
+4	float	Source/Core/Core/Orca/Games/Brawl/PPlus/RankedPPlus.cpp	float
+2	float	Source/Core/Core/Orca/Games/Brawl/PPlus/RankedPPlus.cpp	literal
+11	float	Source/Core/Core/Orca/Games/Brawl/Queue.cpp	float
+2	float	Source/Core/Core/Orca/Games/Brawl/Queue.cpp	literal
+12	float	Source/Core/Core/Orca/Games/Brawl/Queue.h	float
+1	float	Source/Core/Core/Orca/Games/Brawl/RankedSet.cpp	float
+9	float	Source/Core/Core/Orca/Games/Brawl/StageCursors.cpp	float
+118	float	Source/Core/Core/Orca/Games/Brawl/StageCursors.cpp	literal
+2	float	Source/Core/Core/Orca/Games/Brawl/StageCursors.h	float
+7	float	Source/Core/Core/Orca/Policy/CharOrder.cpp	float
+2	float	Source/Core/Core/Orca/Policy/CharOrder.cpp	literal
+4	float	Source/Core/Core/Orca/Policy/CharOrder.h	float
+2	float	Source/Core/Core/Orca/Policy/CharOrder.h	literal
+11	float	Source/Core/Core/Orca/Policy/Queue.cpp	float
+1	float	Source/Core/Core/Orca/Policy/Queue.cpp	literal
+16	float	Source/Core/Core/Orca/Policy/Queue.h	float
+1	include-game	Source/Core/Core/Orca/Activity.cpp	Core/Orca/Games/Brawl/OnlineMenu.h
+1	include-game	Source/Core/Core/Orca/Session/YouGameRoom.cpp	Core/Orca/Games/Brawl/RankedSet.h
+1	include-game	Source/Core/Core/Orca/UX/Probe.cpp	Core/Orca/Games/Brawl/RankedSet.h
+1	include-game	Source/Core/DolphinNoGUI/Platform.cpp	Core/Orca/Games/Brawl/NameTags.h

@@ -26,6 +26,7 @@
 #include "Core/Config/SYSCONFSettings.h"
 #include "Core/Config/WiimoteSettings.h"
 #include "Core/ConfigLoaders/IsSettingSaveable.h"
+#include "Core/Orca/Mod.h"
 
 namespace ConfigLoaders
 {
@@ -184,6 +185,10 @@ public:
 
   void Load(Config::Layer* layer) override
   {
+    // Orca mod mode: the player's own game INIs never reach a session (Core/Orca/Mod.h); the
+    // shipped Sys ones do, as part of the engine.
+    if (layer->GetLayer() == Config::LayerType::LocalGame && Orca::Mod::Requested())
+      return;
     Common::IniFile ini;
     if (layer->GetLayer() == Config::LayerType::GlobalGame)
     {
@@ -282,7 +287,7 @@ private:
 
 void INIGameConfigLayerLoader::Save(Config::Layer* layer)
 {
-  if (layer->GetLayer() != Config::LayerType::LocalGame)
+  if (layer->GetLayer() != Config::LayerType::LocalGame || Orca::Mod::Requested())
     return;
 
   Common::IniFile ini;

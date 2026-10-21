@@ -27,6 +27,7 @@
 #include "Core/HW/SystemTimers.h"
 #include "Core/Movie.h"
 #include "Core/NetPlayProto.h"
+#include "Core/Orca/Profile.h"
 #include "Core/System.h"
 
 #include "DiscIO/Enums.h"
@@ -415,6 +416,13 @@ u32 CEXIIPL::GetEmulatedTime(Core::System& system, u32 epoch)
     ltime = NetPlay_GetEmulatedTime();
 
     // let's keep time moving forward, regardless of what it starts at
+    ltime += system.GetCoreTiming().GetTicks() / system.GetSystemTimers().GetTicksPerSecond();
+  }
+  else if (Orca::SessionActive())
+  {
+    // Orca: the profile's pinned RTC plus emulated time, never the host clock, so both players read
+    // the same time.
+    ltime = Config::Get(Config::MAIN_CUSTOM_RTC_VALUE);
     ltime += system.GetCoreTiming().GetTicks() / system.GetSystemTimers().GetTicksPerSecond();
   }
   else

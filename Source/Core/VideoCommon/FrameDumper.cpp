@@ -9,6 +9,7 @@
 
 #include "Core/Config/GraphicsSettings.h"
 #include "Core/Config/MainSettings.h"
+#include "Core/Core.h"
 
 #include "VideoCommon/AbstractFramebuffer.h"
 #include "VideoCommon/AbstractGfx.h"
@@ -36,6 +37,9 @@ FrameDumper::FrameDumper()
 FrameDumper::~FrameDumper()
 {
   ShutdownFrameDumping();
+  // A renderer can stop before the first XFB. Complete that request as a failure too.
+  if (m_screenshot_callback)
+    m_screenshot_callback(false);
 }
 
 void FrameDumper::DumpCurrentFrame(const AbstractTexture* src_texture,
@@ -226,8 +230,12 @@ void FrameDumper::FrameDumpThreadFunc()
     {
       std::lock_guard<std::mutex> lk(m_screenshot_lock);
 
-      if (DumpFrameToPNG(frame, m_screenshot_name))
+      const bool saved = DumpFrameToPNG(frame, m_screenshot_name);
+      if (m_screenshot_callback)
+        m_screenshot_callback(saved);
+      else if (saved)
         OSD::AddMessage("Screenshot saved to " + m_screenshot_name);
+      m_screenshot_callback = {};
 
       // Reset settings
       m_screenshot_name.clear();
@@ -338,11 +346,15 @@ void FrameDumper::DumpFrameToImage(const FrameData& frame)
   m_frame_dump_image_counter++;
 }
 
-void FrameDumper::SaveScreenshot(std::string filename)
+bool FrameDumper::SaveScreenshot(std::string filename, std::function<void(bool)> completed)
 {
   std::lock_guard<std::mutex> lk(m_screenshot_lock);
+  if (!m_screenshot_name.empty())
+    return false;
   m_screenshot_name = std::move(filename);
+  m_screenshot_callback = std::move(completed);
   m_screenshot_request.Set();
+  return true;
 }
 
 bool FrameDumper::IsFrameDumping() const
@@ -370,3 +382,32 @@ void FrameDumper::DoState(PointerWrap& p)
 #endif
 }
 std::unique_ptr<FrameDumper> g_frame_dumper;
+
+void ScreenshotRequestGate::SetRenderer(FrameDumper* dumper)
+{
+  std::lock_guard lock(m_mutex);
+  m_dumper = dumper;
+}
+
+bool ScreenshotRequestGate::Request(Core::State state, std::string filename,
+                                    std::function<void(bool)> completed)
+{
+  std::lock_guard lock(m_mutex);
+  if ((state != Core::State::Running && state != Core::State::Paused) || !m_dumper)
+  {
+    WARN_LOG_FMT(VIDEO, "Feedback request rejected: renderer unavailable");
+    return false;
+  }
+  if (!m_dumper->SaveScreenshot(std::move(filename), std::move(completed)))
+  {
+    WARN_LOG_FMT(VIDEO, "Feedback request rejected: screenshot busy");
+    return false;
+  }
+  return true;
+}
+
+ScreenshotRequestGate& ScreenshotRequests()
+{
+  static ScreenshotRequestGate requests;
+  return requests;
+}

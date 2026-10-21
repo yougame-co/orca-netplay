@@ -8,6 +8,7 @@
 #include "Common/Assert.h"
 #include "Common/Logging/Log.h"
 #include "Core/HW/WiimoteReal/WiimoteReal.h"
+#include "InputCommon/LocalInput.h"
 
 #ifdef CIFACE_USE_WIN32
 #include "InputCommon/ControllerInterface/Win32/Win32.h"
@@ -58,33 +59,36 @@ void ControllerInterface::Initialize(const WindowSystemInfo& wsi)
 
   m_populating_devices_counter = 1;
 
+  if (!InputCommon::LocalInputDisabled())
+  {
 #ifdef CIFACE_USE_WIN32
-  m_input_backends.emplace_back(ciface::Win32::CreateInputBackend(this));
+    m_input_backends.emplace_back(ciface::Win32::CreateInputBackend(this));
 #endif
 #ifdef CIFACE_USE_XLIB
-  m_input_backends.emplace_back(ciface::XInput2::CreateInputBackend(this));
+    m_input_backends.emplace_back(ciface::XInput2::CreateInputBackend(this));
 #endif
 #ifdef CIFACE_USE_OSX
-  m_input_backends.emplace_back(ciface::Quartz::CreateInputBackend(this));
+    m_input_backends.emplace_back(ciface::Quartz::CreateInputBackend(this));
 #endif
 #ifdef CIFACE_USE_SDL
-  m_input_backends.emplace_back(ciface::SDL::CreateInputBackend(this));
+    m_input_backends.emplace_back(ciface::SDL::CreateInputBackend(this));
 #endif
 #ifdef CIFACE_USE_ANDROID
-  m_input_backends.emplace_back(ciface::Android::CreateInputBackend(this));
+    m_input_backends.emplace_back(ciface::Android::CreateInputBackend(this));
 #endif
 #ifdef CIFACE_USE_EVDEV
-  m_input_backends.emplace_back(ciface::evdev::CreateInputBackend(this));
+    m_input_backends.emplace_back(ciface::evdev::CreateInputBackend(this));
 #endif
 #ifdef CIFACE_USE_PIPES
-  m_input_backends.emplace_back(ciface::Pipes::CreateInputBackend(this));
+    m_input_backends.emplace_back(ciface::Pipes::CreateInputBackend(this));
 #endif
 #ifdef CIFACE_USE_DUALSHOCKUDPCLIENT
-  m_input_backends.emplace_back(ciface::DualShockUDPClient::CreateInputBackend(this));
+    m_input_backends.emplace_back(ciface::DualShockUDPClient::CreateInputBackend(this));
 #endif
 #ifdef CIFACE_USE_STEAMDECK
-  m_input_backends.emplace_back(ciface::SteamDeck::CreateInputBackend(this));
+    m_input_backends.emplace_back(ciface::SteamDeck::CreateInputBackend(this));
 #endif
+  }
 
   // Don't allow backends to add devices before the first RefreshDevices() as they will be cleaned
   // there. Or they'd end up waiting on the devices mutex if populated from another thread.
@@ -160,10 +164,17 @@ void ControllerInterface::RefreshDevices(RefreshReason reason)
   for (auto& backend : m_input_backends)
     backend->PopulateDevices();
 
-  WiimoteReal::PopulateDevices();
+  if (!InputCommon::LocalInputDisabled())
+    WiimoteReal::PopulateDevices();
 
   if (m_populating_devices_counter.fetch_sub(1) == 1)
     InvokeDevicesChangedCallbacks();
+}
+
+std::size_t ControllerInterface::GetInputBackendCount() const
+{
+  std::lock_guard lk_population(m_devices_population_mutex);
+  return m_input_backends.size();
 }
 
 void ControllerInterface::PlatformPopulateDevices(const std::function<void()>& callback)

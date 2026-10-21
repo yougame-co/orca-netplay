@@ -13,6 +13,7 @@
 #include "Common/CommonTypes.h"
 #include "Common/Flag.h"
 #include "Common/Logging/Log.h"
+#include "Common/Network.h"
 #include "Common/Thread.h"
 #include "Core/CoreTiming.h"
 #include "Core/HW/SI/SI_Device.h"
@@ -38,6 +39,9 @@ constexpr auto SEND_MAX_SIZE = 5, RECV_MAX_SIZE = 5;
 
 static void GBAConnectionWaiter()
 {
+  if (Common::OfflineReplay())
+    return;
+
   s_server_running.Set();
 
   Common::SetCurrentThreadName("GBA Connection Waiter");

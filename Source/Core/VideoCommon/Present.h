@@ -7,6 +7,8 @@
 #include "Common/MathUtil.h"
 
 #include "VideoCommon/OnScreenUIKeyMap.h"
+#include "VideoCommon/PresentLayout.h"
+#include "VideoCommon/PresentPacing.h"
 #include "VideoCommon/TextureCacheBase.h"
 #include "VideoCommon/TextureConfig.h"
 #include "VideoCommon/VideoCommon.h"
@@ -14,6 +16,7 @@
 #include <array>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <tuple>
 
 class AbstractTexture;
@@ -37,11 +40,16 @@ public:
 
   void ViSwap(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_height, u64 ticks,
               TimePoint presentation_time);
-  void ImmediateSwap(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_height);
+  // Orca: `redisplay` is a state load showing its frame again, due at once.
+  void ImmediateSwap(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_height,
+                     bool redisplay = false);
 
   void SetNextSwapEstimatedTime(u64 ticks, TimePoint host_time);
 
   void Present(PresentInfo* present_info = nullptr);
+  // Orca: presents the last frame again, so the online overlay keeps updating during a stall.
+  // Doesn't fetch, dump frames or fire present events.
+  void RepresentLast();
   void ClearLastXfbId() { m_last_xfb_id = std::numeric_limits<u64>::max(); }
 
   bool Initialize();
@@ -97,6 +105,25 @@ public:
   bool SurfaceChangedTestAndClear() { return m_surface_changed.TestAndClear(); }
   void* GetNewSurfaceHandle();
 
+  // Orca: whether the render surface is visible at all. The frontend clears it (from any thread)
+  // while the window is minimized or fully covered. Metal then skips taking a drawable, since
+  // nextDrawable can block for up to a second on a hidden layer and stall the game. Host only:
+  // nothing the game sees changes.
+  static void SetSurfaceVisible(bool visible);
+  static bool IsSurfaceVisible();
+  // Orca: refresh rate of the screen showing the render surface (0 if unknown), set by the
+  // frontend. Below 59 Hz the Metal backend never waits for a drawable, so a slow screen can't slow
+  // a 59.94 Hz game; frames without a drawable are just not shown. Host only.
+  static void SetSurfaceRefreshRate(int hz);
+  static int SurfaceRefreshRate();
+  // Orca: sets the box the picture is laid out in, relative to the window (nullopt: the whole
+  // window, as in Dolphin). See PresentLayout.h. Callable from any thread; applies at the next
+  // present. Host only: the emulated frame and internal resolution don't change.
+  static void SetLayoutHint(std::optional<LayoutHint> hint);
+  // Orca tests (ORCA_TEST_PRESENT): resizes the headless test image at the next present.
+  // Callable from any thread.
+  static void RequestTestPresentSize(int width, int height);
+
   void SetKeyMap(const DolphinKeyMap& key_map);
 
   void SetKey(u32 key, bool is_down, const char* chars);
@@ -115,6 +142,8 @@ private:
   bool FetchXFB(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_height, u64 ticks);
 
   void ProcessFrameDumping(u64 ticks) const;
+  // Orca tests: applies a pending RequestTestPresentSize.
+  void ApplyTestPresentSize();
 
   void OnBackBufferSizeChanged();
 
@@ -148,6 +177,12 @@ private:
   // Width and height correspond to the final output resolution.
   // Offsets imply black borders (if the window aspect ratio doesn't match the game's one).
   MathUtil::Rectangle<int> m_target_rectangle = {};
+  // Orca: the box the picture is fitted and centred in, in backbuffer pixels. The whole
+  // backbuffer unless an embed `view` sets one (SetLayoutHint).
+  LayoutBox m_layout_box = {};
+  // The layout hint last used (nullopt: the window), kept until the backbuffer catches up with a
+  // newer one.
+  std::optional<LayoutHint> m_layout_applied;
 
   u32 m_auto_resolution_scale = 1;
 
@@ -164,6 +199,10 @@ private:
 
   std::unique_ptr<VideoCommon::PostProcessing> m_post_processor;
   std::unique_ptr<VideoCommon::OnScreenUI> m_onscreen_ui;
+  // Orca tests (ORCA_TEST_PRESENT=WxH, headless only): presents render here, OSD and overlay
+  // included, and screenshots and frame dumps use this image instead of the bare XFB.
+  std::unique_ptr<AbstractTexture> m_test_target;
+  std::unique_ptr<AbstractFramebuffer> m_test_framebuffer;
 
   u64 m_frame_count = 0;
   u64 m_present_count = 0;
@@ -186,6 +225,8 @@ private:
 
   // Used by the SmoothEarlyPresentation setting.
   DT m_presentation_time_offset{};
+  // Orca: SmoothEarlyPresentation's rule for Immediate XFB frames.
+  PresentPacer m_present_pacer;
 
   // Calculated from the previous swap time and current refresh rate.
   // Can be used for presentation of ImmediateXFB swaps which don't have timing information.

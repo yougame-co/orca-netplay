@@ -1,0 +1,27 @@
+{
+  "description": "Orca mods tree hash (YouGame docs/ORCA_MODS.md, Phase 1 contract and its adjustments): lowercase hex sha256 of the UTF-8 lines <path>\\t<sha256>\\t<bytes>\\n for every file except orca/jitwarm and anything under orca/test/, in byte order of path. files are as tree.json lists them; hashedText is what is hashed. The same vector is in YouGame's web/src/lib/mod-tree.test.ts and the desktop app's tests.",
+  "cases": [
+    {
+      "name": "mod.json \"{}\", sd/a.txt \"a\", orca/jitwarm \"x\" (excluded)",
+      "files": [
+        {
+          "path": "mod.json",
+          "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "bytes": 2
+        },
+        {
+          "path": "orca/jitwarm",
+          "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          "bytes": 1
+        },
+        {
+          "path": "sd/a.txt",
+          "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+          "bytes": 1
+        }
+      ],
+      "hashedText": "mod.json\t44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\t2\nsd/a.txt\tca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\t1\n",
+      "treeHash": "86a7f6c4a959028c0334ee254622d453a7993337703b41262080e1f1524abc1a"
+    }
+  ]
+}

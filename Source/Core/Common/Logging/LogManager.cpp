@@ -143,6 +143,7 @@ LogManager::LogManager()
   m_log[LogType::PIXELENGINE] = {"PE", "Pixel Engine"};
   m_log[LogType::PROCESSORINTERFACE] = {"PI", "Processor Interface"};
   m_log[LogType::POWERPC] = {"PowerPC", "PowerPC IBM CPU"};
+  m_log[LogType::ROLLBACK] = {"ROLLBACK", "Rollback"};
   m_log[LogType::SERIALINTERFACE] = {"SI", "Serial Interface"};
   m_log[LogType::SERIALINTERFACE_AMBB] = {"SI_AMBB", "AMBB Interface"};
   m_log[LogType::SERIALINTERFACE_CARD] = {"SI_CARD", "CARD Interface"};
@@ -232,6 +233,17 @@ void LogManager::LogWithFullPath(LogLevel level, LogType type, const char* file,
     if (m_listeners[listener_id])
       m_listeners[listener_id]->Log(level, msg.c_str());
   }
+}
+
+void LogManager::LogToFile(LogLevel level, LogType type, const char* message)
+{
+  if (!IsEnabled(type, level) || !IsListenerEnabled(LogListener::FILE_LISTENER) ||
+      !m_listeners[LogListener::FILE_LISTENER])
+    return;
+  const std::string msg = fmt::format("{} {}[{}]: {}\n", GetTimestamp(),
+                                    LOG_LEVEL_TO_CHAR[static_cast<int>(level)],
+                                    GetShortName(type), message);
+  m_listeners[LogListener::FILE_LISTENER]->Log(level, msg.c_str());
 }
 
 LogLevel LogManager::GetEffectiveLogLevel() const
