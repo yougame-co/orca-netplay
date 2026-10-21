@@ -22,6 +22,7 @@
 #include "Common/CommonTypes.h"
 #include "Common/Config/Config.h"
 #include "Common/FileUtil.h"
+#include "Common/ScopeGuard.h"
 
 #include "Core/AchievementManager.h"
 #include "Core/Boot/Boot.h"
@@ -37,6 +38,7 @@
 #include "Core/HW/Sram.h"
 #include "Core/Movie.h"
 #include "Core/NetPlayProto.h"
+#include "Core/Orca/BootAudit.h"
 #include "Core/Orca/BootMemory.h"
 #include "Core/Orca/Bundle.h"
 #include "Core/Orca/Profile.h"
@@ -68,12 +70,14 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
     if (executable && executable->reader)
       launcher_bytes = executable->reader->GetBytes();
     Orca::Mod::ResolveBundle(executable ? &executable->path : nullptr, launcher_bytes);
-    if (!Orca::SessionActive() &&
+    if ((!Orca::SessionActive() || Orca::Mod::LocalPackRequested()) &&
         Orca::Mod::ResolvedKind() == Orca::Mod::BundleKind::Refused)
     {
       const std::string error = Orca::Mod::ResolvedError();
       Orca::Status::Error("profile", error);
-      PanicAlertFmt("{}", error);
+      // Local CLI failures return to the frontend immediately; a modal alert would wait for input.
+      if (!Orca::Mod::LocalPackRequested())
+        PanicAlertFmt("{}", error);
       return false;
     }
   }
@@ -104,6 +108,10 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
 
   // Orca rollback session: force the universal and the game profile's settings on both players.
   std::optional<Orca::Profile> orca_profile;
+  Common::ScopeGuard cancel_audit([&] {
+    if (orca_profile && orca_profile->boot_audit)
+      orca_profile->boot_audit->Cancel();
+  });
   if (Orca::SessionActive())
   {
     Orca::Status::State("booting");
@@ -333,11 +341,17 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
             std::move(boot->boot_session_data)),
         wsi);
   }
-  return Core::Init(system, std::move(boot), wsi);
+  const bool initialized = Core::Init(system, std::move(boot), wsi);
+  if (initialized)
+    cancel_audit.Dismiss();
+  if (initialized && orca_profile && orca_profile->boot_audit)
+    Orca::BootAudit::WatchSession(orca_profile->boot_audit);
+  return initialized;
 }
 
 void RestoreConfig()
 {
+  Orca::BootAudit::CancelSession();
   Core::ShutdownWiiRoot();
 
   if (Core::WiiRootIsTemporary())

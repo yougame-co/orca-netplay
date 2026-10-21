@@ -19,6 +19,7 @@
 #include "Core/Core.h"
 #include "Core/Debugger/OSThread.h"
 #include "Core/HW/Memmap.h"
+#include "Core/Orca/GpuDiagnostics.h"
 #include "Core/Orca/JitWarm.h"
 #include "Core/PowerPC/Gekko.h"
 #include "Core/PowerPC/JitCommon/JitCache.h"
@@ -344,12 +345,18 @@ std::optional<JitWarm::Scene> s_scene_key;
 
 void NoteScene(const Core::CPUThreadGuard& guard, int frame)
 {
+#ifdef _WIN32
+  GpuDiagnostics::NoteFrame(frame);
+#endif
   const std::optional<JitWarm::Scene> now = JitWarm::CurrentScene(guard);
   if (!now || now == s_scene_key)
     return;
   s_scene_key = now;
   s_scene = JitWarm::SceneName(guard, now->name);
   s_scene_frame = frame;
+#ifdef _WIN32
+  GpuDiagnostics::NoteScene(s_scene.empty() ? "unknown" : s_scene, frame);
+#endif
   ++s_scene_changes;
   NOTICE_LOG_FMT(ROLLBACK, "orca scene {} at frame {}", s_scene.empty() ? "?" : s_scene, frame);
 }

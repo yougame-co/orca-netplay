@@ -65,6 +65,7 @@
 #include "Core/Movie.h"
 #include "Core/NetPlayClient.h"
 #include "Core/NetPlayProto.h"
+#include "Core/Orca/BootAudit.h"
 #include "Core/Orca/BootMemory.h"
 #include "Core/Orca/Branding.h"
 #include "Core/Orca/Profile.h"
@@ -277,6 +278,8 @@ void Stop(Core::System& system)  // - Hammertime!
     s_state.store(State::Stopping);
   }
 
+  // Release any CPU-side online start before Stop asks the CPU thread to finish.
+  Orca::BootAudit::CancelSession();
   NotifyStateChanged(State::Stopping);
 
   AchievementManager::GetInstance().CloseGame();

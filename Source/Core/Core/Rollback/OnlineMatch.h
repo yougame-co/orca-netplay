@@ -14,6 +14,8 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -90,8 +92,20 @@ struct JoinCapture
 std::optional<JoinCapture> ChooseJoinCapture(const Orca::Net::Session* session, bool doubles,
                                             int next, int earliest);
 
+// Reopen a held friends room under its code; a queue, expired or taken room needs a fresh code.
+std::string RoomReopenCode(const std::string& previous_code, const std::string& queue,
+                            bool held, bool taken);
+// Pumps the actual reopen path against Online's room and returns whether it adopted a friend.
+bool PumpRoomReopenForTest();
+// Adopts the room, waits for its failure, then pumps the actual fallback and one solo frame.
+int PumpRoomReopenFailureForTest(const std::function<void()>& wait_for_failure);
+
+// Refused joins whose host or match ended use the app's existing state events.
+void ReportJoinFailure(std::string_view code, std::string_view sentence);
+
 // Headless runtime fixture: pumps the same host event/keyframe path with a real room and a
 // supplied game history. The caller initializes Core::System's memory and owns `game`.
+// `host_requested` supplies the queue fresh-start arm set by HostInPlay before WELCOME.
 struct HostRecoveryResult
 {
   bool fresh_start = false;
@@ -108,13 +122,15 @@ HostRecoveryResult PumpFriendsHostForTest(Core::System& system, Orca::Net::YouGa
                                          Orca::Net::Game& game, Orca::Net::ReplayArchive replay,
                                          int current_frame, const std::vector<int>& seated,
                                          bool on_menus,
-                                         std::unique_ptr<Orca::Net::KeyframeStore> store);
+                                         std::unique_ptr<Orca::Net::KeyframeStore> store,
+                                         bool host_requested = false);
 
-// Runs Boundary's session loop with a supplied host session and short silence window.
+// Runs Boundary's session loop with a supplied session and short silence window.
 int PumpFriendsHostBoundaryForTest(std::unique_ptr<Orca::Net::Session>& session, int completed,
                                    const std::vector<int>& seated,
                                    const std::function<void()>& poll,
-                                   const std::function<std::vector<int>()>& left_in_play);
+                                   const std::function<std::vector<int>()>& left_in_play,
+                                   bool joining = false);
 
 // ---- The origin and fresh starts ----
 // Every Orca boots the same way up to its origin: port 1 plugged in with nothing pressed, ports 2-4

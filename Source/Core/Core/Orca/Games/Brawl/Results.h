@@ -111,10 +111,10 @@ public:
   // solo), so everything stored is dropped.
   void Store(int frame, const Reading& reading, u64 resyncs);
   // Frames through `confirmed` are final (real inputs, no re-run pending). Returns the games they
-  // finish, in order. `starts`, if given, receives the ranked set games they begin (a fight's
-  // fighters in, SET_FIGHT_FLAGS' FIGHT_SEEN): each fight's first frame (SET_FIGHT_START), the id
+  // finish, in order. `starts`, if given, receives each counted game's first fight frame, the id
   // its game's report will carry, once, and only for a fight begun after `plug_frame` as the
-  // reports.
+  // reports. Ranked set games begin with fighters in (SET_FIGHT_FLAGS' FIGHT_SEEN), named by
+  // SET_FIGHT_START; scene games begin on entering Fight.
   std::vector<GameResult> Confirm(int confirmed, int plug_frame,
                                   std::vector<int>* starts = nullptr);
   void Reset();
@@ -135,6 +135,8 @@ private:
   // A counted fight is on, or between it and its results screen.
   bool m_in_game = false;
   bool m_after_fight = false;
+  // The scene game's start, or an uncounted baseline for a fight rebuilt before joining.
+  int m_scene_start = -1;
   // Ranked set games seen so far. The first final reading after a reset only initializes the count.
   bool m_have_set = false;
   int m_set_games = 0;

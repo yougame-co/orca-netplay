@@ -27,6 +27,7 @@
 #include "Core/Orca/Bundle.h"
 #include "Core/Orca/Disc.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/SafeJson.h"
 #include "Core/Orca/UX/GamePatches.h"
 #include "Core/PowerPC/MMU.h"
 #include "DiscIO/Volume.h"
@@ -55,6 +56,37 @@ std::string ToLowerAscii(std::string_view s)
   for (char& c : out)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   return out;
+}
+
+bool CheckLocalPackFile(const std::string& dir, const std::string& name, std::string* why)
+{
+  if (!LocalPackRequested())
+    return true;
+
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path path = StringToPath(dir + name);
+  const fs::file_status status = fs::symlink_status(path, ec);
+  if (ec || !fs::is_regular_file(status))
+  {
+    *why = fs::is_symlink(status) ? "is a link (local pack files must be regular files)" :
+                                  "is not a regular file";
+    return false;
+  }
+  const fs::path root = fs::canonical(StringToPath(dir), ec);
+  const fs::path file = ec ? fs::path() : fs::canonical(path, ec);
+  if (ec)
+  {
+    *why = "can't be resolved inside the pack folder";
+    return false;
+  }
+  const auto [root_end, file_it] = std::mismatch(root.begin(), root.end(), file.begin(), file.end());
+  if (root_end != root.end() || file_it == file.end())
+  {
+    *why = "leads outside the pack folder";
+    return false;
+  }
+  return true;
 }
 
 // A JSON integer (picojson keeps numbers as doubles: exact up to 2^53) within [min, max].
@@ -121,13 +153,7 @@ std::string ParseWhole(picojson::value* root, std::string_view json, u64 max_byt
     return fmt::format("over {} bytes", max_bytes);
   if (TooDeep(json))
     return fmt::format("nested deeper than {} levels", MAX_JSON_DEPTH);
-  std::string error;
-  const auto end = picojson::parse(*root, json.begin(), json.end(), &error);
-  if (!error.empty())
-    return error;
-  if (!std::all_of(end, json.end(), [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }))
-    return "something after the JSON value";
-  return {};
+  return Json::ParseWholeJson(json, root);
 }
 
 bool InMem1Word(u32 address)
@@ -1043,7 +1069,7 @@ bool Requested()
     return false;
   if (const std::optional<BundleKind> kind = ResolvedKind())
     return *kind != BundleKind::None;
-  return !GetEnv("ORCA_MOD_DIR").empty();
+  return LocalPackRequested() || !GetEnv("ORCA_MOD_DIR").empty();
 }
 
 std::string Dir()
@@ -1185,6 +1211,12 @@ std::optional<SdImage> PrepareSdImage(const ModInfo& mod, const std::string& cac
     std::vector<SdSource> files;
     for (const TreeFile* f : mod.tree.Under("sd/"))
     {
+      std::string why;
+      if (!CheckLocalPackFile(mod.dir, f->path, &why))
+      {
+        *error = fmt::format("Orca mod: {} {}", f->path, why);
+        return std::nullopt;
+      }
       files.push_back({f->path.substr(3), mod.dir + f->path, f->bytes});
       // The tree's sizes were checked at load; checked again here, as the bytes go in.
       if (File::GetSize(files.back().source_path) != f->bytes)
@@ -1463,8 +1495,8 @@ bool Offers(std::string_view cap)
 {
   const ModInfo* mod = ActiveMod();
   // Only the builtin's supported caps, once its guards have held and never after failure.
-  return mod && mod->manifest.builtin != Builtin::None && s_held_once && !s_guards_failed &&
-         (mod->manifest.builtin != Builtin::BrawlRev2Results ||
+  return !LocalPackRequested() && mod && mod->manifest.builtin != Builtin::None && s_held_once &&
+         !s_guards_failed && (mod->manifest.builtin != Builtin::BrawlRev2Results ||
           (cap == "results" && mod->manifest.ranked_rules)) &&
          std::ranges::find(mod->manifest.offers, cap) != mod->manifest.offers.end();
 }
@@ -1478,9 +1510,12 @@ namespace
 {
 // A bundle file the session reads whole (to parse or hash it), refused when over max_bytes: a tree
 // may list files up to MAX_FILE_BYTES, and only the card's are streamed.
-bool ReadBounded(const std::string& path, u64 max_bytes, std::string* out, std::string* why)
+bool ReadBounded(const std::string& dir, const std::string& name, u64 max_bytes, std::string* out,
+                 std::string* why)
 {
-  File::IOFile f(path, "rb");
+  if (!Mod::CheckLocalPackFile(dir, name, why))
+    return false;
+  File::IOFile f(dir + name, "rb");
   if (!f)
   {
     *why = "can't be read";
@@ -1573,9 +1608,9 @@ std::optional<Profile> LoadModProfile(const std::string& dir_in, std::string* er
   if (dir.back() != '/' && dir.back() != '\\')
     dir += '/';
   std::string text, why;
-  if (!ReadBounded(dir + "tree.json", Mod::MAX_TREE_JSON_BYTES, &text, &why))
+  if (!ReadBounded(dir, "tree.json", Mod::MAX_TREE_JSON_BYTES, &text, &why))
   {
-    *error = fmt::format("Orca mod: {}tree.json {}", dir, why);
+    *error = fmt::format("Orca mod: {}tree.json {}", Mod::LocalPackRequested() ? "" : dir, why);
     return std::nullopt;
   }
   std::optional<Mod::Tree> tree = Mod::ParseTree(text, error);
@@ -1586,6 +1621,11 @@ std::optional<Profile> LoadModProfile(const std::string& dir_in, std::string* er
   for (const Mod::TreeFile& f : tree->files)
   {
     const std::string path = dir + f.path;
+    if (!Mod::CheckLocalPackFile(dir, f.path, &why))
+    {
+      *error = fmt::format("Orca mod: {} {}", f.path, why);
+      return std::nullopt;
+    }
     if (!File::Exists(path) || File::IsDirectory(path) || File::GetSize(path) != f.bytes)
     {
       *error = fmt::format("Orca mod: {} is missing or not the size tree.json names ({} bytes)",
@@ -1600,7 +1640,7 @@ std::optional<Profile> LoadModProfile(const std::string& dir_in, std::string* er
     *error = "Orca mod: the bundle has no mod.json";
     return std::nullopt;
   }
-  if (!ReadBounded(dir + "mod.json", Mod::MAX_MOD_JSON_BYTES, &text, &why))
+  if (!ReadBounded(dir, "mod.json", Mod::MAX_MOD_JSON_BYTES, &text, &why))
   {
     *error = fmt::format("Orca mod: mod.json {}", why);
     return std::nullopt;
@@ -1639,7 +1679,7 @@ std::optional<Profile> LoadModProfile(const std::string& dir_in, std::string* er
     if (!executable && !f.path.starts_with("orca/patches/"))
       continue;
     std::string contents;
-    if (!ReadBounded(dir + f.path, executable ? Mod::MAX_LAUNCHER_BYTES : Mod::MAX_PATCHES_BYTES,
+    if (!ReadBounded(dir, f.path, executable ? Mod::MAX_LAUNCHER_BYTES : Mod::MAX_PATCHES_BYTES,
                      &contents, &why))
     {
       *error = fmt::format("Orca mod: {} {}", f.path, why);
@@ -1663,7 +1703,7 @@ std::optional<Profile> LoadModProfile(const std::string& dir_in, std::string* er
     }
     std::string patch_text;
     why.clear();
-    if (!ReadBounded(dir + f->path, Mod::MAX_PATCHES_BYTES, &patch_text, &why) ||
+    if (!ReadBounded(dir, f->path, Mod::MAX_PATCHES_BYTES, &patch_text, &why) ||
         !UX::ParseGamePatches(patch_text, &why))
     {
       *error = fmt::format("Orca mod: {}: {}", f->path, why.empty() ? "can't be read" : why);

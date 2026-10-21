@@ -112,6 +112,8 @@ GameResult FromRecord(const SetBlock::SetState& set, int index)
     g.why = "limit";
     return g;
   }
+  // A recorded game: the block, not the room's tally, ends its set (a "limit" game above never did).
+  g.from_set_block = true;
   const SetBlock::GameRecord& r = set.records[index];
   const auto value = [](u8 v) { return v == 0xFF ? -1 : int(v); };
   g.start = static_cast<int>(r.start & 0x7FFFFFFF);
@@ -234,6 +236,7 @@ void ResultsTracker::Reset()
   m_last = {};
   m_in_game = false;
   m_after_fight = false;
+  m_scene_start = -1;
   m_have_set = false;
   m_set_games = 0;
   m_have_fight = false;
@@ -272,6 +275,9 @@ void ResultsTracker::Store(int frame, const Reading& reading, u64 resyncs)
 
 void ResultsTracker::Rebase(int frame, const Reading& reading, u64 resyncs)
 {
+  int scene_start = -1;
+  if (m_have_last && !m_last.set && (frame == m_last_frame || frame == m_last_frame + 1))
+    scene_start = m_scene_start;
   Reset();
   m_started = true;
   m_resyncs = resyncs;
@@ -288,6 +294,17 @@ void ResultsTracker::Rebase(int frame, const Reading& reading, u64 resyncs)
       m_have_fight = true;
       m_fight_start = static_cast<int>(reading.set->fight_start & 0x7FFFFFFF);
     }
+  }
+  else if (reading.scene == Reading::Scene::Fight)
+  {
+    // This fight is already underway, like FIGHT_SEEN above: do not begin it again, even if the
+    // next scene transition is sudden death. Rebuilt history never counts as a new game.
+    m_scene_start = scene_start >= 0 ? scene_start : frame;
+  }
+  else if (reading.scene == Reading::Scene::Between && scene_start >= 0)
+  {
+    m_scene_start = scene_start;
+    m_after_fight = true;
   }
 }
 
@@ -307,6 +324,7 @@ std::vector<GameResult> ResultsTracker::Confirm(int confirmed, int plug_frame,
     {
       m_in_game = false;
       m_after_fight = false;
+      m_scene_start = -1;
     }
     const Scene before = follows ? m_last.scene : Scene::Other;
     if (r.set)
@@ -349,6 +367,7 @@ std::vector<GameResult> ResultsTracker::Confirm(int confirmed, int plug_frame,
       }
       m_in_game = false;
       m_after_fight = false;
+      m_scene_start = -1;
       m_last = r;
       m_last_frame = frame;
       m_have_last = true;
@@ -360,7 +379,7 @@ std::vector<GameResult> ResultsTracker::Confirm(int confirmed, int plug_frame,
     case Scene::Fight:
       if (before != Scene::Fight)
       {
-        if (m_in_game && m_after_fight)
+        if (m_scene_start >= 0 && m_after_fight)
         {
           // Back into the fight from between scenes (sudden death): the same game.
           m_after_fight = false;
@@ -370,25 +389,31 @@ std::vector<GameResult> ResultsTracker::Confirm(int confirmed, int plug_frame,
           // A new game, counted only if the previous frame was read on both machines.
           m_in_game = follows && frame - 1 > plug_frame;
           m_after_fight = false;
+          m_scene_start = frame;
+          if (m_in_game && starts)
+            starts->push_back(m_scene_start);
         }
       }
       break;
     case Scene::Between:
-      if (m_in_game && before == Scene::Fight)
+      if (m_scene_start >= 0 && before == Scene::Fight)
         m_after_fight = true;
       break;
     case Scene::Results:
       if (m_in_game)
       {
-        out.push_back(Judge(r.block, frame));
+        GameResult g = Judge(r.block, frame);
+        g.start = m_scene_start;
+        out.push_back(std::move(g));
         if (!r.block.differing_rule.empty())
         {
           NOTICE_LOG_FMT(ROLLBACK, "Orca result: frame {}: not rated, its {} is not the ranked rules'",
                          frame, r.block.differing_rule);
         }
-        m_in_game = false;
-        m_after_fight = false;
       }
+      m_in_game = false;
+      m_scene_start = -1;
+      m_after_fight = false;
       break;
     case Scene::Other:
       if (m_in_game)
@@ -396,11 +421,13 @@ std::vector<GameResult> ResultsTracker::Confirm(int confirmed, int plug_frame,
         // The fight ended without its results screen.
         GameResult g;
         g.frame = frame;
+        g.start = m_scene_start;
         g.why = "nocontest";
         out.push_back(g);
-        m_in_game = false;
-        m_after_fight = false;
       }
+      m_in_game = false;
+      m_scene_start = -1;
+      m_after_fight = false;
       break;
     }
     m_last = r;

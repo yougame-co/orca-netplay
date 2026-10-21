@@ -35,6 +35,8 @@ struct RoomOptions
   std::string mode = "orca-test";
   // This Orca joins a friend's running game (ORCA_JOIN=1, or the app opened an invite).
   bool joining = false;
+  // A held friends-room reopen may find the friend hosting it: join that game instead.
+  bool join_if_taken = false;
   // Known queue requests keep their original behavior even before the first welcome.
   bool friends_room = true;
   // Transport policy can be disabled for the healthy-session baseline comparison.
@@ -174,6 +176,8 @@ struct GameReport
   // same on both machines; -1 for the legacy "g<n>"), its number in the set, and for the game that
   // ended the set, how (1: won by `set_winner_seat`, 2: void).
   int start = -1;
+  // Local provenance only: the ranked SetBlock, rather than the room's tally, ends this set.
+  bool from_set_block = false;
   int number = 0;
   int set_done = 0;
   int set_winner_seat = -1;
@@ -272,8 +276,8 @@ public:
   // or "ranked".
   std::string Queue() const;
   bool Doubles() const;
-  // Whether the transport uses friends recovery, including its pre-welcome queue hint.
-  bool FriendsRecovery() const;
+  // Friends policy before welcome, or a casual/ranked welcome with room.recovery:true.
+  bool RoomRecovery() const;
   // A room match is running and its result isn't in yet (for ranked, the whole set).
   bool MatchLive() const;
   // A ranked set's room after its verdict (`set-over`): it stays open, with relay and chat, until
@@ -329,6 +333,7 @@ public:
   void TestDropConnection();
 
 private:
+  YouGameRoom(RoomOptions options, bool start_io);
   friend std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions&,
                                                       const std::vector<RoomTestStep>&);
   struct Impl;
@@ -435,6 +440,12 @@ struct RoomTestStep
     PollReconnect,
     ConnectFailure,
     InitialConnectFailure,
+    InputSilence,
+    SocketConnected,
+    SendFailure,
+    ReportGame,
+    GameStart,
+    Stall,
   };
   Kind kind;
   int milliseconds = 0;
@@ -455,6 +466,12 @@ struct RoomTestSnapshot
   std::vector<std::string> notices;
   std::string status;
   std::string error_code;
+  bool recovery = false;
+  int known_games = 0;
+  std::vector<std::string> results;
+  std::optional<std::chrono::steady_clock::time_point> public_deadline;
+  bool session_recovering = false;
+  std::optional<bool> input_held;
 };
 std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions& options,
                                              const std::vector<RoomTestStep>& steps);

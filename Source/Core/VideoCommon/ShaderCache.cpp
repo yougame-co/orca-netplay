@@ -7,6 +7,7 @@
 #include <chrono>
 #include <thread>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 
 #include <fmt/format.h>
@@ -16,6 +17,7 @@
 #include "Common/MsgHandler.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
+#include "Core/Orca/GpuDiagnostics.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Status.h"
 #include "Core/System.h"
@@ -396,10 +398,16 @@ void ShaderCache::LoadShaderCache(T& cache, APIType api_type, const char* type, 
         {
         case ShaderStage::Vertex:
           INCSTAT(g_stats.num_vertex_shaders_created);
+#ifdef _WIN32
+          Orca::GpuDiagnostics::ShaderCreated(false, std::is_same_v<K, UberShader::VertexShaderUid>);
+#endif
           INCSTAT(g_stats.num_vertex_shaders_alive);
           break;
         case ShaderStage::Pixel:
           INCSTAT(g_stats.num_pixel_shaders_created);
+#ifdef _WIN32
+          Orca::GpuDiagnostics::ShaderCreated(true, std::is_same_v<K, UberShader::PixelShaderUid>);
+#endif
           INCSTAT(g_stats.num_pixel_shaders_alive);
           break;
         default:
@@ -632,6 +640,9 @@ const AbstractShader* ShaderCache::InsertVertexShader(const VertexShaderUid& uid
         m_vs_cache.disk_cache.Append(uid, binary.data(), static_cast<u32>(binary.size()));
     }
     INCSTAT(g_stats.num_vertex_shaders_created);
+#ifdef _WIN32
+    Orca::GpuDiagnostics::ShaderCreated(false, false);
+#endif
     INCSTAT(g_stats.num_vertex_shaders_alive);
     entry.shader = std::move(shader);
   }
@@ -654,6 +665,9 @@ const AbstractShader* ShaderCache::InsertVertexUberShader(const UberShader::Vert
         m_uber_vs_cache.disk_cache.Append(uid, binary.data(), static_cast<u32>(binary.size()));
     }
     INCSTAT(g_stats.num_vertex_shaders_created);
+#ifdef _WIN32
+    Orca::GpuDiagnostics::ShaderCreated(false, true);
+#endif
     INCSTAT(g_stats.num_vertex_shaders_alive);
     entry.shader = std::move(shader);
   }
@@ -676,6 +690,9 @@ const AbstractShader* ShaderCache::InsertPixelShader(const PixelShaderUid& uid,
         m_ps_cache.disk_cache.Append(uid, binary.data(), static_cast<u32>(binary.size()));
     }
     INCSTAT(g_stats.num_pixel_shaders_created);
+#ifdef _WIN32
+    Orca::GpuDiagnostics::ShaderCreated(true, false);
+#endif
     INCSTAT(g_stats.num_pixel_shaders_alive);
     entry.shader = std::move(shader);
   }
@@ -698,6 +715,9 @@ const AbstractShader* ShaderCache::InsertPixelUberShader(const UberShader::Pixel
         m_uber_ps_cache.disk_cache.Append(uid, binary.data(), static_cast<u32>(binary.size()));
     }
     INCSTAT(g_stats.num_pixel_shaders_created);
+#ifdef _WIN32
+    Orca::GpuDiagnostics::ShaderCreated(true, true);
+#endif
     INCSTAT(g_stats.num_pixel_shaders_alive);
     entry.shader = std::move(shader);
   }

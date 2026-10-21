@@ -115,7 +115,7 @@ inline constexpr const char* REPLAY_CAP = "replay";
 // "record": every profile, after optional replay and before hostui; an app without it never records.
 inline constexpr const char* RECORD_CAP = "record";
 // "hostui": every profile, last. The newest word: an app that reads fewer caps words drops it first.
-// Only an app that agrees it gets the native host menu (UX/YgOrb.h).
+// Only an app that agrees it gets native orb and feedback controls (UX/YgOrb.h).
 inline constexpr const char* HOSTUI_CAP = "hostui";
 // This build's caps for the running profile: CAPS, plus "music", "results", "locks", "queue2" and
 // the pick caps where supported, then "talk", "rumble", "replay" in product playback, "record"

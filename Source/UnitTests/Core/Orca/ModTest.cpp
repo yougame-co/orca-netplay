@@ -14,6 +14,10 @@
 #include <string>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
+
 #include <fmt/format.h>
 #include <gtest/gtest.h>
 #include <picojson.h>
@@ -22,10 +26,12 @@
 #include "Common/FileUtil.h"
 #include "Common/CommonPaths.h"
 #include "Common/IOFile.h"
+#include "Common/ScopeGuard.h"
 #include "Common/Version.h"
 #include "Core/ConfigManager.h"
 #include "Core/Config/MainSettings.h"
 #include "Core/Config/SessionSettings.h"
+#include "Core/Orca/Bundle.h"
 #include "Core/Orca/Mod.h"
 #include "Core/Orca/Music.h"
 #include "Core/Orca/Profile.h"
@@ -560,6 +566,126 @@ TEST(OrcaMod, LoadsABundle)
   File::DeleteDirRecursively(v.dir);
 }
 
+#ifndef _WIN32  // A symbolic link needs an elevated or developer-mode Windows.
+TEST(OrcaMod, LocalTreeRefusesLinkedFiles)
+{
+  for (const char* name : {"tree.json", "mod.json", "launcher.dol", "sd/codes.txt",
+                          "orca/patches/local.patches", "orca/jitwarm"})
+  {
+    SCOPED_TRACE(name);
+    Bundle b = MakeBundle(PPLUS_MOD);
+    const std::string outside = File::CreateTempDir() + "/";
+    const Common::ScopeGuard done([&] {
+      Orca::Mod::SetLocalPack({});
+      File::DeleteDirRecursively(b.dir);
+      File::DeleteDirRecursively(outside);
+    });
+    b.Add("launcher.dol", "launcher");
+    b.Add("sd/codes.txt", "codes");
+    b.Add("orca/patches/local.patches", "# none\n");
+    b.Add("orca/jitwarm", "warm");
+    b.WriteTree();
+    Orca::Mod::SetLocalPack(b.dir);
+    std::string error;
+    ASSERT_TRUE(Orca::LoadModProfile(b.dir, &error)) << error;
+    ASSERT_TRUE(File::Rename(b.dir + name, outside + "source"));
+    std::error_code ec;
+    std::filesystem::create_symlink(outside + "source", b.dir + name, ec);
+    ASSERT_FALSE(ec) << ec.message();
+    EXPECT_FALSE(Orca::LoadModProfile(b.dir, &error));
+    EXPECT_NE(error.find(std::string(name) + " is a link"), std::string::npos) << error;
+    Orca::Mod::ResolveBundleForTests(nullptr, {}, false);
+    EXPECT_EQ(Orca::Mod::ResolvedKind(), Orca::Mod::BundleKind::Refused);
+    EXPECT_NE(Orca::Mod::ResolvedError().find(std::string(name) + " is a link"),
+              std::string::npos);
+    EXPECT_EQ(Orca::Mod::ResolvedError().find(outside), std::string::npos);
+    // App-delivered trees retain their existing handling of links.
+    Orca::Mod::SetLocalPack({});
+    EXPECT_TRUE(Orca::LoadModProfile(b.dir, &error)) << error;
+  }
+}
+
+TEST(OrcaMod, LocalTreeRefusesLinkedDirectoryEscape)
+{
+  const std::string root = File::CreateTempDir() + "/";
+  Bundle b{root + "pack/", {}};
+  const Common::ScopeGuard done([&] {
+    Orca::Mod::SetLocalPack({});
+    File::DeleteDirRecursively(root);
+  });
+  b.Add("mod.json", BRAWL_MOD);
+  b.Add("sd/codes.txt", "codes");
+  b.WriteTree();
+  // The sibling shares the pack's name prefix, but is outside its canonical folder.
+  ASSERT_TRUE(File::Rename(b.dir + "sd", root + "pack-other"));
+  std::error_code ec;
+  std::filesystem::create_directory_symlink(root + "pack-other", b.dir + "sd", ec);
+  ASSERT_FALSE(ec) << ec.message();
+  Orca::Mod::SetLocalPack(b.dir);
+  Orca::Mod::ResolveBundleForTests(nullptr, {}, false);
+  EXPECT_EQ(Orca::Mod::ResolvedKind(), Orca::Mod::BundleKind::Refused);
+  EXPECT_NE(Orca::Mod::ResolvedError().find("sd/codes.txt leads outside the pack folder"),
+            std::string::npos) << Orca::Mod::ResolvedError();
+  Orca::Mod::SetLocalPack({});
+  std::string error;
+  EXPECT_TRUE(Orca::LoadModProfile(b.dir, &error)) << error;
+}
+
+TEST(OrcaMod, LocalTreeRefusesSpecialFiles)
+{
+  for (const char* name : {"tree.json", "mod.json", "sd/codes.txt"})
+  {
+    SCOPED_TRACE(name);
+    Bundle b = MakeBundle(BRAWL_MOD);
+    const Common::ScopeGuard done([&] {
+      Orca::Mod::SetLocalPack({});
+      File::DeleteDirRecursively(b.dir);
+    });
+    b.Add("sd/codes.txt", "");
+    b.WriteTree();
+    ASSERT_TRUE(File::Delete(b.dir + name));
+    ASSERT_EQ(mkfifo((b.dir + name).c_str(), 0600), 0);
+    Orca::Mod::SetLocalPack(b.dir);
+    std::string error;
+    EXPECT_FALSE(Orca::LoadModProfile(b.dir, &error));
+    EXPECT_NE(error.find(std::string(name) + " is not a regular file"), std::string::npos) << error;
+  }
+}
+
+TEST(OrcaMod, LocalSdSourcesCheckedAtBuildTime)
+{
+  for (const bool linked_directory : {false, true})
+  {
+    SCOPED_TRACE(linked_directory);
+    Bundle b = MakeBundle(BrawlWith("sd", R"({"bytes": 67108864})"));
+    const std::string outside = File::CreateTempDir() + "/";
+    const Common::ScopeGuard done([&] {
+      Orca::Mod::SetLocalPack({});
+      File::DeleteDirRecursively(b.dir);
+      File::DeleteDirRecursively(outside);
+    });
+    b.Add("sd/codes.txt", "codes");
+    b.WriteTree();
+    Orca::Mod::SetLocalPack(b.dir);
+    std::string error;
+    const auto profile = Orca::LoadModProfile(b.dir, &error);
+    ASSERT_TRUE(profile) << error;
+    const std::string name = linked_directory ? "sd" : "sd/codes.txt";
+    ASSERT_TRUE(File::Rename(b.dir + name, outside + "source"));
+    std::error_code ec;
+    if (linked_directory)
+      std::filesystem::create_directory_symlink(outside + "source", b.dir + name, ec);
+    else
+      std::filesystem::create_symlink(outside + "source", b.dir + name, ec);
+    ASSERT_FALSE(ec) << ec.message();
+    EXPECT_FALSE(Orca::Mod::PrepareSdImage(*profile->mod, outside + "cache", &error));
+    EXPECT_NE(error.find(linked_directory ? "leads outside the pack folder" : "is a link"),
+              std::string::npos) << error;
+    EXPECT_EQ(error.find(outside), std::string::npos);
+  }
+}
+#endif
+
 TEST(OrcaMod, RefusesABundleThatDiffersFromItsTree)
 {
   std::string error;
@@ -677,6 +803,20 @@ TEST(OrcaMod, RefusesOversizedOrDeepJson)
   EXPECT_FALSE(Orca::Mod::ParseManifest(BRAWL_MOD + std::string(Orca::Mod::MAX_MOD_JSON_BYTES, ' '),
                                         &error));
   EXPECT_NE(error.find("over"), std::string::npos) << error;
+}
+
+TEST(OrcaMod, RefusesHugeJsonNumbersAndTrailingValues)
+{
+  std::string error;
+  for (const auto& number : {std::string("1e999"), std::string(400, '9')})
+  {
+    EXPECT_FALSE(Orca::Mod::ParseManifest(R"({"format":)" + number + "}", &error));
+    EXPECT_FALSE(error.empty());
+    EXPECT_FALSE(Orca::Mod::ParseTree(R"({"files":[{"bytes":)" + number + "}]}", &error));
+    EXPECT_FALSE(error.empty());
+  }
+  EXPECT_FALSE(Orca::Mod::ParseManifest(std::string(BRAWL_MOD) + " {}", &error));
+  EXPECT_NE(error.find("after the JSON value"), std::string::npos);
 }
 
 // The card is built from the listed files only, and the same files and size give the same bytes.
@@ -2165,6 +2305,7 @@ TEST(OrcaMod, ResultsOnlyAdmitsRankedWithoutRulesetGates)
   };
   run("muMenuMain", 40);
   run("scSelctCharacter", 2);
+  const int fight_start = frame;
   run("scMelee", 2);
   run("scVsResult", 2);
   for (u32 address = free_begin; address < free_end; ++address)
@@ -2172,12 +2313,14 @@ TEST(OrcaMod, ResultsOnlyAdmitsRankedWithoutRulesetGates)
   EXPECT_FALSE(module.Header().TakeMismatch());
   EXPECT_TRUE(module.Header().HeaderInPlace());
   // The results come from the vanilla result info, not from the header's (empty) ranked set.
-  auto results = module.Results().Confirm(frame, -1);
+  std::vector<int> starts;
+  auto results = module.Results().Confirm(frame, -1, &starts);
   ASSERT_EQ(results.size(), 1u);
   EXPECT_EQ(results[0].kind, Orca::UX::GameResult::Kind::Win);
   EXPECT_EQ(results[0].winner_port, 0);
   EXPECT_TRUE(results[0].why.empty());
-  EXPECT_EQ(results[0].start, -1);
+  EXPECT_EQ(results[0].start, fight_start);
+  EXPECT_EQ(starts, std::vector<int>{fight_start});
 
   // rankedRules reaches the reader from mod.json: the same match under items Medium is not rated.
   Bundle rules_bundle =

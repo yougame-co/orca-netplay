@@ -16,11 +16,11 @@
 
 #include "Core/Orca/Activity.h"
 #include "Core/Orca/BootMemory.h"
+#include "Core/Orca/Bundle.h"
 #include "Core/Orca/Mod.h"
 #include "Core/Orca/Music.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/UX/UX.h"
-#include "Core/Orca/UX/YgOrb.h"
 #include "Core/Rollback/ReplayStream.h"
 
 namespace Orca::Status
@@ -156,7 +156,7 @@ std::string OfferedCaps()
   std::istringstream base{CAPS};
   for (std::string cap; base >> cap;)
   {
-    if ((s_online_withdrawn || Rollback::ReplayStream::ProductMode()) &&
+    if ((s_online_withdrawn || Rollback::ReplayStream::ProductMode() || Mod::LocalPackRequested()) &&
         (cap == "join" || cap == "host" || cap == "direct"))
       continue;
     if (!caps.empty())
@@ -262,8 +262,6 @@ void SetAppCaps(std::string_view list)
   std::lock_guard lock(s_mutex);
   s_app_list = std::string(list);
   s_app_caps = Agreed(offered, list);
-  if (!s_app_caps.contains(HOSTUI_CAP))
-    UX::YgOrb::Menu().Close();
 }
 
 bool Cap(std::string_view name)

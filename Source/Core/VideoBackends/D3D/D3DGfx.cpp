@@ -20,6 +20,7 @@
 #include "Core/Core.h"
 
 #include "VideoBackends/D3D/D3DBase.h"
+#include "VideoBackends/D3D/D3DDiagnostics.h"
 #include "VideoBackends/D3D/D3DBoundingBox.h"
 #include "VideoBackends/D3D/D3DState.h"
 #include "VideoBackends/D3D/D3DSwapChain.h"
@@ -187,8 +188,12 @@ bool Gfx::BindBackbuffer(const ClearColor& clear_color)
 
 void Gfx::PresentBackbuffer()
 {
+  Diagnostics::Poll();
   if (m_swap_chain->GetFramebuffer() && !D3DCommon::IsDeviceLost())
-    m_swap_chain->Present();
+  {
+    if (m_swap_chain->Present())
+      Diagnostics::Presented();
+  }
 }
 
 void Gfx::OnConfigChanged(u32 bits)

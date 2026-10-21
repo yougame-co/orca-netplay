@@ -8,7 +8,6 @@
 #include "Common/Logging/Log.h"
 #include "Core/Orca/Status.h"
 #include "Core/Orca/UX/OverlayKey.h"
-#include "Core/Orca/UX/YgOrb.h"
 
 namespace Orca::UX
 {
@@ -52,25 +51,19 @@ OrbCombo::Step OrbCombo::Next(u16 buttons)
 GCPadStatus FilterLocalPad(GCPadStatus pad, bool first_run, bool live, OverlayKey::Ms now)
 {
   static OrbCombo s_combo;
-  static bool s_native = false;
   if (first_run && live)
   {
     const bool start = (pad.button & OrbCombo::START) != 0;
     const OrbCombo::Step step = s_combo.Next(pad.button);
-    YgOrb::NavigateHostPad(pad.button, step.fired);
     pad.button = step.buttons;
     if (step.fired)
     {
       INFO_LOG_FMT(CORE, "Orca: the YouGame shortcut (Up + Start)");
-      s_native = YgOrb::HostEnabled();
-      if (!s_native)
-        Print(OverlayKey::Pad().Down(Status::Cap(Status::TALK_CAP), now));
+      Print(OverlayKey::Pad().Down(Status::Cap(Status::TALK_CAP), now));
     }
     else if (step.released)
     {
-      if (!s_native)
-        Print(OverlayKey::Pad().Release(now));
-      s_native = false;
+      Print(OverlayKey::Pad().Release(now));
     }
     else if (start)
     {

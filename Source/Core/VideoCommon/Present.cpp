@@ -17,6 +17,7 @@
 #include "Core/CoreTiming.h"
 #include "Core/HW/VideoInterface.h"
 #include "Core/Host.h"
+#include "Core/Orca/GpuDiagnostics.h"
 #include "Core/Orca/Perf.h"
 #include "Core/System.h"
 
@@ -1056,6 +1057,9 @@ void Presenter::RepresentLast()
 
 void Presenter::Present(PresentInfo* present_info)
 {
+#ifdef _WIN32
+  Orca::GpuDiagnostics::LogMemory();
+#endif
   m_present_count++;
 
   if ((g_gfx->IsHeadless() && !m_test_framebuffer) || (!m_onscreen_ui && !m_xfb_entry))

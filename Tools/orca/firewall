@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+# Copyright 2026 YouGame
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""The Orca split's include firewall and float rule (S2 commit 8, modules.md section 6), in warn mode.
+
+  Tools/orca/firewall                    scan the working tree, report hits beyond the baseline
+  Tools/orca/firewall --rev B            scan revision B, against B's own baseline
+  Tools/orca/firewall --list             print every hit, not only the new ones
+  Tools/orca/firewall --strict           exit 1 on any new hit (the mode a later step turns on)
+  Tools/orca/firewall --update-baseline  accept today's hits (a person reviews that diff)
+  --json  machine-readable
+
+Rules:
+  include-game  engine code includes a game module's header (Core/Orca/Games/..., or a relative
+                spelling of it). The engine reaches
+                a game only through Orca/Engine/Module.h. Allowed: the composition root
+                (Orca/UX/UX.cpp, which hands the engine the builtin module), the game modules
+                themselves, and unit tests.
+  float         floating point in game-module code (Source/Core/Core/Orca/Games/**) and in the
+                engine's policy machines (Orca/Policy/**, which run in the frame hook and the gate): `float`,
+                `double`, float literals and <cmath> calls. Host float arithmetic can differ between
+                compilers (arm64 fuses multiply-adds that x64 does not), so game logic that writes
+                emulated memory keeps to integers and bit patterns (ORCA.md "Determinism across
+                hosts"). Today's uses (the character select hands as guest floats, PutCursor,
+                PickPlaces, overlay-only layout numbers) are the baseline.
+
+Warn mode: a hit beyond the baseline in a file the baseline already names is a warning (exit 0); any
+hit in a file the baseline doesn't name (a new file, or one that had none) is an error (exit 1), so
+the rules hold for new code from now on. Comments and string literals are ignored.
+"""
+
+import argparse
+import collections
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+BASELINE_IN_REPO = "Tools/orca/firewall.baseline"
+GAMES = "Source/Core/Core/Orca/Games/"
+COMPOSITION_ROOTS = {"Source/Core/Core/Orca/UX/UX.cpp"}
+CODE_EXT = (".h", ".hpp", ".cpp", ".inc", ".ipp", ".mm", ".m", ".c")
+
+
+def _forbidden_calls():
+    path = os.path.join(HERE, "forbidden-calls")
+    loader = importlib.machinery.SourceFileLoader("forbidden_calls", path)
+    spec = importlib.util.spec_from_loader("forbidden_calls", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+fc = _forbidden_calls()
+
+# Core/Orca/Games/..., and the relative spellings that reach the same files (Orca/Games/...,
+# ../Games/..., Games/...).
+INCLUDE_RE = re.compile(r'^\s*#\s*include\s*[<"]((?:Core/Orca/|Orca/|(?:\.\./)+|)Games/[^">]+)[">]',
+                        re.M)
+# Game modules, and the engine's competitive policy machines that run inside the frame hook and the
+# input gate (Orca/Policy/: their results are memory writes and gate masks).
+FLOAT_PATHS = (GAMES, "Source/Core/Core/Orca/Policy/")
+FLOAT_RES = [
+    ("float", re.compile(r"\bfloat\b")),
+    ("double", re.compile(r"\bdouble\b")),
+    ("literal", re.compile(r"(?<![\w.])(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?[fF]?(?![\w.])|"
+                           r"(?<![\w.])\d+[eE][+-]?\d+[fF]?(?![\w.])")),
+    ("cmath", re.compile(r"\b(?:std::)?(?:sqrtf?|sinf?|cosf?|tanf?|atan2f?|floorf?|ceilf?|roundf?|"
+                         r"fabsf?|powf?|hypotf?|fmaf?|fmodf?|lroundf?|expf?|logf?|trunc|isfinite|isnan)\s*\(")),
+]
+
+
+def git(repo, *args):
+    return subprocess.run(["git", "-C", repo, *args], check=True, stdout=subprocess.PIPE,
+                          text=True).stdout
+
+
+def files(repo, rev):
+    if rev:
+        names = git(repo, "ls-tree", "-r", "--name-only", rev).splitlines()
+    else:
+        names = git(repo, "ls-files").splitlines()
+    return [n for n in names if n.startswith("Source/") and n.endswith(CODE_EXT)]
+
+
+def read(repo, rev, path):
+    if rev:
+        return git(repo, "show", "%s:%s" % (rev, path))
+    with open(os.path.join(repo, path), encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def scan(path, text):
+    """Hits in one file: (rule, token, line, text)."""
+    out = []
+    in_games = path.startswith(GAMES)
+    tests = path.startswith("Source/UnitTests/")
+    code = fc.strip_c_comments(text, blank_strings=True)
+    lines = text.splitlines()
+    if not in_games and not tests and path not in COMPOSITION_ROOTS:
+        raw = fc.strip_c_comments(text)  # keep the include's string
+        for m in INCLUDE_RE.finditer(raw):
+            line = raw.count("\n", 0, m.start()) + 1
+            out.append(("include-game", m.group(1), line, lines[line - 1].strip()))
+    if path.startswith(FLOAT_PATHS):
+        for i, line_text in enumerate(code.splitlines(), 1):
+            if line_text.lstrip().startswith("#"):
+                continue
+            for token, regex in FLOAT_RES:
+                for _ in regex.finditer(line_text):
+                    out.append(("float", token, i, lines[i - 1].strip() if i <= len(lines) else ""))
+    return out
+
+
+def load_baseline(text, name="baseline"):
+    counts = collections.Counter()
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) != 4 or not fields[0].isdigit():
+            sys.exit("firewall: %s line %d is not <count>\\t<rule>\\t<path>\\t<token>: %r"
+                     % (name, number, line))
+        n, rule, path, token = fields
+        counts[(rule, path, token)] = int(n)
+    return counts
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--rev")
+    ap.add_argument("--repo")
+    ap.add_argument("--baseline")
+    ap.add_argument("--list", action="store_true")
+    ap.add_argument("--strict", action="store_true")
+    ap.add_argument("--update-baseline", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+    repo = args.repo or git(HERE, "rev-parse", "--show-toplevel").strip()
+    baseline_path = args.baseline or os.path.join(repo, BASELINE_IN_REPO)
+
+    hits = []
+    for path in files(repo, args.rev):
+        for rule, token, line, text in scan(path, read(repo, args.rev, path)):
+            hits.append({"rule": rule, "path": path, "token": token, "line": line, "text": text})
+    counts = collections.Counter((h["rule"], h["path"], h["token"]) for h in hits)
+
+    if args.update_baseline:
+        with open(baseline_path, "w") as f:
+            f.write("# Tools/orca/firewall baseline: the include-game and float hits allowed today.\n"
+                    "# Rewrite with `Tools/orca/firewall --update-baseline`; a person reviews the "
+                    "diff.\n# <count>\\t<rule>\\t<path>\\t<token>\n")
+            for key in sorted(counts):
+                f.write("%d\t%s\t%s\t%s\n" % (counts[key], *key))
+        print("firewall: baseline written (%d keys, %d hits)" % (len(counts), sum(counts.values())))
+        return 0
+
+    # With --rev, the baseline is the one at that revision (unless --baseline names a file).
+    baseline = collections.Counter()
+    if args.rev and not args.baseline:
+        shown = subprocess.run(["git", "-C", repo, "show", "%s:%s" % (args.rev, BASELINE_IN_REPO)],
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        if shown.returncode == 0:
+            baseline = load_baseline(shown.stdout, "%s:%s" % (args.rev, BASELINE_IN_REPO))
+    elif os.path.exists(baseline_path):
+        baseline = load_baseline(open(baseline_path).read(), baseline_path)
+    known_files = {path for (_, path, _) in baseline}
+    new, errors = [], []
+    for key, n in sorted(counts.items()):
+        if n > baseline[key]:
+            entry = {"rule": key[0], "path": key[1], "token": key[2], "count": n,
+                     "baseline": baseline[key],
+                     "lines": [h["line"] for h in hits if (h["rule"], h["path"], h["token"]) == key]}
+            (new if key[1] in known_files else errors).append(entry)
+    if args.json:
+        print(json.dumps({"hits": len(hits), "new": new, "errors": errors,
+                          "all": hits if args.list else []}, indent=1))
+    else:
+        if args.list:
+            for h in hits:
+                print("%s\t%s:%d\t%s\t%s" % (h["rule"], h["path"], h["line"], h["token"], h["text"]))
+        for e in errors:
+            print("ERROR %s %s %s: %d (a file the baseline doesn't name), lines %s"
+                  % (e["rule"], e["path"], e["token"], e["count"], e["lines"]))
+        for e in new:
+            print("warn  %s %s %s: %d > %d, lines %s"
+                  % (e["rule"], e["path"], e["token"], e["count"], e["baseline"], e["lines"]))
+        print("firewall: %d hits, %d over the baseline in known files (warn), %d in new files (error)"
+              % (len(hits), len(new), len(errors)))
+    if errors or (args.strict and new):
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

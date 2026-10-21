@@ -8,9 +8,12 @@
 #include "Core/Config/MainSettings.h"
 #include "Core/Core.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/Status.h"
+#include "Core/Orca/UX/OverlayKey.h"
 #include "Core/Orca/UX/YgOrb.h"
 #include "Core/State.h"
 #include "Core/System.h"
+#include "DolphinNoGUI/EmbedMacTiming.h"
 #include "VideoCommon/EFBInterface.h"
 #include "VideoCommon/Present.h"
 
@@ -23,6 +26,8 @@
 #include <climits>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <string_view>
 #include <thread>
 
 @interface Application : NSApplication
@@ -112,7 +117,7 @@
 // Embed mode: Orca's window floats over the YouGame app's player box but never becomes key. Clicks
 // fall through to the app's window, and pads and keys are read from HID state while the app says
 // the game has focus.
-@interface EmbedWindow : NSWindow
+@interface EmbedWindow : NSPanel
 @end
 
 @implementation EmbedWindow
@@ -143,6 +148,11 @@
 
 namespace
 {
+void OutKey(std::string_view line)
+{
+  Embed::Out(std::string(line));
+}
+
 class PlatformMacOS : public Platform
 {
 public:
@@ -165,7 +175,7 @@ private:
   // Embed mode, every main loop pass: keeps the window on top of the parent as it moves, resizes,
   // hides or changes Space, and decides whether the game gets input. Returns false once the parent
   // window is gone.
-  bool TrackParent();
+  bool TrackParent(bool force = false);
   void ProcessEvents();
   // Tells the video backend whether any of the window is on screen: not when minimized, ordered out
   // or fully covered.
@@ -192,6 +202,15 @@ private:
   bool m_embed_focus = true;        // "focus" / "blur"
   bool m_embed_placed = false;
   bool m_embed_on_screen = false;   // Ordered in, over the parent.
+  bool m_embed_controls_hit = false;
+  bool m_left_down = false;  // From this window's left mouse down/up events.
+  Embed::Mac::QueryTimer m_parent_query{Embed::Mac::PARENT_QUERY_INTERVAL};
+  Embed::Mac::QueryTimer m_above_query{Embed::Mac::ABOVE_QUERY_INTERVAL};
+  bool m_parent_exists = false;
+  bool m_parent_on_screen = false;
+  pid_t m_parent_owner = 0;
+  CGRect m_parent_bounds = CGRectZero;
+  id m_activation_observer = nil;
   // When the parent left the window list. Stop after a grace period: a new window, or one moving
   // between Spaces, can be missing from the list for a moment.
   std::optional<std::chrono::steady_clock::time_point> m_parent_missing_since;
@@ -205,6 +224,8 @@ PlatformMacOS::~PlatformMacOS()
 {
   if (m_occlusion_observer)
     [[NSNotificationCenter defaultCenter] removeObserver:m_occlusion_observer];
+  if (m_activation_observer)
+    [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:m_activation_observer];
   [m_window close];
 }
 
@@ -361,7 +382,8 @@ bool PlatformMacOS::InitEmbedded()
 
   const Embed::Rect& r = m_embed.rect;
   m_window = [[EmbedWindow alloc] initWithContentRect:NSMakeRect(0, 0, r.w, r.h)
-                                            styleMask:NSWindowStyleMaskBorderless
+                                            styleMask:NSWindowStyleMaskBorderless |
+                                                      NSWindowStyleMaskNonactivatingPanel
                                               backing:NSBackingStoreBuffered
                                                 defer:NO];
   if (m_window == nil)
@@ -370,6 +392,8 @@ bool PlatformMacOS::InitEmbedded()
     return Init();
   }
   [m_window setReleasedWhenClosed:NO];
+  // NSPanel must follow the host even when another app is active, like the old borderless window.
+  [(NSPanel*)m_window setHidesOnDeactivate:NO];
   [m_window setOpaque:YES];
   [m_window setBackgroundColor:[NSColor blackColor]];
   [m_window setHasShadow:NO];
@@ -388,9 +412,23 @@ bool PlatformMacOS::InitEmbedded()
 
   m_window_focus = false;
   m_embed_visible = !m_embed.too_small;  // Hidden until a big enough rect (Embed.h).
+  m_activation_observer = [NSWorkspace.sharedWorkspace.notificationCenter
+      addObserverForName:NSWorkspaceDidActivateApplicationNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(NSNotification* notification) {
+                NSRunningApplication* app = notification.userInfo[NSWorkspaceApplicationKey];
+                if (IsEmbedded() && m_parent_owner != 0 &&
+                    app.processIdentifier == m_parent_owner)
+                {
+                  m_above_query.Reset();
+                  TrackParent();
+                }
+              }];
   // A window the app just created may not be in the window list yet.
-  while (TrackParent() && m_parent_missing_since)
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  Embed::Mac::StartupBackoff backoff;
+  while (TrackParent(true) && m_parent_missing_since)
+    std::this_thread::sleep_for(backoff.Next());
   if (!IsEmbedded())
     return true;
   if (!IsRunning())
@@ -414,7 +452,7 @@ std::optional<Embed::WindowBounds> PlatformMacOS::EmbedGetBounds() const
 void PlatformMacOS::EmbedSetRect(const Embed::Rect&)
 {
   if (IsEmbedded())
-    TrackParent();
+    TrackParent(true);
 }
 
 void PlatformMacOS::EmbedSetVisible(bool visible)
@@ -422,7 +460,7 @@ void PlatformMacOS::EmbedSetVisible(bool visible)
   if (!IsEmbedded())
     return;
   m_embed_visible = visible;
-  TrackParent();
+  TrackParent(true);
   UpdateSurfaceVisible();
 }
 
@@ -431,77 +469,86 @@ void PlatformMacOS::EmbedSetFocus(bool focus)
   if (!IsEmbedded())
     return;
   m_embed_focus = focus;
-  TrackParent();
+  TrackParent(true);
 }
 
-bool PlatformMacOS::TrackParent()
+bool PlatformMacOS::TrackParent(bool force)
 {
   @autoreleasepool
   {
     const CGWindowID parent = static_cast<CGWindowID>(m_embed.parent);
-    bool exists = false;
-    bool on_screen = false;
-    bool closed = false;
-    pid_t owner = 0;
-    CGRect bounds = CGRectZero;  // Points, origin at the main display's top left.
-    if (CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow, parent))
+    const auto now = std::chrono::steady_clock::now();
+    if (force)
+      m_above_query.Request();
+    if (force ? m_parent_query.Force(now) : m_parent_query.Due(now))
     {
-      if (CFArrayGetCount(list) > 0)
+      bool exists = false;
+      bool on_screen = false;
+      bool closed = false;
+      pid_t owner = 0;
+      CGRect bounds = CGRectZero;  // Points, origin at the main display's top left.
+      if (CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow, parent))
       {
-        auto* const info = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(list, 0));
-        auto* const number =
-            static_cast<CFNumberRef>(CFDictionaryGetValue(info, kCGWindowNumber));
-        int id = 0;
-        if (number && CFNumberGetValue(number, kCFNumberIntType, &id) &&
-            static_cast<CGWindowID>(id) == parent)
+        if (CFArrayGetCount(list) > 0)
         {
-          exists = true;
-          auto* const onscreen =
-              static_cast<CFBooleanRef>(CFDictionaryGetValue(info, kCGWindowIsOnscreen));
-          on_screen = onscreen && CFBooleanGetValue(onscreen);
-          // A closed window can linger in the list, fully transparent. Treat it as gone.
-          auto* const alpha = static_cast<CFNumberRef>(CFDictionaryGetValue(info, kCGWindowAlpha));
-          double alpha_value = 1;
-          if (alpha && CFNumberGetValue(alpha, kCFNumberDoubleType, &alpha_value) &&
-              alpha_value <= 0)
+          auto* const info = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(list, 0));
+          auto* const number =
+              static_cast<CFNumberRef>(CFDictionaryGetValue(info, kCGWindowNumber));
+          int id = 0;
+          if (number && CFNumberGetValue(number, kCFNumberIntType, &id) &&
+              static_cast<CGWindowID>(id) == parent)
           {
-            exists = false;
-            closed = true;
+            exists = true;
+            auto* const onscreen =
+                static_cast<CFBooleanRef>(CFDictionaryGetValue(info, kCGWindowIsOnscreen));
+            on_screen = onscreen && CFBooleanGetValue(onscreen);
+            // A closed window can linger in the list, fully transparent. Treat it as gone.
+            auto* const alpha = static_cast<CFNumberRef>(CFDictionaryGetValue(info, kCGWindowAlpha));
+            double alpha_value = 1;
+            if (alpha && CFNumberGetValue(alpha, kCFNumberDoubleType, &alpha_value) &&
+                alpha_value <= 0)
+            {
+              exists = false;
+              closed = true;
+            }
+            auto* const pid = static_cast<CFNumberRef>(CFDictionaryGetValue(info, kCGWindowOwnerPID));
+            if (pid)
+              CFNumberGetValue(pid, kCFNumberIntType, &owner);
+            auto* const rect = static_cast<CFDictionaryRef>(CFDictionaryGetValue(info, kCGWindowBounds));
+            if (!rect || !CGRectMakeWithDictionaryRepresentation(rect, &bounds))
+              exists = false;
           }
-          auto* const pid = static_cast<CFNumberRef>(CFDictionaryGetValue(info, kCGWindowOwnerPID));
-          if (pid)
-            CFNumberGetValue(pid, kCFNumberIntType, &owner);
-          auto* const rect = static_cast<CFDictionaryRef>(CFDictionaryGetValue(info, kCGWindowBounds));
-          if (!rect || !CGRectMakeWithDictionaryRepresentation(rect, &bounds))
-            exists = false;
         }
+        CFRelease(list);
       }
-      CFRelease(list);
-    }
-    // On macOS 26 a minimized window is missing from that query but still in the full list.
-    if (!exists && !closed)
-    {
-      if (CFArrayRef all = CGWindowListCreate(kCGWindowListOptionAll, kCGNullWindowID))
+      // On macOS 26 a minimized window is missing from that query but still in the full list.
+      if (!exists && !closed)
       {
-        const CFIndex count = CFArrayGetCount(all);
-        for (CFIndex i = 0; i < count && !exists; ++i)
+        if (CFArrayRef all = CGWindowListCreate(kCGWindowListOptionAll, kCGNullWindowID))
         {
-          exists = static_cast<CGWindowID>(reinterpret_cast<uintptr_t>(
-                       CFArrayGetValueAtIndex(all, i))) == parent;
+          const CFIndex count = CFArrayGetCount(all);
+          for (CFIndex i = 0; i < count && !exists; ++i)
+          {
+            exists = static_cast<CGWindowID>(reinterpret_cast<uintptr_t>(
+                         CFArrayGetValueAtIndex(all, i))) == parent;
+          }
+          CFRelease(all);
         }
-        CFRelease(all);
+        on_screen = false;
       }
-      on_screen = false;
+      m_parent_exists = exists;
+      m_parent_on_screen = on_screen;
+      m_parent_owner = owner;
+      m_parent_bounds = bounds;
     }
 
-    if (!exists)
+    if (!m_parent_exists)
     {
       if (m_embed_on_screen)
         [m_window orderOut:nil];
       m_embed_on_screen = false;
       m_window_focus = false;
       // The app's window is gone without a "quit". Stop rather than run unseen with sound on.
-      const auto now = std::chrono::steady_clock::now();
       if (!m_parent_missing_since)
         m_parent_missing_since = now;
       if (now - *m_parent_missing_since < std::chrono::seconds(2))
@@ -510,6 +557,7 @@ bool PlatformMacOS::TrackParent()
       {
         EmbedFallback("parent-gone");
         // Keep the same render surface even if this happens after a hidden boot.
+        // Replacing the mask also removes NonactivatingPanel for the regular-window fallback.
         [m_window setStyleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                                NSWindowStyleMaskResizable];
         [m_window setIgnoresMouseEvents:NO];
@@ -534,7 +582,9 @@ bool PlatformMacOS::TrackParent()
     }
     m_parent_missing_since.reset();
 
-    const bool show = m_embed_visible && on_screen;
+    // Apply rect commands immediately using cached bounds, even between WindowServer queries.
+    const CGRect bounds = m_parent_bounds;
+    const bool show = m_embed_visible && m_parent_on_screen;
     if (show)
     {
       // The rect is in pixels from the top left of the app window's frame, title bar included.
@@ -570,7 +620,7 @@ bool PlatformMacOS::TrackParent()
       // If the app's window got above ours (the app was brought to the front), move back directly
       // above it. Anything else over the app's window, like its menus, stays over Orca.
       bool below = !m_embed_on_screen || ![m_window isVisible];
-      if (!below)
+      if (!below && m_above_query.Due(now))
       {
         if (CFArrayRef above = CGWindowListCreate(kCGWindowListOptionOnScreenAboveWindow,
                                                   static_cast<CGWindowID>([m_window windowNumber])))
@@ -607,8 +657,8 @@ bool PlatformMacOS::TrackParent()
 
     // Input counts only while the app is in front, shows the game and gave it focus.
     const bool app_in_front =
-        owner != 0 &&
-        NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == owner;
+        m_parent_owner != 0 &&
+        NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == m_parent_owner;
     m_window_focus = show && m_embed_focus && app_in_front;
   }
   return true;
@@ -630,19 +680,27 @@ void PlatformMacOS::ProcessEvents()
 {
   @autoreleasepool
   {
-    // Intercept only our host buttons; the rest of an embedded view keeps passing through.
-    if (IsEmbedded())
+    // Track each native control separately. The union below only controls event passthrough.
+    // The press state comes from this window's own mouse events (m_left_down), not
+    // +[NSEvent pressedMouseButtons]: that asks WindowServer on every pass (0.3.56's budget).
+    if (IsEmbedded() || Orca::UX::YgOrb::HostEnabled())
     {
       NSView* view = [m_window contentView];
       const NSPoint point = [view convertPoint:[m_window mouseLocationOutsideOfEventStream]
                                       fromView:nil];
       const NSPoint pixel = [view convertPointToBacking:point];
       const NSRect bounds = [view convertRectToBacking:[view bounds]];
+      Orca::UX::YgOrb::UpdateControlsPointer(pixel.x, bounds.size.height - pixel.y, m_left_down);
       const bool hit = Orca::UX::YgOrb::HitControls(pixel.x, bounds.size.height - pixel.y);
-      [m_window setIgnoresMouseEvents:!hit];
+      if (IsEmbedded() && hit != m_embed_controls_hit)
+      {
+        m_embed_controls_hit = hit;
+        [m_window setIgnoresMouseEvents:!hit];
+      }
     }
-    // When embedded, poll at 120 Hz so the window follows the app's window smoothly.
-    NSDate* expiration = [NSDate dateWithTimeIntervalSinceNow:IsEmbedded() ? 1.0 / 120 : 1];
+    // The game renders on its own thread; this loop only follows the host window.
+    NSDate* expiration = [NSDate
+        dateWithTimeIntervalSinceNow:IsEmbedded() || Orca::UX::YgOrb::HostEnabled() ? 1.0 / 60 : 1];
     NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
                                         untilDate:expiration
                                            inMode:NSDefaultRunLoopMode
@@ -652,13 +710,18 @@ void PlatformMacOS::ProcessEvents()
     if (event && [event window] == m_window)
     {
       namespace Orb = Orca::UX::YgOrb;
-      if ([event type] == NSEventTypeLeftMouseDown)
+      if ([event type] == NSEventTypeLeftMouseDown || [event type] == NSEventTypeLeftMouseUp)
       {
         NSView* view = [m_window contentView];
         const NSPoint point = [view convertPoint:[event locationInWindow] fromView:nil];
         const NSPoint pixel = [view convertPointToBacking:point];
         const NSRect bounds = [view convertRectToBacking:[view bounds]];
-        handled = Orb::ClickControls(pixel.x, bounds.size.height - pixel.y);
+        const bool down = [event type] == NSEventTypeLeftMouseDown;
+        m_left_down = down;
+        Orb::UpdateControlsPointer(pixel.x, bounds.size.height - pixel.y, down);
+        handled = down ? Orb::ClickControls(pixel.x, bounds.size.height - pixel.y,
+                                            IsEmbedded() ? OutKey : nullptr) :
+                         Orb::HitControls(pixel.x, bounds.size.height - pixel.y);
       }
       // The embedded app owns keyboard focus and relays feedback / host-menu on stdin.
       else if (!IsEmbedded() && [event type] == NSEventTypeKeyDown && ![event isARepeat])
@@ -666,23 +729,32 @@ void PlatformMacOS::ProcessEvents()
         switch ([event keyCode])
         {
         case kVK_F8: handled = Orb::HandleHostKey(Orb::HostKey::Feedback); break;
-        case kVK_UpArrow:
-        case kVK_LeftArrow: handled = Orb::HandleHostKey(Orb::HostKey::Previous); break;
-        case kVK_DownArrow:
-        case kVK_RightArrow: handled = Orb::HandleHostKey(Orb::HostKey::Next); break;
-        case kVK_Return: handled = Orb::HandleHostKey(Orb::HostKey::Select); break;
-        case kVK_Escape: handled = Orb::HandleHostKey(Orb::HostKey::Close); break;
         case kVK_Tab:
-          if ([event modifierFlags] & NSEventModifierFlagShift)
-            handled = Orb::HandleHostKey(Orb::HostKey::Menu);
+          if (Orb::HostEnabled() && ([event modifierFlags] & NSEventModifierFlagShift) &&
+              !([event modifierFlags] & (NSEventModifierFlagControl | NSEventModifierFlagOption |
+                                         NSEventModifierFlagCommand)))
+          {
+            Orca::UX::OverlayKey::Emit(
+                Orca::UX::OverlayKey::Keys().Down(Orca::Status::Cap(Orca::Status::TALK_CAP)));
+            handled = true;
+          }
           break;
         }
+      }
+      else if (!IsEmbedded() &&
+               (([event type] == NSEventTypeKeyUp && [event keyCode] == kVK_Tab) ||
+                ([event type] == NSEventTypeFlagsChanged &&
+                 !([event modifierFlags] & NSEventModifierFlagShift))))
+      {
+        Orca::UX::OverlayKey::Emit(Orca::UX::OverlayKey::Keys().Up());
       }
     }
     if (event && !handled)
       [NSApp sendEvent:event];
     if (IsEmbedded())
       return;
+    if (![m_window isKeyWindow] || ![NSApp isActive])
+      Orca::UX::OverlayKey::Emit(Orca::UX::OverlayKey::Keys().Cancel());
 
     // Need to update if m_window becomes fullscreen
     m_window_fullscreen = [m_window styleMask] & NSWindowStyleMaskFullScreen;

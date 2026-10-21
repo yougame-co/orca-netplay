@@ -9,6 +9,7 @@
 
 #include <picojson.h>
 
+#include "Core/Orca/SafeJson.h"
 #include "InputCommon/GCAdapter.h"
 
 namespace Orca::UX
@@ -302,7 +303,7 @@ std::optional<Snapshot> ParseSnapshotEvent(std::string_view json)
   if (!SafeToParse(json))
     return std::nullopt;
   picojson::value root;
-  if (!picojson::parse(root, std::string(json)).empty())
+  if (!Json::ParseJson(std::string(json), &root, Json::NumberPolicy::Finite))
     return std::nullopt;
   return ParseSnapshotEvent(root);
 }

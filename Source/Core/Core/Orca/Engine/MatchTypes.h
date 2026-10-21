@@ -74,10 +74,12 @@ struct GameResult
   std::array<int, 2> characters{-1, -1};
   std::array<int, 2> stocks{-1, -1};
   bool timeout = false;
-  // Ranked set games only (from the match block): the fight's first frame (the report id, same on
-  // both machines), game number, how it was decided (SetBlock::How), tiebreak, each port's ledge
-  // grabs, and for the deciding game the set's end (1 won by `set_winner`, 2 void).
+  // The fight's first frame (the report id, same on both machines), including scene-judged games.
   int start = -1;
+  // Only the ranked SetBlock controls the set's end; a scene game ends through the room's tally.
+  bool from_set_block = false;
+  // Ranked set games only (from the match block): game number, how it was decided (SetBlock::How),
+  // tiebreak, each port's ledge grabs, and the deciding game's set end (1 won by `set_winner`, 2 void).
   int number = 0;
   int how = 0;
   bool tiebreak = false;

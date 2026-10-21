@@ -32,6 +32,7 @@
 #include "Common/Logging/Log.h"
 #include "Common/Network.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/SafeJson.h"
 
 namespace Orca::Net
 {
@@ -723,7 +724,7 @@ bool ReplayStreamReader::Parse(std::string* error)
       picojson::value value;
       const std::string json(m_pending.begin() + STREAM_PREAMBLE,
                              m_pending.begin() + STREAM_PREAMBLE + size);
-      if (!picojson::parse(value, json).empty() || !value.is<picojson::object>())
+      if (!Json::ParseJson(json, &value) || !value.is<picojson::object>())
         return fail(m_info ? "the match's stream moved to another history" :
                              "the replay's header isn't valid");
       const picojson::object& o = value.get<picojson::object>();
@@ -1420,7 +1421,7 @@ private:
       // YouGame's refusals are {"error": "...", "code": "..."}.
       picojson::value json;
       const std::string text(error_body.begin(), error_body.end());
-      if (picojson::parse(json, text).empty() && json.is<picojson::object>())
+      if (Json::ParseJson(text, &json) && json.is<picojson::object>())
       {
         const auto& o = json.get<picojson::object>();
         if (const auto it = o.find("error"); it != o.end() && it->second.is<std::string>())

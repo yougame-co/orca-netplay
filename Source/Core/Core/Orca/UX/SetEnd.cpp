@@ -186,6 +186,7 @@ void Model::ResetLocked()
   m_ranked_live = false;
   m_casual_live = false;
   m_game_began = false;
+  m_room_hold.reset();
   m_left_at.reset();
   m_stall_at.reset();
   m_dropped = false;
@@ -264,12 +265,14 @@ void Model::SetVerdict(Outcome out, bool forfeit, int mine, int theirs, int befo
 {
   std::lock_guard lk(m_lock);
   const bool was_gone = m_left_at || m_stall_at;
+  m_room_hold.reset();
   m_ranked_live = false;
   m_left_at.reset();
   m_stall_at.reset();
   m_dropped = false;
-  NOTICE_LOG_FMT(ROLLBACK, "Set end: the room's verdict: {}{} {}–{}{}{}", OutcomeName(out),
-                 forfeit ? " by forfeit" : "", mine, theirs,
+  NOTICE_LOG_FMT(ROLLBACK, "Set end: the room's verdict: {}{} {}{}{}", OutcomeName(out),
+                 forfeit ? " by forfeit" : "",
+                 mine < 0 || theirs < 0 ? "score pending" : fmt::format("{}–{}", mine, theirs),
                  after >= 0 ? fmt::format(", rating {} -> {}", before, after) : std::string(),
                  was_gone ? " (the opponent was gone)" : "");
   if (out == Outcome::Void || out == Outcome::Draw)
@@ -296,7 +299,7 @@ void Model::SetVerdict(Outcome out, bool forfeit, int mine, int theirs, int befo
   {
     // The match block already opened the panel. The room's score and outcome take precedence.
     m_out = out;
-    if (mine + theirs > 0)
+    if (mine < 0 || theirs < 0 || m_mine < 0 || m_theirs < 0 || mine + theirs > 0)
     {
       m_mine = mine;
       m_theirs = theirs;
@@ -313,6 +316,7 @@ void Model::CasualGame(Outcome out, int mine, int theirs, double now)
 {
   std::lock_guard lk(m_lock);
   m_casual_live = false;
+  m_room_hold.reset();
   if (out == Outcome::Void)
   {
     m_note_title = "No contest";
@@ -379,7 +383,7 @@ void Model::OpponentBack(double now)
 void Model::Stall(int stalled_ms, double now)
 {
   std::lock_guard lk(m_lock);
-  if (!m_ranked_live || m_dropped || m_stall_at || stalled_ms < STALL_NOTICE_MS)
+  if (m_room_hold || !m_ranked_live || m_dropped || m_stall_at || stalled_ms < STALL_NOTICE_MS)
     return;
   m_stall_at = now - stalled_ms;
   NOTICE_LOG_FMT(
@@ -397,6 +401,19 @@ void Model::StallOver(bool resumed, double now)
     return;
   m_stall_at.reset();
   NOTICE_LOG_FMT(ROLLBACK, "Set end: {}'s inputs came again", Name());
+}
+
+void Model::RoomHold(std::optional<double> deadline_ms)
+{
+  std::lock_guard lk(m_lock);
+  m_room_hold = deadline_ms;
+  if (deadline_ms)
+  {
+    // A room hold must never promise a forfeit. Only SetVerdict chooses the outcome.
+    m_left_at.reset();
+    m_stall_at.reset();
+    m_dropped = false;
+  }
 }
 
 void Model::OpponentDropped(double now)
@@ -451,6 +468,7 @@ void Model::NoVerdict(double now)
   std::lock_guard lk(m_lock);
   (void)now;
   const bool was_gone = m_left_at || m_stall_at;
+  m_room_hold.reset();
   m_ranked_live = false;
   m_left_at.reset();
   m_stall_at.reset();
@@ -518,6 +536,18 @@ bool Model::InSetOver() const
 
 std::optional<Notice> Model::NoticeAt(double now, bool* hides_waiting) const
 {
+  if (m_room_hold)
+  {
+    Notice n;
+    n.title = "Reconnecting…";
+    n.seconds = SecondsLeft(*m_room_hold, now);
+    char clock[16];
+    n.line = Widgets::ClockText(n.seconds, clock);
+    n.fraction = static_cast<float>(std::clamp((*m_room_hold - now) / 90000.0, 0.0, 1.0));
+    n.tone = Widgets::Tone::Warning;
+    *hides_waiting = true;
+    return n;
+  }
   if (m_forfeited_at && now < *m_forfeited_at + FORFEITED_MS)
   {
     Notice n;
@@ -593,7 +623,8 @@ std::optional<Panel> Model::PanelAt(double now) const
     p.title = m_out == Outcome::Won ? "VICTORY" : "DEFEAT";
   else
     p.title = m_out == Outcome::Won ? "YOU WON" : m_out == Outcome::Lost ? "YOU LOST" : "DRAW";
-  p.score = fmt::format("{}–{}", m_mine, m_theirs);
+  p.score = m_mine < 0 || m_theirs < 0 ? "Score pending" :
+                                       fmt::format("{}–{}", m_mine, m_theirs);
   const std::string vs = m_opponent.empty() ? std::string() : "vs " + m_opponent;
   p.detail = m_by_forfeit ? (vs.empty() ? std::string("by forfeit") : vs + " · by forfeit") : vs;
   if (m_panel_ranked)

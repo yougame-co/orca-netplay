@@ -2799,6 +2799,80 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.65
+
+- Faster start: the game boots at full speed until its first frame, and a warm start no longer
+  waits for the full check of Project+'s files (the check still runs in the background and must
+  pass before anything goes online). A warm Project+ start reaches its first frame several
+  seconds sooner.
+
+### 0.3.64
+
+- Clicking the YouGame logo inside a game (full screen or theater) opens the same menu as
+  Shift+Tab. YG Dolphin's own small dropdown is gone; the Δ feedback button stays.
+- While you search for an opponent on your own, the screen says "Waiting for another player…"
+  with how long you have waited.
+- Windows graphics-crash diagnostics no longer read the Windows graphics timeout settings (as in
+  production's 0.3.63).
+
+### 0.3.62
+
+- Windows: when the graphics driver stops responding, YG Dolphin's log now records memory use,
+  the graphics card's video memory budget, the driver version and the render settings, so these
+  crashes can be traced. Nothing changes in play.
+
+### 0.3.61
+
+- Ranked sets on results-only packs (Brawl Minus, Project M 3.6) end as soon as a player wins two
+  games, with the result and rating shown right away (0.3.59 only settled them when the players
+  left).
+- Offline local packs (`--pack`): a refused pack ends the program with an error instead of waiting,
+  and the terminal shows only the pack folder's name.
+
+### 0.3.59
+
+- When your friend gets back to a friends room before you do, YG Dolphin joins their game instead
+  of reporting a network error.
+- After a dropped connection, rejoining a game that just finished shows its result like any other
+  finish, instead of a network error.
+- Trying to join a friend who already left that game says so ("Your friend left that game. Ask
+  them for a new invite.") and stops retrying.
+- Ranked sets on results-only packs (Brawl Minus, Project M 3.6): leaving during the first game
+  now counts as a loss, as it does on Project+.
+- Offline play without YouGame: `--pack <folder>` plays your own unsigned pack offline only
+  (docs/PLAY-STANDALONE.md).
+
+### 0.3.58
+
+- The feedback button inside a game is the same red triangle as everywhere else on YouGame, and it
+  and the YouGame button no longer react to each other.
+- After a lost match, YG Dolphin opens a fresh room of its own and says the match ended, instead of
+  retrying the old room and blaming a version or disc mismatch.
+
+### 0.3.57
+
+- A tournament opponent can now join the host's game at character select: in rooms the page opens
+  with `host` outside the matchmaking queue, the host sends its game state to the arriving player.
+
+### 0.3.56
+
+- Returning to a public match after the reconnect time runs out now says why you couldn't rejoin.
+- On a Mac, YG Dolphin inside the YouGame app is much lighter on macOS's window system and never takes
+  keyboard focus from the app. This follows a Mac that froze when a game started in full screen.
+
+### 0.3.55
+
+- Public casual and ranked matches can ride through a dropped connection: when the server supports
+  it, YG Dolphin keeps the match, shows "Reconnecting…" with a countdown, and rejoins by itself.
+  If a player doesn't come back in time, today's rules decide the result.
+- Fixes the game window sometimes not starting on Windows 10 with the YouGame app.
+
+### 0.3.54
+
+- Groundwork for public casual and ranked matches to ride through a dropped connection, the way
+  friends rooms already do. It switches on later, from the server side.
+- Safer handling of saved and live match replays.
+
 ### 0.3.53
 
 - If your PC runs out of memory while a game starts, YG Dolphin now says so plainly instead of closing.

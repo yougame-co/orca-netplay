@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <string>
 #include <utility>
 
@@ -21,7 +22,12 @@ enum class State
   Searching,
   Found,
 };
-void Begin(bool ranked);
+void Begin(bool ranked, std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+// Host-only wait hint. QueueApp also starts/stops it when solo readiness changes; repeated ready
+// frames must not restart it. A match or the end of a search clears it.
+void SetWaiting(bool waiting,
+                std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+std::string WaitingLine(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
 // The app matched this game: Found when hosting, None when joining. A joiner that was searching
 // shows "Opponent found · joining <host>…" (Joining) until JoinOver, so its own select's search
 // lines don't stay up while the host's game comes over.

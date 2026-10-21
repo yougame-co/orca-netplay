@@ -609,7 +609,8 @@ void Platform::ProcessEmbedCommands()
     }
     else if (cmd == "host-menu")
     {
-      Orca::UX::YgOrb::ToggleHostMenu();
+      Orca::UX::YgOrb::ToggleHostMenu(
+          IsEmbedded() ? +[](std::string_view line) { Embed::Out(std::string(line)); } : nullptr);
     }
     else if (cmd == "orb")
     {

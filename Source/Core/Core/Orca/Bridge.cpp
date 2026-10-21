@@ -11,6 +11,7 @@
 
 #include "Common/Logging/Log.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/SafeJson.h"
 #include "Core/Orca/UX/Controllers.h"
 
 namespace Orca::Bridge
@@ -203,7 +204,8 @@ Inbound Parse(std::string_view line)
   if (line.size() > MAX_INBOUND || !Orca::UX::SafeJson(line))
     return in;
   picojson::value root;
-  if (!picojson::parse(root, std::string(line)).empty() || !root.is<picojson::object>())
+  if (!Json::ParseJson(std::string(line), &root, Json::NumberPolicy::Finite) ||
+      !root.is<picojson::object>())
     return in;
   const picojson::object& o = root.get<picojson::object>();
   if (const auto re = o.find("re"); re != o.end())

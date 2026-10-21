@@ -157,6 +157,7 @@ public:
   // panel opens once; `rating_before` is this player's rating going in (-1: none).
   void BlockSetOver(u32 key, bool won, int mine, int theirs, int rating_before, double now);
   // The room's verdict on a ranked set, with the ratings it carries (-1: none).
+  // Negative game counts show "Score pending" until all game receipts reconcile.
   void SetVerdict(Outcome out, bool forfeit, int mine, int theirs, int before, int after,
                   int rating_before, double now);
   // A casual game's verdict and the score against this opponent so far.
@@ -176,6 +177,8 @@ public:
   void Stall(int stalled_ms, double now);
   // The wait is over: `resumed` if their inputs came, else the session gave up or stopped.
   void StallOver(bool resumed, double now);
+  // Opted-in public rooms: a transport hold, never a forfeit countdown. Null clears it.
+  void RoomHold(std::optional<double> deadline_ms);
   // The session gave up and unplugged the opponent. The countdown stays until the verdict.
   void OpponentDropped(double now);
   // Casual: the opponent left and the app searches again.
@@ -215,6 +218,7 @@ private:
   bool m_casual_live = false;
   // The ranked set reached its first game (GameBegan): a leave from here on is a forfeit.
   bool m_game_began = false;
+  std::optional<double> m_room_hold;
 
   // The opponent gone mid-set: since when, and why.
   std::optional<double> m_left_at;   // the room's leave

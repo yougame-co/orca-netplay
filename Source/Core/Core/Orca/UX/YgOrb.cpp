@@ -240,6 +240,8 @@ void Model::Apply(const Command& command, double now_ms)
     // The lines hide with the button.
     m_on = false;
     m_blink_at = -1;
+    m_hovered = m_pressed = -1;
+    m_pointer_down = false;
     if (!m_lines.empty())
     {
       m_lines.clear();
@@ -294,6 +296,8 @@ Model::View Model::At(double now_ms) const
   View v;
   v.on = m_on;
   v.place = m_place;
+  v.orb = {m_hovered == 0, m_hovered == 0 && m_pressed == 0};
+  v.feedback = {m_hovered == 1, m_hovered == 1 && m_pressed == 1};
   if (m_on && m_blink_at >= 0)
   {
     const double age = now_ms - m_blink_at;
@@ -349,6 +353,17 @@ bool Model::Hit(float x, float y) const
   return dx * dx + dy * dy <= r * r;
 }
 
+void Model::SetPointer(int control, bool down)
+{
+  std::lock_guard lock(m_lock);
+  m_hovered = control;
+  if (down && !m_pointer_down)
+    m_pressed = control;
+  else if (!down)
+    m_pressed = -1;
+  m_pointer_down = down;
+}
+
 Model& Current()
 {
   static Model s_model;
@@ -381,107 +396,8 @@ void SetViewSize(int width, int height)
 {
   Current().SetView(width, height);
 }
-std::string_view HostLabel(HostAction action)
-{
-  switch (action)
-  {
-  case HostAction::Feedback:
-    return "Δ Feedback (F8)";
-  case HostAction::VolumeUp:
-    return "Volume up";
-  case HostAction::VolumeDown:
-    return "Volume down";
-  case HostAction::Mute:
-    return "Mute";
-  case HostAction::ExitFullscreen:
-    return "Exit fullscreen";
-  case HostAction::Leave:
-    return "Leave";
-  case HostAction::Controls:
-    return "Controls";
-  }
-  return {};
-}
 
-std::string_view HostLine(HostAction action)
-{
-  switch (action)
-  {
-  case HostAction::Feedback:
-    return {};
-  case HostAction::VolumeUp:
-    return "orca host volume-up";
-  case HostAction::VolumeDown:
-    return "orca host volume-down";
-  case HostAction::Mute:
-    return "orca host mute";
-  case HostAction::ExitFullscreen:
-    return "orca host exit-fullscreen";
-  case HostAction::Leave:
-    return "orca host leave";
-  case HostAction::Controls:
-    return "orca orb";
-  }
-  return {};
-}
-
-void HostMenu::Toggle()
-{
-  std::lock_guard lock(m_lock);
-  m_view = {!m_view.open, 0};
-}
-
-void HostMenu::Close()
-{
-  std::lock_guard lock(m_lock);
-  m_view.open = false;
-}
-
-HostMenu::View HostMenu::At() const
-{
-  std::lock_guard lock(m_lock);
-  return m_view;
-}
-
-std::optional<HostAction> HostMenu::Move(int direction, bool select)
-{
-  std::lock_guard lock(m_lock);
-  if (!m_view.open)
-    return std::nullopt;
-  m_view.selected = (m_view.selected + direction + HOST_ROWS) % HOST_ROWS;
-  if (!select)
-    return std::nullopt;
-  m_view.open = false;
-  return static_cast<HostAction>(m_view.selected);
-}
-
-std::optional<HostAction> HostMenu::Pad(u16 buttons, bool toggle)
-{
-  std::lock_guard lock(m_lock);
-  const u16 pressed = buttons & ~m_buttons;
-  m_buttons = buttons;
-  if (toggle)
-  {
-    m_view = {!m_view.open, 0};
-    return std::nullopt;
-  }
-  if (!m_view.open)
-    return std::nullopt;
-  if (pressed & 0x0200)  // B
-    m_view.open = false;
-  else if (pressed & (0x0008 | 0x0001))  // Up / Left
-    m_view.selected = (m_view.selected + HOST_ROWS - 1) % HOST_ROWS;
-  else if (pressed & (0x0004 | 0x0002))  // Down / Right
-    m_view.selected = (m_view.selected + 1) % HOST_ROWS;
-  else if (pressed & 0x0100)  // A
-  {
-    m_view.open = false;
-    return static_cast<HostAction>(m_view.selected);
-  }
-  return std::nullopt;
-}
-
-bool HostMenu::FeedbackDue(double now_ms)
+bool FeedbackCooldown::FeedbackDue(double now_ms)
 {
   std::lock_guard lock(m_lock);
   if (m_feedback_pending || now_ms - m_feedback_at < 5000)
@@ -490,22 +406,11 @@ bool HostMenu::FeedbackDue(double now_ms)
   return true;
 }
 
-void HostMenu::FeedbackFinished(double now_ms)
+void FeedbackCooldown::FeedbackFinished(double now_ms)
 {
   std::lock_guard lock(m_lock);
   m_feedback_pending = false;
   m_feedback_at = now_ms;
-}
-
-bool HostMenu::HostDue(double now_ms)
-{
-  std::lock_guard lock(m_lock);
-  while (!m_host_actions.empty() && now_ms - m_host_actions.front() >= 1000)
-    m_host_actions.pop_front();
-  if (m_host_actions.size() >= 10)
-    return false;
-  m_host_actions.push_back(now_ms);
-  return true;
 }
 
 bool HostEnabled()
@@ -514,100 +419,86 @@ bool HostEnabled()
          Bridge::Ready();
 }
 
-HostMenu& Menu()
+FeedbackCooldown& FeedbackRequests()
 {
-  static HostMenu menu;
-  return menu;
+  static FeedbackCooldown feedback;
+  return feedback;
 }
 
 Model::View HostView(double now_ms)
 {
   Model::View view = Current().At(now_ms);
-  if (HostEnabled() && !view.on)
+  if (HostEnabled())
   {
-    view.on = true;
-    view.place = {16, 16, 40, true, false, 0};
+    if (!view.on)
+    {
+      view.on = true;
+      view.place = {16, 16, 40, false, false, 0};
+    }
+    // The page's lit bit includes DOM hover, which can be stale while the native window
+    // intercepts either control. Hostui owns pointer feedback; notices and pulses still light
+    // the orb independently of the feedback button.
+    view.place.lit =
+        view.orb.hovered || view.orb.pressed || view.ring >= 0 || view.showing;
   }
   return view;
 }
 
-namespace
-{
 // Input hit boxes use view pixels; drawing applies the same Retina scale as the orb.
-int ControlAt(float x, float y)
+int ControlAt(const Place& p, float x, float y)
 {
-  const Place p = HostView(NowMs()).place;
   if (p.size <= 0)
     return -1;
   const float k = p.size / 40;
-  if (x >= p.x + 48 * k && x < p.x + 88 * k && y >= p.y && y < p.y + p.size)
+  const float fx = x - (p.x + 68 * k), fy = y - (p.y + p.size / 2);
+  if (fx * fx + fy * fy <= p.size * p.size / 4)
     return 1;  // feedback
-  const HostMenu::View menu = Menu().At();
-  const float top = p.y + 48 * k;
-  if (menu.open && x >= p.x && x < p.x + 240 * k && y >= top &&
-      y < top + HOST_ROWS * 32 * k)
-    return 2 + static_cast<int>((y - top) / (32 * k));
   const float dx = x - p.x - p.size / 2, dy = y - p.y - p.size / 2;
   return dx * dx + dy * dy <= p.size * p.size / 4 ? 0 : -1;
 }
-}  // namespace
+
+void UpdateControlsPointer(float x, float y, bool down)
+{
+  if (!HostEnabled())
+  {
+    Current().SetPointer(-1, false);
+    return;
+  }
+  Current().SetPointer(ControlAt(HostView(NowMs()).place, x, y), down);
+}
 
 bool HitControls(float x, float y)
 {
-  return HostEnabled() && ControlAt(x, y) >= 0;
+  return HostEnabled() && ControlAt(HostView(NowMs()).place, x, y) >= 0;
 }
 
-bool ClickControls(float x, float y)
+bool ClickControls(float x, float y, OverlayKey::Output output)
 {
   if (!HostEnabled())
     return false;
-  const int hit = ControlAt(x, y);
+  const int hit = ControlAt(HostView(NowMs()).place, x, y);
   if (hit == 0)
-    Menu().Toggle();
+    OverlayKey::Tap(output);
   else if (hit == 1)
     ActivateHost(HostAction::Feedback);
-  else if (hit >= 2)
-  {
-    Menu().Close();
-    ActivateHost(static_cast<HostAction>(hit - 2));
-  }
-  else
-    Menu().Close();
   return hit >= 0;
 }
 
-void ToggleHostMenu()
+void ToggleHostMenu(OverlayKey::Output output)
 {
   if (HostEnabled())
-    Menu().Toggle();
+    OverlayKey::Tap(output);
 }
 
-bool HandleHostKey(HostKey key)
+bool HandleHostKey(HostKey key, OverlayKey::Output output)
 {
   if (!HostEnabled())
     return false;
   if (key == HostKey::Feedback)
     ActivateHost(HostAction::Feedback);
   else if (key == HostKey::Menu)
-    Menu().Toggle();
-  else if (!Menu().At().open)
-    return false;
-  else if (key == HostKey::Close)
-    Menu().Close();
-  else if (const auto action = Menu().Move(key == HostKey::Previous ? -1 :
-                                          key == HostKey::Next ? 1 : 0,
-                                          key == HostKey::Select))
-    ActivateHost(*action);
+    OverlayKey::Tap(output);
   return true;
-}
-
-void NavigateHostPad(u16 buttons, bool toggle)
-{
-  if (HostEnabled())
-  {
-    if (const auto action = Menu().Pad(buttons, toggle))
-      ActivateHost(*action);
-  }
 }
 
 std::optional<std::string> PublishFeedback(const std::string& directory, std::string_view name,
@@ -637,13 +528,7 @@ void ActivateHost(HostAction action)
       WARN_LOG_FMT(VIDEO, "Feedback request rejected: host controls unavailable");
     return;
   }
-  if (action != HostAction::Feedback)
-  {
-    if (Menu().HostDue(NowMs()))
-      Status::Line(HostLine(action));
-    return;
-  }
-  if (!Menu().FeedbackDue(NowMs()))
+  if (!FeedbackRequests().FeedbackDue(NowMs()))
     return;
   const std::string name = "feedback-" + std::to_string(static_cast<u64>(NowMs() * 1000)) + ".png";
   const std::string directory = File::GetUserPath(D_USER_IDX);
@@ -661,10 +546,10 @@ void ActivateHost(HostAction action)
         {
           WARN_LOG_FMT(VIDEO, "Feedback capture unavailable");
         }
-        Menu().FeedbackFinished(NowMs());
+        FeedbackRequests().FeedbackFinished(NowMs());
       });
   if (!queued)
-    Menu().FeedbackFinished(NowMs());
+    FeedbackRequests().FeedbackFinished(NowMs());
 }
 
 }  // namespace Orca::UX::YgOrb

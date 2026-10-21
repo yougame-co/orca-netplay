@@ -13,16 +13,24 @@
 #include "Core/Orca/BootMemory.h"
 #include "Core/Orca/Status.h"
 
+namespace
+{
+void EnableOrcaSession()
+{
+#ifdef _WIN32
+  _putenv_s("ORCA_SESSION", "1");
+#else
+  setenv("ORCA_SESSION", "1", 1);
+#endif
+}
+}  // namespace
+
 TEST(OrcaBootMemoryDeathTest, ThrowingBootStepReportsLowMemoryAndEnds)
 {
   // Isolate the process-wide first-frame/error state, just like a fresh NoGUI boot.
   ASSERT_EXIT(
       {
-#ifdef _WIN32
-        _putenv_s("ORCA_SESSION", "1");
-#else
-        setenv("ORCA_SESSION", "1", 1);
-#endif
+        EnableOrcaSession();
         std::FILE* const out = std::tmpfile();
         if (!out)
           std::_Exit(2);

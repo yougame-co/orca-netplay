@@ -107,6 +107,11 @@ std::optional<FlatBundle> LoadFlatBundle(const std::string& dir, std::span<const
                                          std::string* error, const BootLauncher* boot = nullptr,
                                          std::string_view listing = {});
 
+// Explicit standalone mode: unsigned packs only, with all online play disabled. Set before boot;
+// an empty folder clears the selection. Relative folders are relative to the working directory.
+void SetLocalPack(std::string folder);
+bool LocalPackRequested();
+
 // Where a session looks for a flat bundle: ORCA_MOD_DIR when set; else a launcher boot's own
 // folder (where Project+'s sd.raw already lies); else, for a disc boot of a YouGame listing, the
 // app's run folder beside the user folder: <-u user>/../run/<YOUGAME_GAME>/ (YouGame desktop

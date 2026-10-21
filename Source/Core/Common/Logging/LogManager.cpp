@@ -235,6 +235,17 @@ void LogManager::LogWithFullPath(LogLevel level, LogType type, const char* file,
   }
 }
 
+void LogManager::LogToFile(LogLevel level, LogType type, const char* message)
+{
+  if (!IsEnabled(type, level) || !IsListenerEnabled(LogListener::FILE_LISTENER) ||
+      !m_listeners[LogListener::FILE_LISTENER])
+    return;
+  const std::string msg = fmt::format("{} {}[{}]: {}\n", GetTimestamp(),
+                                    LOG_LEVEL_TO_CHAR[static_cast<int>(level)],
+                                    GetShortName(type), message);
+  m_listeners[LogListener::FILE_LISTENER]->Log(level, msg.c_str());
+}
+
 LogLevel LogManager::GetEffectiveLogLevel() const
 {
   return m_effective_level.load(std::memory_order_relaxed);

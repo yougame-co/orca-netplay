@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -22,16 +23,23 @@
 #include <sys/stat.h>
 #endif
 
+#include <SFML/Network/TcpListener.hpp>
+#include <SFML/Network/TcpSocket.hpp>
 #include <gtest/gtest.h>
+#include <picojson.h>
 #include <zstd.h>
 
+#include "Common/Crypto/SHA1.h"
 #include "Common/FileUtil.h"
 #include "Common/IOFile.h"
 #include "Common/ScopeGuard.h"
 #include "Common/StringUtil.h"
 #include "Core/Orca/Mod.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/SafeJson.h"
 #include "Core/Orca/Session/Keyframe.h"
+#include "Core/Orca/Session/Online.h"
+#include "Core/Orca/Session/YouGameRoom.h"
 #include "Core/Rollback/ReplayStream.h"
 #include "Core/System.h"
 
@@ -857,6 +865,237 @@ std::vector<u8> Stream(const ReplayArchive& replay, size_t per_chunk)
   return out;
 }
 }  // namespace
+
+namespace
+{
+std::vector<u8> StreamHeaderJson(std::string_view json)
+{
+  auto bytes = PackReplayStreamHeader(StreamInfo());
+  bytes.resize(12);
+  U32(bytes, 8, static_cast<u32>(json.size()));
+  bytes.insert(bytes.end(), json.begin(), json.end());
+  return bytes;
+}
+
+std::string HeaderWithSegment(std::string_view segment, const std::string& compat = "orca2:test")
+{
+  auto info = StreamInfo();
+  info.compat = compat;
+  const auto bytes = PackReplayStreamHeader(info);
+  std::string json(bytes.begin() + 12, bytes.end());
+  const auto at = json.find("\"segment\":2");
+  EXPECT_NE(at, std::string::npos);
+  json.replace(at + 10, 1, segment);
+  return json;
+}
+
+void ExpectHeaderRefused(std::string_view json)
+{
+  const auto bytes = StreamHeaderJson(json);
+  ReplayStreamReader reader("orca2:test");
+  std::string error;
+  EXPECT_FALSE(reader.Feed(bytes.data(), bytes.size(), &error));
+  EXPECT_FALSE(error.empty());
+  EXPECT_FALSE(reader.Info());
+  EXPECT_TRUE(reader.Archive().frames.empty());
+  EXPECT_FALSE(reader.Complete());
+  const auto good = PackReplayStreamHeader(StreamInfo());
+  EXPECT_FALSE(reader.Feed(good.data(), good.size(), &error));
+  EXPECT_EQ(error, "the replay stream already failed");
+}
+
+void ExpectWatchRefused(
+    const std::string& message, const std::string& why = "the replay's header is incomplete")
+{
+  sf::TcpListener listener;
+  ASSERT_EQ(listener.listen(0, sf::IpAddress::LocalHost), sf::Socket::Status::Done);
+  listener.setBlocking(false);
+  const std::string origin = "127.0.0.1:" + std::to_string(listener.getLocalPort());
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  std::atomic<bool> stop{false};
+  std::thread server([&] {
+    sf::TcpSocket socket;
+    while (!stop && std::chrono::steady_clock::now() < deadline)
+    {
+      if (listener.accept(socket) == sf::Socket::Status::Done)
+        break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    socket.setBlocking(false);
+    std::string request;
+    while (!stop && std::chrono::steady_clock::now() < deadline &&
+           request.find("\r\n\r\n") == std::string::npos)
+    {
+      std::array<char, 4096> buffer;
+      size_t received = 0;
+      const auto status = socket.receive(buffer.data(), buffer.size(), received);
+      if (status != sf::Socket::Status::Done && status != sf::Socket::Status::NotReady)
+        return;
+      request.append(buffer.data(), received);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const std::string field = "Sec-WebSocket-Key: ";
+    const auto key_at = request.find(field);
+    if (key_at == std::string::npos)
+      return;
+    const auto start = key_at + field.size();
+    const auto end = request.find("\r\n", start);
+    const auto digest = Common::SHA1::CalculateDigest(
+        request.substr(start, end - start) + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+    const std::string accept = EncodeInlineKeyframe(std::vector<u8>(digest.begin(), digest.end()));
+    const auto send = [&](const std::string& bytes) {
+      size_t sent = 0;
+      while (sent < bytes.size() && !stop && std::chrono::steady_clock::now() < deadline)
+      {
+        size_t count = 0;
+        const auto status = socket.send(bytes.data() + sent, bytes.size() - sent, count);
+        sent += count;
+        if (status != sf::Socket::Status::Done && status != sf::Socket::Status::Partial &&
+            status != sf::Socket::Status::NotReady)
+          return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      return sent == bytes.size();
+    };
+    const auto frame = [](const std::string& text) {
+      std::string bytes(1, static_cast<char>(0x81));
+      if (text.size() < 126)
+        bytes += static_cast<char>(text.size());
+      else if (text.size() <= 0xffff)
+      {
+        bytes += static_cast<char>(126);
+        bytes += static_cast<char>(text.size() >> 8);
+        bytes += static_cast<char>(text.size() & 0xff);
+      }
+      else
+      {
+        bytes += static_cast<char>(127);
+        for (int shift = 56; shift >= 0; shift -= 8)
+          bytes += static_cast<char>((static_cast<u64>(text.size()) >> shift) & 0xff);
+      }
+      return bytes + text;
+    };
+    if (!send("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+              "Connection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n") ||
+        !send(frame(message)) || !send(frame(R"({"t":"end"})")))
+      return;
+    while (!stop && std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  });
+  const Common::ScopeGuard join([&] {
+    stop = true;
+    server.join();
+  });
+  const auto set = [](const char* key, const std::string& value) {
+#ifdef _WIN32
+    _putenv_s(key, value.c_str());
+#else
+    if (value.empty())
+      unsetenv(key);
+    else
+      setenv(key, value.c_str(), 1);
+#endif
+  };
+  const auto old_source = Orca::GetEnv("ORCA_REPLAY_SOURCE");
+  const auto old_origin = Orca::GetEnv("ORCA_REPLAY_ROOMS_ORIGIN");
+  const Common::ScopeGuard restore([&] {
+    set("ORCA_REPLAY_SOURCE", old_source);
+    set("ORCA_REPLAY_ROOMS_ORIGIN", old_origin);
+  });
+  set("ORCA_REPLAY_SOURCE", "ws://" + origin + "/watch/test");
+  set("ORCA_REPLAY_ROOMS_ORIGIN", "http://" + origin);
+  auto player = Rollback::ReplayStream::Player::FromEnv();
+  ASSERT_NE(player, nullptr);
+  std::string stopped;
+  Rollback::ReplayStream::PlayerHost host;
+  host.stop = [&](const std::string& why) { stopped = why; };
+  host.stopping = [&] { return std::chrono::steady_clock::now() >= deadline; };
+  int running = -1;
+  EXPECT_FALSE(player->Step(Core::System::GetInstance(), host, &running, 0, 0, {}));
+  EXPECT_TRUE(player->Over());
+  EXPECT_EQ(stopped, "The replay couldn't be played: " + why);
+  EXPECT_EQ(running, -1);
+}
+
+std::string WatchWithSegment(std::string_view segment)
+{
+  return R"({"t":"rs","b":")" +
+         EncodeInlineKeyframe(
+             StreamHeaderJson(HeaderWithSegment(segment, Orca::Online::CompatibilityKey()))) +
+         R"(","extra":)" + std::string(segment) + "}";
+}
+}  // namespace
+
+TEST(OrcaSafeJson, PreservesFiniteControllerNumbers)
+{
+  const std::string json = "[0.00003051850947599719,1e-9,1e999," + std::string(400, '9') + "]";
+  picojson::value value;
+  ASSERT_TRUE(Orca::Json::ParseJson(json, &value, Orca::Json::NumberPolicy::Finite));
+  ASSERT_TRUE(value.is<picojson::array>());
+  const auto& numbers = value.get<picojson::array>();
+  ASSERT_EQ(numbers.size(), 4u);
+  ASSERT_TRUE(numbers[0].is<double>());
+  ASSERT_TRUE(numbers[1].is<double>());
+  EXPECT_DOUBLE_EQ(numbers[0].get<double>(), 0.00003051850947599719);
+  EXPECT_DOUBLE_EQ(numbers[1].get<double>(), 1e-9);
+  EXPECT_TRUE(numbers[2].is<picojson::null>());
+  EXPECT_TRUE(numbers[3].is<picojson::null>());
+  ASSERT_TRUE(Orca::Json::ParseJson(json, &value));
+  for (const auto& number : value.get<picojson::array>())
+    EXPECT_TRUE(number.is<picojson::null>());
+}
+
+TEST(OrcaReplayStream, HeaderWithHugeNumberIsRefused)
+{
+  for (const auto& number : {std::string("1e999"), std::string(400, '9')})
+  {
+    SCOPED_TRACE(number.size());
+    ExpectHeaderRefused(HeaderWithSegment(number));
+  }
+}
+
+TEST(OrcaReplayStream, HeaderNestedPastLimitIsRefused)
+{
+  const std::string brackets(16 * 1024, '[');
+  ExpectHeaderRefused(brackets);
+  ExpectHeaderRefused(HeaderWithSegment(std::string(100, '[') + "0" + std::string(100, ']')));
+}
+
+TEST(OrcaReplayStream, WatchMessageWithHugeNumberIsRefused)
+{
+  for (const auto& number : {std::string("1e999"), std::string(400, '9')})
+  {
+    SCOPED_TRACE(number.size());
+    ExpectWatchRefused(WatchWithSegment(number));
+  }
+}
+
+TEST(OrcaReplayStream, WatchMessageNestedPastLimitIsRefused)
+{
+  const std::string brackets(16 * 1024, '[');
+  ExpectWatchRefused(
+      R"({"t":"rs","b":")" + EncodeInlineKeyframe(StreamHeaderJson(brackets)) +
+          R"(","extra":)" + brackets + "0" + std::string(brackets.size(), ']') + "}",
+      "the replay's header isn't valid");
+  ExpectWatchRefused(WatchWithSegment(std::string(100, '[') + "0" + std::string(100, ']')));
+}
+
+TEST(OrcaReplayStream, ValidHeaderParsesByteIdentically)
+{
+  const std::string json =
+      R"({"build":"0123456789abcdef","compat":"orca2:test","first_frame":500,"game":"RSBE01",)"
+      R"("origin_hash":"123456789abcdef0","room":"abc123","seat_labels":false,"segment":2,"v":2})";
+  ASSERT_EQ(json.size(), 171u);
+  std::vector<u8> golden{'Y', 'G', 'R', 'S', 1, 0, 0, 0, 171, 0, 0, 0};
+  golden.insert(golden.end(), json.begin(), json.end());
+  ReplayStreamReader reader("orca2:test");
+  std::string error;
+  for (const u8 byte : golden)
+    ASSERT_TRUE(reader.Feed(&byte, 1, &error)) << error;
+  ASSERT_TRUE(reader.Info());
+  EXPECT_EQ(PackReplayStreamHeader(*reader.Info()), golden);
+  EXPECT_TRUE(reader.Archive().frames.empty());
+}
 
 // Changing this header also requires updating rooms/test/fixtures/yg-dolphin-stream-header.json;
 // its "about" field describes the refresh steps.

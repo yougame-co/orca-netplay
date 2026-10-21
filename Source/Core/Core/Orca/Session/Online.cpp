@@ -28,7 +28,9 @@
 #include "Core/Config/MainSettings.h"
 #include "Core/Core.h"
 #include "Core/Config/SessionSettings.h"
+#include "Core/Orca/BootAudit.h"
 #include "Core/Orca/Bridge.h"
+#include "Core/Orca/Bundle.h"
 #include "Core/Orca/Engine/Module.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Status.h"
@@ -63,6 +65,8 @@ std::shared_ptr<Net::YouGameRoom> Room()
 
 bool Enabled()
 {
+  if (Mod::LocalPackRequested())
+    return false;
   if (!SessionActive())
     return false;
   // Replay boots use the same four-port profile and boundary dispatcher as online matches,
@@ -253,6 +257,12 @@ namespace
 {
 void StartLocked(Net::RoomOptions options)
 {
+  if (Mod::LocalPackRequested())
+  {
+    NOTICE_LOG_FMT(NETPLAY, "Orca: local packs are offline only; room refused");
+    Status::Line("orca pack refused online (local packs are offline only)");
+    return;
+  }
   if (Rollback::ReplayStream::ProductMode())
     return;
   options.compatibility = CompatibilityKey();
@@ -266,7 +276,7 @@ void StartLocked(Net::RoomOptions options)
     options.player_name = Env("ORCA_NAME").substr(0, 32);
   // A joiner's own controls, for its port in the host's game (none for a launch join, whose game
   // hasn't run yet).
-  if (options.joining)
+  if (options.joining || options.join_if_taken)
   {
     options.controls = Events::OwnControls();
     options.queue = Events::OwnQueue();
@@ -280,6 +290,9 @@ void StartLocked(Net::RoomOptions options)
 
 void Start()
 {
+  // Accessors keep running while the audit hashes. No room constructor until it passes.
+  if (!BootAudit::WaitForOnline(BootAudit::SessionAudit()))
+    return;
   std::lock_guard lock(s_mutex);
   if (s_room)
     return;
@@ -289,8 +302,10 @@ void Start()
   StartLocked(std::move(options));
 }
 
-void StartRoom(const std::string& code, bool joining, bool friends_room)
+void StartRoom(const std::string& code, bool joining, bool friends_room, bool join_if_taken)
 {
+  if (!BootAudit::WaitForOnline(BootAudit::SessionAudit()))
+    return;
   std::lock_guard lock(s_mutex);
   if (s_room)
     return;
@@ -298,6 +313,7 @@ void StartRoom(const std::string& code, bool joining, bool friends_room)
   options.room_code = code;
   options.joining = joining;
   options.friends_room = friends_room;
+  options.join_if_taken = join_if_taken;
   options.ask_app_for_room = false;
   StartLocked(std::move(options));
 }
@@ -555,6 +571,12 @@ bool HoldInputSilence(std::chrono::steady_clock::time_point since,
 {
   const auto room = Room();
   return room && room->HoldInputSilence(since, now, std::move(missing));
+}
+
+bool RoomRecovery()
+{
+  const auto room = Room();
+  return room && room->RoomRecovery();
 }
 
 bool RoomRecovering(std::chrono::steady_clock::time_point now)
@@ -823,7 +845,8 @@ void TestDropRoom()
 {
   if (const auto room = Room())
   {
-    if (!room->FriendsRecovery() && Env("ORCA_TEST_DROP_SILENT") == "1")
+    // All recovery rooms retain the same room object; legacy silent drops keep the socket.
+    if (!room->RoomRecovery() && Env("ORCA_TEST_DROP_SILENT") == "1")
     {
       static std::vector<std::shared_ptr<Net::YouGameRoom>> s_kept;
       s_kept.push_back(room);

@@ -18,7 +18,9 @@ namespace D3DCommon
 // when the device is made (it starts out not lost), cleared before it is destroyed. Without one the
 // failed call's own result decides (DXGI_ERROR_DEVICE_REMOVED and the like).
 using RemovedReasonQuery = HRESULT (*)();
-void SetDeviceRemovedQuery(const char* backend, RemovedReasonQuery query);
+using LossDiagnostics = void (*)(HRESULT removed_reason);
+void SetDeviceRemovedQuery(const char* backend, RemovedReasonQuery query,
+                           LossDiagnostics diagnostics = nullptr);
 
 // After a call that returned `hr`: whether the device is lost. The first time, the loss is
 // reported naming `what` failed ("present", "a 16x16x1 texture"). True from then on, whatever

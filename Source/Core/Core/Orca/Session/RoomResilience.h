@@ -13,6 +13,7 @@ namespace Orca::Net
 using RoomClock = std::chrono::steady_clock;
 // Transport policy only: neither timer participates in the simulated game.
 inline constexpr auto ROOM_HOLD = std::chrono::seconds(90);
+inline constexpr auto ROOM_VERDICT_GRACE = std::chrono::seconds(10);
 inline constexpr auto PEER_SILENCE_LIMIT = std::chrono::seconds(10);
 inline constexpr auto DIRECT_INPUT_WINDOW = std::chrono::milliseconds(500);
 
@@ -133,27 +134,30 @@ struct RoomReconnect
     return true;
   }
 
-  RoomLoss Check(RoomClock::time_point now) const
+  RoomLoss Check(RoomClock::time_point now,
+                 std::optional<RoomClock::time_point> deadline = std::nullopt) const
   {
-    if (since && now >= *since + ROOM_HOLD)
+    if (since && now >= deadline.value_or(*since + ROOM_HOLD))
       return RoomLoss::HoldExpired;
     return RoomLoss::None;
   }
 
-  bool Attempt(RoomClock::time_point now)
+  bool Attempt(RoomClock::time_point now,
+               std::optional<RoomClock::time_point> deadline = std::nullopt)
   {
-    if (!since || !next_attempt || now < *next_attempt || Check(now) != RoomLoss::None)
+    if (!since || !next_attempt || now < *next_attempt || Check(now, deadline) != RoomLoss::None)
       return false;
     next_attempt.reset();
     ++attempts;
     return true;
   }
 
-  void Retry(RoomClock::time_point now, unsigned sample = 30)
+  void Retry(RoomClock::time_point now, unsigned sample = 30,
+             std::optional<RoomClock::time_point> deadline = std::nullopt)
   {
     if (!since)
       return;
-    next_attempt = std::min(now + Jitter(backoff, sample), *since + ROOM_HOLD);
+    next_attempt = std::min(now + Jitter(backoff, sample), deadline.value_or(*since + ROOM_HOLD));
     backoff = std::min(backoff * 2, std::chrono::milliseconds(4000));
   }
 };

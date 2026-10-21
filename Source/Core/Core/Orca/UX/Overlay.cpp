@@ -815,6 +815,12 @@ Scene Gather(double now)
   if ((QueueApp::OnQueueCss() && !QueueApp::OnSoloCss()) || game.cursors.on)
     s.dots = game.dots;
   s.searching = QueueApp::OnSoloCss() && QueueApp::SoloReady();
+  if (s.searching)
+  {
+    const std::string waiting = Search::WaitingLine();
+    if (!waiting.empty())
+      s.hint = s.hint.empty() ? waiting : waiting + " · " + s.hint;
+  }
   return s;
 }
 

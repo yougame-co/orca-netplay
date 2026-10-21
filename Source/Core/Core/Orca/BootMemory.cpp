@@ -16,6 +16,7 @@
 
 #include "Common/CommonTypes.h"
 #include "Common/Logging/LogManager.h"
+#include "Core/Orca/GpuDiagnostics.h"
 #include "Core/Orca/Status.h"
 
 namespace Orca::BootMemory
@@ -29,6 +30,9 @@ void BeginBoot()
 {
   s_first_frame.store(false, std::memory_order_relaxed);
   LogMemory();
+#ifdef _WIN32
+  GpuDiagnostics::ResetScene();
+#endif
 }
 
 void FirstFrame()
@@ -41,6 +45,7 @@ void LogMemory()
   constexpr u64 MB = 1024 * 1024;
   char line[160];
 #ifdef _WIN32
+  GpuDiagnostics::LogMemory(true);
   MEMORYSTATUSEX memory{};
   memory.dwLength = sizeof(memory);
   if (!GlobalMemoryStatusEx(&memory))

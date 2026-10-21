@@ -29,6 +29,8 @@ def roster(code, cfg, kind="welcome"):
             "players": [{"id": "me", "name": "Me"}, {"id": "peer", "name": "Friend"}],
             "participants": [{"id": "me", "connectionId": "me", "slot": local, "name": "Me"},
                              {"id": "peer", "connectionId": "peer", "slot": remote, "name": "Friend"}]}
+    if "recovery" in cfg:
+        result["room"]["recovery"] = cfg["recovery"]
     if cfg.get("doubles"):
         result["room"]["doubles"] = True
         result["room"]["size"] = cfg.get("size", 4)
@@ -53,7 +55,7 @@ def send(ws, value, opcode=1):
 
 def peer_hello(cfg, peer="peer", acknowledged=False):
     data = {"k": "hello", "c": cfg.get("compatibility", "test"), "r": acknowledged,
-            "h": cfg.get("joining", True) and peer == "peer", "dl": int(cfg.get("direct", False))}
+            "h": cfg.get("host", cfg.get("joining", True)) and peer == "peer", "dl": int(cfg.get("direct", False))}
     if cfg.get("doubles") and not cfg.get("legacy"):
         slot = int(peer[-1]) if peer[-1].isdigit() else 1
         data.update(doubles=True, ct=f"{slot:02x}")
@@ -77,7 +79,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
         if self.path == "/api/multiplayer/ticket":
-            code = body["room"]
+            watching = "watch" in body
+            code = body["watch"] if watching else body["room"]
             with lock:
                 cfg = rooms[code]
                 cfg["tickets"] += 1
@@ -89,7 +92,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply({"url": f"http://127.0.0.1:{self.server.server_port}",
                             "ticket": f"loopback-fixture-{ticket_number}", "direct": cfg.get("direct", False),
                             "ice": [{"urls": "stun:127.0.0.1:9"}],
-                            **({"tourney": cfg["tourney"]} if "tourney" in cfg else {})})
+                            **({"tourney": cfg["tourney"]} if "tourney" in cfg else {}),
+                            **({"watch": f"/watch/{code}"} if watching else {})})
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return

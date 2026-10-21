@@ -5,6 +5,8 @@
 
 #include <chrono>
 
+#include "Core/Orca/Status.h"
+
 namespace Orca::UX::OverlayKey
 {
 namespace
@@ -90,5 +92,17 @@ Press& Pad()
 {
   static Press s_pad(Source::Pad);
   return s_pad;
+}
+
+void Emit(std::string_view line, Output output)
+{
+  if (!line.empty())
+    (output ? output : Status::Line)(line);
+}
+
+void Tap(Output output)
+{
+  Emit(Keys().Down(Status::Cap(Status::TALK_CAP)), output);
+  Emit(Keys().Up(), output);
 }
 }  // namespace Orca::UX::OverlayKey

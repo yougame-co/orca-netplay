@@ -41,8 +41,10 @@
 #include "Core/Orca/Activity.h"
 #include "Core/Orca/BootLogs.h"
 #include "Core/Orca/BootMemory.h"
+#include "Core/Orca/BootThrottle.h"
 #include "Core/Orca/Branding.h"
 #include "Core/Orca/Bridge.h"
+#include "Core/Orca/Bundle.h"
 #include "Core/Orca/CrashNote.h"
 #include "Core/Orca/Disc.h"
 #include "Core/Orca/DiscVerify.h"
@@ -53,6 +55,9 @@
 #include "Core/Orca/Sandbox.h"
 #include "Core/Orca/Status.h"
 #include "Core/Orca/UX/UX.h"
+#include "Core/Rollback/Diag.h"
+#include "Core/Rollback/Harness.h"
+#include "Core/Rollback/SessionPort.h"
 #include "Core/System.h"
 #include "DolphinNoGUI/Embed.h"
 #include "VideoCommon/Present.h"
@@ -112,10 +117,14 @@ static void PrintAlert(const char* text) noexcept
 #endif
 }
 
-// At the game's first frame, embedded: the boot logs the app turned on go off (Orca/BootLogs.h).
+// At the game's first frame: restore pacing; embedded boot logs go off (Orca/BootLogs.h).
 // On the CPU thread, so std::fprintf: a throw from there can't unwind (Orca/CrashNote.h).
 static void EndBootLogs()
 {
+  Orca::BootThrottle::Finish(Rollback::RingPort::Active() ||
+                             (Rollback::Harness::Active() && !Rollback::Diag::KeepThrottle()));
+  if (!s_embedded)
+    return;
   const std::string ended = Orca::BootLogs::EndAtFirstFrame();
   if (!ended.empty())
     std::fprintf(stderr, "Orca: boot logs off at the first frame: %s\n", ended.c_str());
@@ -398,6 +407,10 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
 
   const auto parser =
       CommandLineParse::CreateParser(CommandLineParse::ParserOptions::OmitGUIOptions);
+  parser->add_option("--pack")
+      .action("store")
+      .metavar("<folder>")
+      .help("Play an unsigned local pack offline (tree format 1 or flat format 2)");
   parser->add_option("-p", "--platform")
       .action("store")
       .help("Window platform to use [%choices]")
@@ -420,12 +433,44 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
 #endif
       });
 
+  // Reject a missing pack folder before optparse, whose error path throws through code built
+  // without exception support.
+  for (int i = 1; i < argc; ++i)
+  {
+    const std::string_view arg(argv[i]);
+    if (arg == "--")
+      break;
+    const size_t equals = arg.find('=');
+    const std::string_view option = arg.substr(0, equals);
+    // Optparse accepts --pa and --pac too; --p is ambiguous with --platform.
+    const bool pack = option.size() >= 4 && std::string_view("--pack").starts_with(option);
+    if (pack &&
+        ((equals != std::string_view::npos && equals + 1 == arg.size()) ||
+         (equals == std::string_view::npos &&
+          (i + 1 == argc || argv[i + 1][0] == '\0' || argv[i + 1][0] == '-'))))
+    {
+      fmt::print(stderr, "orca error profile --pack needs a pack folder\n");
+      return 1;
+    }
+  }
   optparse::Values& options = CommandLineParse::ParseArguments(parser.get(), argc, argv);
   std::vector<std::string> args = parser->args();
 
   // Register before reading the boot file, so an embedded alert never becomes a message box hidden
   // behind the app's window.
   Common::RegisterMsgAlertHandler(MsgAlertHandler);
+
+  if (options.is_set("pack"))
+  {
+    const std::string folder = static_cast<const char*>(options.get("pack"));
+    if (folder.empty())
+    {
+      fmt::print(stderr, "orca error profile --pack needs a pack folder\n");
+      return 1;
+    }
+    Orca::Mod::SetLocalPack(folder);
+    Orca::SetSeedSessionSave(false);
+  }
 
   std::optional<std::string> save_state_path;
   if (options.is_set("save_state"))
@@ -704,11 +749,14 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
   }
 
   bool booted = false;
+  Orca::BootThrottle::Begin();
+  Orca::Status::SetFirstFrameListener(EndBootLogs);
   Orca::BootMemory::Run([&] {
     booted = BootManager::BootCore(Core::System::GetInstance(), std::move(boot), wsi);
   });
   if (!booted)
   {
+    Orca::BootThrottle::Finish(false);
     fprintf(stderr, "Could not boot the specified file\n");
     // In a session, the session status has already reported the error.
     if (embed.enabled && !Orca::SessionActive())

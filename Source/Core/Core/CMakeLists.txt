@@ -509,8 +509,12 @@ add_library(core
   NetPlayServer.h
   Orca/Activity.cpp
   Orca/Activity.h
+  Orca/BootAudit.cpp
+  Orca/BootAudit.h
   Orca/BootLogs.cpp
   Orca/BootLogs.h
+  Orca/BootThrottle.cpp
+  Orca/BootThrottle.h
   Orca/BootMemory.cpp
   Orca/BootMemory.h
   Orca/Branding.cpp
@@ -538,6 +542,8 @@ add_library(core
   Orca/Engine/Schema.h
   Orca/Engine/StrictJson.cpp
   Orca/Engine/StrictJson.h
+  Orca/GpuDiagnostics.cpp
+  Orca/GpuDiagnostics.h
   Orca/GpuLost.cpp
   Orca/GpuLost.h
   Orca/JitWarm.cpp
@@ -563,6 +569,8 @@ add_library(core
   Orca/Policy/Queue.h
   Orca/Profile.cpp
   Orca/Profile.h
+  Orca/SafeJson.cpp
+  Orca/SafeJson.h
   Orca/Sandbox.cpp
   Orca/Sandbox.h
   Orca/Status.cpp
@@ -938,9 +946,9 @@ target_include_directories(core PRIVATE "${ORCA_EMBED_DIR}")
 if(ORCA_BUNDLE_TRUST_TEST_KEY)
   set_source_files_properties(Orca/UX/UX.cpp PROPERTIES COMPILE_DEFINITIONS ORCA_BUNDLE_TRUST_TEST_KEY)
 endif()
-# The SD image's SHA-256 (Bundle.cpp) uses CNG on Windows.
+# The SD image's SHA-256 uses CNG; GPU diagnostics read process memory.
 if(WIN32)
-  target_link_libraries(core PRIVATE bcrypt)
+  target_link_libraries(core PRIVATE bcrypt psapi advapi32)
 endif()
 
 if(LIBUDEV_FOUND)

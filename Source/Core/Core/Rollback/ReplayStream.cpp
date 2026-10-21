@@ -29,7 +29,9 @@
 #include "Common/Version.h"
 #include "Common/WebSocket.h"
 #include "Core/HW/Memmap.h"
+#include "Core/Orca/BootAudit.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/SafeJson.h"
 #include "Core/Orca/Session/Online.h"
 #include "Core/Orca/Session/YouGameRoom.h"
 #include "Core/Orca/Status.h"
@@ -656,11 +658,13 @@ bool Writer::Pump(const Orca::Net::ReplayArchive& replay, int end, int live,
 // A watch URL's stream, handed from its socket's thread to the player.
 struct Player::Watch
 {
+  std::shared_ptr<Orca::BootAudit::Audit> audit;
   std::thread thread;
   std::atomic<bool> stop{false};
   std::mutex mutex;
   WatchPending pending;
   bool ended = false;
+  bool auditing = true;
   bool fatal = false;
   std::string error;
 };
@@ -698,7 +702,7 @@ static std::string WatchTarget(const std::string& source, std::string* error)
                 {{"Content-Type", "application/json"}}, Common::HttpRequest::AllowedReturnCodes::All);
   picojson::value json;
   if (!response ||
-      !picojson::parse(json, std::string(response->begin(), response->end())).empty() ||
+      !Orca::Json::ParseJson(std::string(response->begin(), response->end()), &json) ||
       !json.is<picojson::object>())
   {
     *error = fmt::format("no watch ticket (HTTP {})", http.GetLastResponseCode());
@@ -774,6 +778,18 @@ void Player::WatchThread(std::string source)
         WARN_LOG_FMT(ROLLBACK, "Replay: the match's stream didn't answer ({}); trying again", error);
         std::this_thread::sleep_for(std::chrono::seconds(2));
       }
+      // Both the dev ticket POST and the app-supplied socket wait on this worker, never on the
+      // CPU thread. Destruction can interrupt the wait without cancelling the session's audit.
+      if (!Orca::BootAudit::WaitForOnline(watch.audit, &watch.stop))
+      {
+        if (!watch.stop)
+          fail(watch.audit->Error(), true);
+        return;
+      }
+      {
+        std::lock_guard lock(watch.mutex);
+        watch.auditing = false;
+      }
       const std::string url = WatchTarget(source, &error);
       if (m_product && !WatchSourceAllowed(url, Orca::GetEnv("ORCA_REPLAY_ROOMS_ORIGIN"),
                                            Orca::UX::TestKnobsAllowed(), &error))
@@ -832,7 +848,7 @@ void Player::WatchThread(std::string source)
         continue;
       }
       picojson::value value;
-      if (!picojson::parse(value, *text).empty() || !value.is<picojson::object>())
+      if (!Orca::Json::ParseJson(*text, &value) || !value.is<picojson::object>())
         continue;
       const picojson::object& message = value.get<picojson::object>();
       const auto type = message.find("t");
@@ -998,12 +1014,16 @@ bool Player::Poll(std::string* error)
     if (!m_watch)
     {
       m_watch = std::make_unique<Watch>();
+      m_watch->audit = Orca::BootAudit::SessionAudit();
       m_watch->thread = std::thread(&Player::WatchThread, this, m_path);
     }
     std::vector<u8> bytes;
     std::vector<size_t> resets;
     {
       std::lock_guard lock(m_watch->mutex);
+      // Disk verification has no network timeout. Start that clock after the audit passes.
+      if (m_watch->auditing)
+        m_last_data = Clock::now();
       bytes.swap(m_watch->pending.bytes);
       resets.swap(m_watch->pending.resets);
       if (m_watch->ended)

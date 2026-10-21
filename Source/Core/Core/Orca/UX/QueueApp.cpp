@@ -16,6 +16,7 @@
 #include "Core/Orca/Session/Events.h"
 #include "Core/Orca/Session/Replay.h"
 #include "Core/Orca/Status.h"
+#include "Core/Orca/UX/Search.h"
 
 namespace Orca::UX::QueueApp
 {
@@ -133,7 +134,7 @@ void End()
     s_active = false;
     s_pick = {};
   }
-  s_solo_ready = false;
+  SetSoloReady(false);
   s_tip_on = false;
   PublishIdentity();
 }
@@ -236,12 +237,15 @@ void ResetTimeouts()
 
 void SetSoloReady(bool ready)
 {
-  s_solo_ready = ready;
+  if (s_solo_ready.exchange(ready) != ready)
+    Search::SetWaiting(ready);
 }
 
 void SetOnSoloCss(bool on)
 {
-  s_on_solo_css = on;
+  // Returning from a room can keep the player ready and begin another search.
+  if (s_on_solo_css.exchange(on) != on)
+    Search::SetWaiting(on && s_solo_ready);
 }
 
 void SetOnQueueCss(bool on)

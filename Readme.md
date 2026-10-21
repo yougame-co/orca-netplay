@@ -27,34 +27,6 @@ rendering, with per-game profiles.
 - **License:** like Dolphin, GPL-2.0-or-later, with per-file SPDX tags; in aggregate the repository
   is GPLv3-compatible ([COPYING](COPYING), [LICENSES/](LICENSES)).
 
-## Public source release
-
-YG Dolphin is YouGame's Dolphin-based netplay build, licensed under GPL-2.0-or-later.
-Game mods ship as separate signed packs, not inside the emulator build.
-
-Build from source with CMake 3.25 or newer after initializing the submodules as described in
-Dolphin's build instructions below. On macOS use Xcode 14.3 or newer and its command-line tools;
-on Windows use Visual Studio 2022 with the C++ tools (v143, MSVC 19.32 or newer); on Linux use
-GCC 12 or newer, or Clang 15 or newer, with the development libraries listed in the Linux build
-instructions. See [ORCA.md](ORCA.md#building) for this fork's build details.
-
-For the NoGUI frontend used by YouGame, configure and build with:
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_NOGUI=ON -DENABLE_QT=OFF
-cmake --build build --config Release --target dolphin-nogui --parallel 2
-```
-
-On macOS add `-DMACOS_CODE_SIGNING=OFF` for a local unsigned build, and optionally
-`-DORCA_MACOS_BUNDLE=ON` for an app bundle. On Windows run these commands in a Visual Studio
-developer shell. The NoGUI executable is `dolphin-emu-nogui` on macOS/Linux and
-`DolphinNoGUI.exe` on Windows; macOS app bundles contain `Contents/MacOS/Orca`.
-The Qt frontend can be built with `-DENABLE_QT=ON` and the Qt dependencies in Dolphin's instructions.
-
-Send security reports privately to [security@yougame.co](mailto:security@yougame.co).
-YouGame offers a $200 bounty for each unique, valid security issue, paid after a fix.
-Keep reports private and never disclose an issue publicly until it is fixed.
-
 YG Dolphin is not affiliated with or endorsed by the Dolphin project or Nintendo. Dolphin's own
 readme follows.
 

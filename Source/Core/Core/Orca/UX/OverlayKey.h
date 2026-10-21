@@ -9,7 +9,7 @@
 #include "Common/CommonTypes.h"
 
 // Press and release of YouGame's overlay key, for hold-to-talk (cap "talk"). Orca reports the two
-// presses only it can see: Shift+Tab while its own window has the keyboard (Windows), and the
+// presses only it can see: Shift+Tab while its own window has the keyboard, and the
 // controller shortcut (UX/OrbCombo.h). With "talk" agreed a press prints
 //   orca overlay down keys|pad
 // and then exactly one of
@@ -71,4 +71,10 @@ private:
 // The process-wide presses.
 Press& Keys();
 Press& Pad();
+
+// Emit through the platform's overlay channel, or Status::Line for host output.
+using Output = void (*)(std::string_view);
+void Emit(std::string_view line, Output output = nullptr);
+// A logo click or host-menu command is an immediate keyboard tap on the page's menu.
+void Tap(Output output = nullptr);
 }  // namespace Orca::UX::OverlayKey

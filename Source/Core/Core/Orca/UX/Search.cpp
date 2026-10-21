@@ -4,6 +4,7 @@
 #include "Core/Orca/UX/Search.h"
 
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include <fmt/format.h>
@@ -20,19 +21,40 @@ std::mutex s_mutex;
 State s_state = State::None;
 bool s_ranked = false;
 bool s_joining = false;
+std::optional<std::chrono::steady_clock::time_point> s_wait_started;
 }  // namespace
 
-void Begin(bool ranked)
+void Begin(bool ranked, std::chrono::steady_clock::time_point now)
 {
   std::lock_guard lock(s_mutex);
   s_state = State::Searching;
   s_ranked = ranked;
   s_joining = false;
+  s_wait_started = now;
+}
+
+void SetWaiting(bool waiting, std::chrono::steady_clock::time_point now)
+{
+  std::lock_guard lock(s_mutex);
+  if (waiting)
+    s_wait_started = now;
+  else
+    s_wait_started.reset();
+}
+
+std::string WaitingLine(std::chrono::steady_clock::time_point now)
+{
+  std::lock_guard lock(s_mutex);
+  if (!s_wait_started)
+    return {};
+  const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(now - *s_wait_started).count();
+  return fmt::format("Waiting for another player… {}:{:02}", seconds / 60, seconds % 60);
 }
 
 void Matched(bool hosting)
 {
   std::lock_guard lock(s_mutex);
+  s_wait_started.reset();
   // When joining, the join's own lines replace the search's until the host's game is loaded.
   s_joining = !hosting && s_state != State::None;
   s_state = hosting && s_state != State::None ? State::Found : State::None;
@@ -41,6 +63,7 @@ void Matched(bool hosting)
 void End()
 {
   std::lock_guard lock(s_mutex);
+  s_wait_started.reset();
   s_state = State::None;
   s_joining = false;
 }
@@ -54,6 +77,7 @@ bool Joining()
 void JoinStarted()
 {
   std::lock_guard lock(s_mutex);
+  s_wait_started.reset();
   s_joining = true;
 }
 

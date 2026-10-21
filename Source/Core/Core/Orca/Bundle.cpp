@@ -27,9 +27,11 @@
 #include "Common/FileUtil.h"
 #include "Common/IOFile.h"
 #include "Common/Logging/Log.h"
+#include "Common/Logging/LogManager.h"
 #include "Common/StringUtil.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Sandbox.h"
+#include "Core/Orca/Status.h"
 #include "Core/Orca/UX/GamePatches.h"
 
 namespace Orca::Mod
@@ -172,6 +174,7 @@ struct Resolution
 };
 std::optional<Resolution> s_resolved;
 std::optional<std::vector<PublicKey>> s_test_keys;
+std::string s_local_pack;
 }  // namespace
 
 std::string FlatSignedMessage(std::span<const TreeFile> files)
@@ -332,9 +335,10 @@ std::string KeyHex(const PublicKey& key)
   return hex;
 }
 
-std::optional<FlatBundle> LoadFlatBundle(const std::string& dir_in, std::span<const PublicKey> keys,
-                                         std::string* error, const BootLauncher* boot,
-                                         std::string_view listing)
+static std::optional<FlatBundle> LoadFlatBundleImpl(const std::string& dir_in,
+                                                  std::span<const PublicKey> keys,
+                                                  std::string* error, const BootLauncher* boot,
+                                                  std::string_view listing, bool local)
 {
   namespace fs = std::filesystem;
   const auto fail = [error](std::string why) -> std::optional<FlatBundle> {
@@ -346,7 +350,7 @@ std::optional<FlatBundle> LoadFlatBundle(const std::string& dir_in, std::span<co
     return fail("no folder");
   if (dir.back() != '/' && dir.back() != '\\')
     dir += '/';
-  if (keys.empty())
+  if (!local && keys.empty())
     return fail("this build trusts no bundle key");
 
   // The folder: regular files only (hidden ones aside: the app's .copies.json, a .DS_Store), no
@@ -383,20 +387,30 @@ std::optional<FlatBundle> LoadFlatBundle(const std::string& dir_in, std::span<co
   if (!present.contains(std::string(FLAT_MANIFEST)))
     return fail("no mod.json");
 
-  // mod.sig first, by a key this Orca trusts: nobody else's mod.json reaches the JSON parser.
+  // Signed bundles check mod.sig first, by a key this Orca trusts, before parsing mod.json.
+  // Local packs read unsigned mod.json by design.
   std::string why;
-  if (!present.contains(std::string(FLAT_SIGNATURE)))
-    return fail("mod.sig is missing");
-  std::string sig_text;
-  if (!ReadBounded(dir + std::string(FLAT_SIGNATURE), MAX_SIG_BYTES, &sig_text, &why))
-    return fail("mod.sig " + why);
-  const auto signature = ParseSignature(sig_text);
-  if (!signature)
-    return fail("mod.sig is not \"ed25519 <public key> <signature>\" in lowercase hex");
-  if (std::ranges::find(keys, signature->first) == keys.end())
+  std::optional<std::pair<PublicKey, Signature>> signature;
+  if (local)
   {
-    return fail(fmt::format("mod.sig is by key {}, which this build doesn't trust",
-                            KeyHex(signature->first)));
+    if (present.contains(std::string(FLAT_SIGNATURE)))
+      return fail("--pack takes unsigned local packs; open signed community packs through YouGame");
+  }
+  else
+  {
+    if (!present.contains(std::string(FLAT_SIGNATURE)))
+      return fail("mod.sig is missing");
+    std::string sig_text;
+    if (!ReadBounded(dir + std::string(FLAT_SIGNATURE), MAX_SIG_BYTES, &sig_text, &why))
+      return fail("mod.sig " + why);
+    signature = ParseSignature(sig_text);
+    if (!signature)
+      return fail("mod.sig is not \"ed25519 <public key> <signature>\" in lowercase hex");
+    if (std::ranges::find(keys, signature->first) == keys.end())
+    {
+      return fail(fmt::format("mod.sig is by key {}, which this build doesn't trust",
+                              KeyHex(signature->first)));
+    }
   }
 
   // mod.json, format 2, for this listing and not retired.
@@ -429,7 +443,8 @@ std::optional<FlatBundle> LoadFlatBundle(const std::string& dir_in, std::span<co
   const std::vector<std::string> named = manifest->FlatFiles();
   std::set<std::string> expected(named.begin(), named.end());
   expected.emplace(FLAT_MANIFEST);
-  expected.emplace(FLAT_SIGNATURE);
+  if (!local)
+    expected.emplace(FLAT_SIGNATURE);
   for (const std::string& name : present)
   {
     if (!expected.contains(name))
@@ -474,7 +489,7 @@ std::optional<FlatBundle> LoadFlatBundle(const std::string& dir_in, std::span<co
       bundle.jitwarm = std::move(contents);
   }
   std::ranges::sort(files, {}, &TreeFile::path);
-  if (!VerifySignature(signature->first, signature->second, FlatSignedMessage(files)))
+  if (!local && !VerifySignature(signature->first, signature->second, FlatSignedMessage(files)))
   {
     return fail("mod.sig doesn't match the files (one changed since the bundle was signed, or the "
                 "signature is damaged)");
@@ -511,13 +526,32 @@ std::optional<FlatBundle> LoadFlatBundle(const std::string& dir_in, std::span<co
   bundle.tree.hash = FlatTreeHash(files, manifest->jitwarm);
   bundle.tree.files = std::move(files);
   bundle.manifest = std::move(*manifest);
-  bundle.signer = signature->first;
+  if (signature)
+    bundle.signer = signature->first;
   return bundle;
+}
+
+std::optional<FlatBundle> LoadFlatBundle(const std::string& dir, std::span<const PublicKey> keys,
+                                       std::string* error, const BootLauncher* boot,
+                                       std::string_view listing)
+{
+  return LoadFlatBundleImpl(dir, keys, error, boot, listing, false);
+}
+
+void SetLocalPack(std::string folder)
+{
+  s_local_pack = std::move(folder);
+  ResetResolvedBundle();
+}
+
+bool LocalPackRequested()
+{
+  return !s_local_pack.empty();
 }
 
 std::string FlatBundleDir(const std::string* executable_path)
 {
-  std::string dir = GetEnv("ORCA_MOD_DIR");
+  std::string dir = LocalPackRequested() ? s_local_pack : GetEnv("ORCA_MOD_DIR");
   if (dir.empty())
   {
     if (executable_path)
@@ -557,7 +591,8 @@ static void ResolveBundleWithJail(const std::string* executable_path,
     return;
   Resolution resolution;
   resolution.looked_in = dir;
-  const bool explicit_dir = !GetEnv("ORCA_MOD_DIR").empty();
+  const bool local = LocalPackRequested();
+  const bool explicit_dir = local || !GetEnv("ORCA_MOD_DIR").empty();
   const auto decide = [&](BundleKind kind) {
     resolution.kind = kind;
     s_resolved = std::move(resolution);
@@ -574,20 +609,42 @@ static void ResolveBundleWithJail(const std::string* executable_path,
   };
   if (dir.empty())
     return decide(BundleKind::None);
+  const auto announce_local = [&] {
+    auto folder = StringToPath(dir).lexically_normal();
+    if (folder.filename().empty())
+      folder = folder.parent_path();
+    NOTICE_LOG_FMT(BOOT, "orca pack local {} (unsigned, offline)", PathToString(folder.filename()));
+    if (auto* logs = Common::Log::LogManager::GetInstance())
+      logs->LogToFile(Common::Log::LogLevel::LNOTICE, Common::Log::LogType::BOOT,
+                      fmt::format("orca pack local {} (unsigned, offline)", dir).c_str());
+    Status::Line(fmt::format("orca pack local {} (unsigned, offline)",
+                            PathToString(folder.filename())));
+  };
+  if (local && File::Exists(dir + std::string(FLAT_SIGNATURE)))
+    return refuse("--pack takes unsigned local packs; open signed community packs through YouGame");
   // Mods phase 1: a run folder the app wrote with tree.json (checked by LoadModProfile at boot).
   if (explicit_dir && File::Exists(dir + "tree.json"))
+  {
+    if (local)
+    {
+      std::string why;
+      if (!LoadModProfile(dir, &why))
+        return refuse(why);
+      announce_local();
+    }
     return decide(SessionActive() ? BundleKind::Tree : BundleKind::None);
+  }
   if (!File::Exists(dir + std::string(FLAT_MANIFEST)))
   {
     if (SessionActive() && explicit_dir)
       return refuse("it has neither tree.json nor mod.json");
     return decide(BundleKind::None);
   }
-  if (!jailed)
+  if (!local && !jailed)
     return refuse("this pack requires the YouGame app's sandbox; open it through YouGame");
   if (!SessionActive())
     return decide(BundleKind::None);
-  if (TrustedKeys().empty())
+  if (!local && TrustedKeys().empty())
     return refuse("this build trusts no bundle key");
 
   const auto start = std::chrono::steady_clock::now();
@@ -598,7 +655,8 @@ static void ResolveBundleWithJail(const std::string* executable_path,
   std::optional<BootLauncher> boot;
   if (executable_path)
     boot = BootLauncher{PathToFileName(*executable_path), launcher_bytes};
-  std::optional<FlatBundle> bundle =
+  std::optional<FlatBundle> bundle = local ?
+      LoadFlatBundleImpl(dir, {}, &why, boot ? &*boot : nullptr, {}, true) :
       LoadFlatBundle(dir, TrustedKeys(), &why, boot ? &*boot : nullptr, GetEnv("YOUGAME_GAME"));
   if (bundle && !executable_path && !bundle->manifest.launcher.empty())
   {
@@ -608,6 +666,12 @@ static void ResolveBundleWithJail(const std::string* executable_path,
   }
   if (!bundle)
     return refuse(why);
+  if (local)
+  {
+    announce_local();
+    resolution.flat = std::move(bundle);
+    return decide(BundleKind::Flat);
+  }
   NOTICE_LOG_FMT(BOOT,
                  "Orca bundle: {} ({} for {}, serial {}, {} files, tree {}, SD {}), signed by "
                  "{}{}, checked in {} ms",

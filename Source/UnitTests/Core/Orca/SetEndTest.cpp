@@ -667,3 +667,26 @@ TEST_F(OrcaSetEndDraw, EveryScreenDrawsWithoutAnImGuiAssert)
   }
   EXPECT_EQ(Frame(1280, 720, View{}), 0);
 }
+
+TEST(OrcaSetEndPanel, AuthoritativeOutcomeCanWaitForGameReceiptsWithoutAPartialScore)
+{
+  for (const bool forfeit : {false, true})
+  {
+    for (const int wins : {0, 2})
+    {
+      Model m;
+      m.MatchBegan(true, "bo", 0);
+      m.BlockSetOver(1, true, 1, 0, 1500, 0);
+      m.SetVerdict(Outcome::Won, forfeit, -1, -1, -1, -1, 1500, 1000);
+      m.BlockSetOver(2, true, 1, 0, 1500, 2000);
+      const auto pending = m.At(4000);
+      ASSERT_TRUE(pending.panel);
+      EXPECT_EQ(pending.panel->out, Outcome::Won);
+      EXPECT_EQ(pending.panel->score, "Score pending");
+      m.SetVerdict(Outcome::Won, forfeit, wins, 0, -1, -1, 1500, 4100);
+      const auto complete = m.At(7000);
+      ASSERT_TRUE(complete.panel);
+      EXPECT_EQ(complete.panel->score, wins ? "2–0" : "0–0");
+    }
+  }
+}

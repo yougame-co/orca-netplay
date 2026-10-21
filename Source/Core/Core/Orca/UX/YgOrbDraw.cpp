@@ -70,7 +70,13 @@ void DrawButton(ImDrawList* dl, const Model::View& view)
 {
   if (!view.on || view.place.size <= 0)
     return;
-  const Place p = ScaledPlace(view.place, view.view_width, ImGui::GetIO().DisplaySize.x);
+  Place p = ScaledPlace(view.place, view.view_width, ImGui::GetIO().DisplaySize.x);
+  if (view.orb.pressed)
+  {
+    p.x += p.size * 0.03f;
+    p.y += p.size * 0.03f;
+    p.size *= 0.94f;
+  }
   const float k = p.size / 40, alpha = ButtonAlpha(p);
   const ImVec2 c(p.x + p.size / 2, p.y + p.size / 2);
   Yg::RoundLogo(dl, ImVec2(p.x, p.y), p.size, alpha);
@@ -113,23 +119,21 @@ void DrawHostControls(ImDrawList* dl, const Model::View& view)
     return;
   const Place p = ScaledPlace(view.place, view.view_width, ImGui::GetIO().DisplaySize.x);
   const float k = p.size / 40;
-  const ImVec2 min(p.x + 48 * k, p.y), max(p.x + 88 * k, p.y + p.size);
-  dl->AddRectFilled(min, max, Rgba(30, 30, 30, 0.9f), 8 * k);
-  Yg::Text(dl, ImVec2(min.x + 10 * k, min.y + 7 * k), 24 * k, IM_COL32_WHITE, "Δ");
-  const HostMenu::View menu = Menu().At();
-  if (!menu.open)
-    return;
-  const float top = p.y + 48 * k;
-  dl->AddRectFilled(ImVec2(p.x, top), ImVec2(p.x + 240 * k, top + HOST_ROWS * 32 * k),
-                    Rgba(20, 20, 20, 0.97f), 8 * k);
-  for (int row = 0; row < HOST_ROWS; ++row)
+  const float scale = view.feedback.pressed ? 0.94f : 1.0f;
+  const float alpha = view.feedback.hovered || view.feedback.pressed ? 1.0f : 0.6f;
+  const ImVec2 centre(p.x + 68 * k, p.y + p.size / 2);
+  dl->AddCircleFilled(centre, p.size / 2 * scale, Rgba(255, 0, 0, alpha), 64);
+  // The site's 24-unit SVG: M12 3.6 21.2 19.6H2.8Z, stroke 2.4, round joins,
+  // no fill. Flat-ended segments plus round vertex caps give the same rounded outline.
+  const float unit = k * scale;
+  const std::array<ImVec2, 3> triangle = {ImVec2(centre.x, centre.y - 8.4f * unit),
+                                          ImVec2(centre.x + 9.2f * unit, centre.y + 7.6f * unit),
+                                          ImVec2(centre.x - 9.2f * unit, centre.y + 7.6f * unit)};
+  const ImU32 white = Rgba(255, 255, 255, alpha);
+  for (std::size_t i = 0; i < triangle.size(); ++i)
   {
-    const float y = top + row * 32 * k;
-    if (row == menu.selected)
-      dl->AddRectFilled(ImVec2(p.x, y), ImVec2(p.x + 240 * k, y + 32 * k),
-                        Rgba(90, 90, 90, 0.8f), 6 * k);
-    Yg::Text(dl, ImVec2(p.x + 12 * k, y + 7 * k), 16 * k, IM_COL32_WHITE,
-             HostLabel(static_cast<HostAction>(row)));
+    dl->AddLine(triangle[i], triangle[(i + 1) % triangle.size()], white, 2.4f * unit);
+    dl->AddCircleFilled(triangle[i], 1.2f * unit, white, 16);
   }
 }
 

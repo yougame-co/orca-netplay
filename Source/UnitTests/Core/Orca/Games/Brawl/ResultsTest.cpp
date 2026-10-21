@@ -136,12 +136,13 @@ struct Timeline
   int frame = 0;
   int plug = -1;
   std::vector<GameResult> out;
+  std::vector<int> starts;
   void Run(Scene scene, int frames, int winner_port = 0)
   {
     for (int i = 0; i < frames; ++i, ++frame)
     {
       tracker.Store(frame, At(scene, winner_port), 0);
-      for (GameResult& g : tracker.Confirm(frame, plug))
+      for (GameResult& g : tracker.Confirm(frame, plug, &starts))
         out.push_back(std::move(g));
     }
   }
@@ -248,6 +249,7 @@ TEST(OrcaResults, AGameIsAFightThatReachesItsResults)
   t.Run(Scene::Between, 5);
   t.Run(Scene::Fight, 100);
   EXPECT_TRUE(t.out.empty());
+  ASSERT_EQ(t.starts, std::vector<int>{15});
   t.Run(Scene::Between, 5);
   t.Run(Scene::Results, 30, 1);
   ASSERT_EQ(t.out.size(), 1u);
@@ -255,6 +257,7 @@ TEST(OrcaResults, AGameIsAFightThatReachesItsResults)
   EXPECT_EQ(t.out[0].winner_port, 1);
   // The frame of the first results reading.
   EXPECT_EQ(t.out[0].frame, 120);
+  EXPECT_EQ(t.out[0].start, t.starts[0]);
   // The results screen and the character select after it count nothing more.
   t.Run(Scene::Between, 5);
   t.Run(Scene::Other, 50);
@@ -266,6 +269,72 @@ TEST(OrcaResults, AGameIsAFightThatReachesItsResults)
   t.Run(Scene::Results, 3, 0);
   ASSERT_EQ(t.out.size(), 2u);
   EXPECT_EQ(t.out[1].winner_port, 0);
+  ASSERT_EQ(t.starts.size(), 2u);
+  EXPECT_EQ(t.out[1].start, t.starts[1]);
+}
+
+TEST(OrcaResults, SceneResultsKeepTheirStartWithoutSetBlockProvenance)
+{
+  for (const Scene end : {Scene::Results, Scene::Other})
+  {
+    ResultsTracker tracker;
+    tracker.Store(119, At(Scene::Other), 0);
+    tracker.Store(120, At(Scene::Fight), 0);
+    tracker.Store(121, At(end), 0);
+    std::vector<int> starts;
+    const auto results = tracker.Confirm(121, -1, &starts);
+    ASSERT_EQ(starts, std::vector<int>{120});
+    ASSERT_EQ(results.size(), 1u);
+    EXPECT_EQ(results[0].start, 120);
+    EXPECT_FALSE(results[0].from_set_block);
+    EXPECT_EQ(results[0].set_done, 0);
+    EXPECT_EQ(results[0].kind, end == Scene::Results ? Kind::Win : Kind::Void);
+  }
+}
+
+TEST(OrcaResults, SceneGameStartsOnlyWhenItsFirstFightFrameIsFinal)
+{
+  ResultsTracker tracker;
+  std::vector<int> starts;
+  tracker.Store(10, At(Scene::Other), 0);
+  tracker.Store(11, At(Scene::Fight), 0);
+  EXPECT_TRUE(tracker.Confirm(10, -1, &starts).empty());
+  EXPECT_TRUE(starts.empty());
+  // A guessed fight that rolls back is never announced.
+  tracker.Store(11, At(Scene::Other), 0);
+  EXPECT_TRUE(tracker.Confirm(11, -1, &starts).empty());
+  EXPECT_TRUE(starts.empty());
+  tracker.Store(12, At(Scene::Fight), 0);
+  EXPECT_TRUE(tracker.Confirm(12, -1, &starts).empty());
+  EXPECT_EQ(starts, std::vector<int>{12});
+  // A rollback cannot replace a confirmed frame or announce it twice.
+  tracker.Store(12, At(Scene::Fight), 0);
+  EXPECT_TRUE(tracker.Confirm(12, -1, &starts).empty());
+  EXPECT_EQ(starts, std::vector<int>{12});
+}
+
+TEST(OrcaResults, SceneGameStartRequiresItsPreviousFrameToBeAfterPlug)
+{
+  for (const int plug : {9, 10, 11})
+  {
+    Timeline t;
+    t.Run(Scene::Other, 10);
+    t.plug = plug;
+    t.Run(Scene::Fight, 5);
+    t.Run(Scene::Between, 2);
+    t.Run(Scene::Fight, 5);  // Sudden death cannot turn a pre-plug fight into a counted game.
+    t.Run(Scene::Results, 1);
+    EXPECT_TRUE(t.starts.empty()) << plug;
+    EXPECT_TRUE(t.out.empty()) << plug;
+  }
+  Timeline counted;
+  counted.Run(Scene::Other, 10);
+  counted.plug = 8;
+  counted.Run(Scene::Fight, 5);
+  EXPECT_EQ(counted.starts, std::vector<int>{10});
+  Timeline no_previous;
+  no_previous.Run(Scene::Fight, 5);
+  EXPECT_TRUE(no_previous.starts.empty());
 }
 
 TEST(OrcaResults, AFightRunningWhenTheOpponentPluggedInNeverCounts)
@@ -321,6 +390,8 @@ TEST(OrcaResults, AFightThatEndsWithoutItsResultsIsNoContest)
   EXPECT_EQ(t.out[0].kind, Kind::Void);
   EXPECT_EQ(t.out[0].why, "nocontest");
   EXPECT_EQ(t.out[0].frame, 60);
+  ASSERT_EQ(t.starts, std::vector<int>{5});
+  EXPECT_EQ(t.out[0].start, t.starts[0]);
 }
 
 TEST(OrcaResults, SuddenDeathIsTheSameGame)
@@ -334,6 +405,53 @@ TEST(OrcaResults, SuddenDeathIsTheSameGame)
   t.Run(Scene::Results, 5, 1);
   ASSERT_EQ(t.out.size(), 1u);
   EXPECT_EQ(t.out[0].winner_port, 1);
+  ASSERT_EQ(t.starts, std::vector<int>{5});
+  EXPECT_EQ(t.out[0].start, t.starts[0]);
+}
+
+TEST(OrcaResults, RebasedSceneFightNeverBeginsAgainIncludingSuddenDeath)
+{
+  for (const bool counted_before : {false, true})
+  {
+    ResultsTracker tracker;
+    std::vector<int> starts;
+    if (counted_before)
+    {
+      tracker.Store(10, At(Scene::Other), 0);
+      tracker.Store(11, At(Scene::Fight), 0);
+      EXPECT_TRUE(tracker.Confirm(11, -1, &starts).empty());
+      EXPECT_EQ(starts, std::vector<int>{11});
+    }
+    for (int frame = 100; frame < 110; ++frame)
+      tracker.Rebase(frame, At(Scene::Fight), 1);
+    tracker.Store(110, At(Scene::Fight), 1);
+    tracker.Store(111, At(Scene::Between), 1);
+    tracker.Store(112, At(Scene::Fight), 1);
+    tracker.Store(113, At(Scene::Results), 1);
+    EXPECT_TRUE(tracker.Confirm(113, -1, &starts).empty());
+    EXPECT_EQ(starts, counted_before ? std::vector<int>{11} : std::vector<int>{});
+    tracker.Store(114, At(Scene::Other), 1);
+    tracker.Store(115, At(Scene::Fight), 1);
+    tracker.Store(116, At(Scene::Results), 1);
+    const auto results = tracker.Confirm(116, -1, &starts);
+    ASSERT_EQ(results.size(), 1u);
+    ASSERT_EQ(starts.size(), counted_before ? 2u : 1u);
+    EXPECT_EQ(starts.back(), 115);
+    EXPECT_EQ(results[0].start, starts.back());
+  }
+}
+
+TEST(OrcaResults, RebasedSceneBetweenFightAndSuddenDeathKeepsTheSameGame)
+{
+  ResultsTracker tracker;
+  std::vector<int> starts;
+  tracker.Rebase(100, At(Scene::Fight), 1);
+  tracker.Rebase(101, At(Scene::Between), 1);
+  tracker.Rebase(102, At(Scene::Between), 1);
+  tracker.Store(103, At(Scene::Fight), 1);
+  tracker.Store(104, At(Scene::Results), 1);
+  EXPECT_TRUE(tracker.Confirm(104, -1, &starts).empty());
+  EXPECT_TRUE(starts.empty());
 }
 
 TEST(OrcaResults, OnlyFinalFramesCountAndARerunReplacesTheGuess)
@@ -373,20 +491,23 @@ TEST(OrcaResults, ConfirmingInStepsOrAtOnceIsTheSame)
     line.push_back(At(Scene::Results, 1));
   ResultsTracker a, b;
   std::vector<GameResult> in_steps;
+  std::vector<int> in_steps_starts, at_once_starts;
   for (int f = 0; f < static_cast<int>(line.size()); ++f)
   {
     a.Store(f, line[f], 0);
     b.Store(f, line[f], 0);
     if (f % 7 == 0)
     {
-      for (auto& g : a.Confirm(f - 3, -1))
+      for (auto& g : a.Confirm(f - 3, -1, &in_steps_starts))
         in_steps.push_back(g);
     }
   }
-  for (auto& g : a.Confirm(1000, -1))
+  for (auto& g : a.Confirm(1000, -1, &in_steps_starts))
     in_steps.push_back(g);
-  EXPECT_EQ(in_steps, b.Confirm(1000, -1));
+  EXPECT_EQ(in_steps, b.Confirm(1000, -1, &at_once_starts));
   EXPECT_EQ(in_steps.size(), 1u);
+  EXPECT_EQ(in_steps_starts, std::vector<int>{10});
+  EXPECT_EQ(in_steps_starts, at_once_starts);
 }
 
 TEST(OrcaResults, AResyncForgetsWhatWasRead)
