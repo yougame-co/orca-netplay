@@ -1,0 +1,44 @@
+{
+  "format": 1,
+  "id": "brawl-supernova-2025",
+  "block": 1,
+  "name": "Brawl Supernova 2025",
+  "stages": [
+    { "name": "Battlefield", "kind": 1, "role": "starter" },
+    { "name": "Pokémon Stadium", "kind": 46, "role": "starter" },
+    { "name": "Lylat Cruise", "kind": 19, "role": "starter" },
+    { "name": "Smashville", "kind": 33, "role": "starter" },
+    { "name": "Yoshi's Island", "kind": 13, "role": "starter" },
+    { "name": "Final Destination", "kind": 2, "role": "counterpick" },
+    { "name": "Delfino Plaza", "kind": 3, "role": "counterpick" }
+  ],
+  "steps": {
+    "game1Seconds": [30, 30, 10],
+    "later": { "kind": "ban", "count": 1, "optional": true, "seconds": 30 },
+    "pickSeconds": 30,
+    "graceFrames": 180,
+    "casualSeconds": 15,
+    "casualGraceFrames": 30
+  },
+  "dsr": true,
+  "clauses": {
+    "iceClimbers": { "character": 16, "bannedStage": 5 },
+    "metaKnight": { "character": 24 }
+  },
+  "set": {
+    "wins": 2,
+    "stocks": 3,
+    "minutes": 8,
+    "timeOut": "judged",
+    "ledgeGrabLimit": {
+      "limit": 35,
+      "tiebreakLimit": 11,
+      "characters": [{ "character": 24, "limit": 20, "tiebreakLimit": 6 }]
+    },
+    "tiebreak": { "stocks": 1, "minutes": 3 },
+    "voidAfterTies": 5
+  },
+  "queue": { "readySeconds": 30, "skipFrames": 90 },
+  "characterOrder": { "pickSeconds": 45 },
+  "css": { "readySeconds": 60 }
+}

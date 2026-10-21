@@ -1,0 +1,23 @@
+# The character select's title (ORCA.md "On-screen UI", UX/CssTitle.h) on
+# Project+ (ORCA_PROFILE=PPLUS32), which Orca boots to its main menu's top page (PPLUS32.patches):
+# Play Online > With Friends (FRIENDS; since ux=18 it goes straight to its character select), B out
+# to ONLINE on With Friends, With Anyone > Casual (CASUAL), B out to With Anyone, Ranked (RANKED),
+# B out, B to ONLINE, B to the top page, VERSUS (the game's VERSUS). Presses count frames from each
+# visit of their scene (online-menu.py's timing).
+@scBoot mash 30 99999 1 40 A
+@muMenuMain:1 120 123 1 DOWN
+@muMenuMain:1 170 173 1 A
+@muMenuMain:1 220 223 1 A
+@scSelctCharacter:1 150 260 1 B
+@muMenuMain:2 250 253 1 RIGHT
+@muMenuMain:2 300 303 1 A
+@muMenuMain:2 350 353 1 A
+@scSelctCharacter:2 150 260 1 B
+@muMenuMain:3 200 203 1 DOWN
+@muMenuMain:3 250 253 1 A
+@scSelctCharacter:3 150 260 1 B
+@muMenuMain:4 200 203 1 B
+@muMenuMain:4 250 253 1 B
+@muMenuMain:4 300 303 1 UP
+@muMenuMain:4 350 353 1 A
+@muMenuMain:4 400 403 1 A

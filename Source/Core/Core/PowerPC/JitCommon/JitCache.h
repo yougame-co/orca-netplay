@@ -108,6 +108,10 @@ struct JitBlock : public JitBlockData
   std::vector<std::pair<u32, UGeckoInstruction>> original_buffer;
 
   std::unique_ptr<ProfileData> profile_data;
+
+  // Orca: a hash of the RAM this block was compiled from, for the crash dump's stale-code check
+  // (Orca/PanicDiag.h CodeHash); 0 when it couldn't be taken. Host-only.
+  u64 orca_code_hash = 0;
 };
 
 typedef void (*CompiledCode)();
@@ -186,6 +190,9 @@ public:
   void InvalidateICacheLine(u32 address);
   void ErasePhysicalRange(u32 address, u32 length);
   void EraseSingleBlock(const JitBlock& block);
+  // Orca: forgets a block AllocateBlock made whose code generation failed (never finalized: it is
+  // in no lookup table, link list or range map), so no lookup can find its unfinished code.
+  void DiscardUnfinalizedBlock(const JitBlock& block);
 
   u32* GetBlockBitSet() const;
 

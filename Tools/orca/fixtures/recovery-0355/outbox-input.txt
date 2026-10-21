@@ -1,0 +1,20 @@
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain mash 30 99999 1 40 A
+@scSelctCharacter:1 1853 1856 1 A
+@scSelctCharacter:1 1883 1886 2 A
+@scSelctCharacter:1 1913 1953 1 SY=255
+@scSelctCharacter:1 1913 1953 2 SY=255
+@scSelctCharacter:1 1973 1976 1 A
+@scSelctCharacter:1 1993 1996 2 A
+@scSelctCharacter:1 mash 2400 99999 1 120 START
+@scSelctCharacter:1 mash 2420 99999 2 120 START
+@scSelStage 150 188 1 SY=255
+@scSelStage 150 188 2 SY=255
+@scSelStage 190 1993 1 SX=1
+@scSelStage 190 1993 2 SX=1
+@scSelStage mash 210 99999 1 40 A
+@scSelStage mash 230 99999 2 40 A
+
+@scMelee 250 99999 2 SX=1

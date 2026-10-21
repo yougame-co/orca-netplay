@@ -5,9 +5,12 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <iterator>
+#include <span>
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include <fmt/format.h>
@@ -485,6 +488,113 @@ static void SortFST(File::FSTEntry* root)
     SortFST(&child);
 }
 
+// Orca mods' order: in each folder its files, then its folders, each by name with ASCII letters
+// upper-cased (then as bytes, for names that differ only in case), as Project+'s official SD image
+// lays most of its folders out (195 of 204), so a card built from the same files reads the same way.
+static void SortFSTFilesFirst(File::FSTEntry* root)
+{
+  const auto key = [](const File::FSTEntry& e) {
+    std::string upper = e.virtualName;
+    for (char& c : upper)
+    {
+      if (c >= 'a' && c <= 'z')
+        c = static_cast<char>(c - 'a' + 'A');
+    }
+    return std::tuple(e.isDirectory, std::move(upper), e.virtualName);
+  };
+  std::ranges::sort(root->children, [&key](const File::FSTEntry& a, const File::FSTEntry& b) {
+    return key(a) < key(b);
+  });
+  for (auto& child : root->children)
+    SortFSTFilesFirst(&child);
+}
+
+// A new FAT32 image of `size` bytes at `image_path` (written to a temporary file and renamed into
+// place) holding `root`'s tree.
+static bool WriteImage(const std::function<bool()>& cancelled, const File::FSTEntry& root, u64 size,
+                       const std::string& image_path, bool deterministic, u32 cluster_bytes = 0,
+                       u8 fats = 0)
+{
+  std::lock_guard lk(s_fatfs_mutex);
+  SDCardFatFsCallbacks callbacks;
+  s_callbacks = &callbacks;
+  Common::ScopeGuard callbacks_guard{[] { s_callbacks = nullptr; }};
+
+  File::IOFile image;
+  callbacks.m_image = &image;
+  callbacks.m_deterministic = deterministic;
+
+  const std::string temp_image_path = File::GetTempFilenameForAtomicWrite(image_path);
+  if (!image.Open(temp_image_path, "w+b"))
+  {
+    ERROR_LOG_FMT(COMMON, "Failed to create or overwrite SD image at {}", image_path);
+    return false;
+  }
+
+  // delete temp file in failure case
+  Common::ScopeGuard image_delete_guard{[&] {
+    image.Close();
+    File::Delete(temp_image_path);
+  }};
+
+  if (!image.Resize(size))
+  {
+    ERROR_LOG_FMT(COMMON, "Failed to allocate {} bytes for SD image at {}", size, image_path);
+    return false;
+  }
+
+  MKFS_PARM options = {};
+  options.fmt = FM_FAT32 | FM_SFD;
+  options.n_fat = fats;            // Number of FATs (0: automatic, one)
+  options.align = 1;               // Alignment of the data region (in sectors)
+  options.n_root = 0;              // Number of root directory entries: automatic (and unused for FAT32)
+  options.au_size = cluster_bytes;  // Cluster size (0: automatic)
+
+  std::vector<u8> tmp_buffer(MAX_CLUSTER_SIZE);
+  const auto mkfs_error_code =
+      f_mkfs("", &options, tmp_buffer.data(), static_cast<UINT>(tmp_buffer.size()));
+  if (mkfs_error_code != FR_OK)
+  {
+    ERROR_LOG_FMT(COMMON, "Failed to initialize SD image filesystem: {}",
+                  FatFsErrorToString(mkfs_error_code));
+    return false;
+  }
+
+  FATFS fs{};
+  const auto mount_error_code = f_mount(&fs, "", 0);
+  if (mount_error_code != FR_OK)
+  {
+    ERROR_LOG_FMT(COMMON, "Failed to mount SD image filesystem: {}",
+                  FatFsErrorToString(mount_error_code));
+    return false;
+  }
+  Common::ScopeGuard unmount_guard{[] { f_unmount(""); }};
+
+  if (!Pack(cancelled, root, true, tmp_buffer))
+  {
+    ERROR_LOG_FMT(COMMON, "Failed to pack folder {} to SD image at {}", root.physicalName,
+                  temp_image_path);
+    return false;
+  }
+
+  unmount_guard.Exit();  // unmount before closing the image
+
+  if (!image.Close())
+  {
+    ERROR_LOG_FMT(COMMON, "Failed to close SD image at {}", temp_image_path);
+    return false;
+  }
+
+  if (!File::Rename(temp_image_path, image_path))
+  {
+    ERROR_LOG_FMT(COMMON, "Failed to rename SD image from {} to {}", temp_image_path, image_path);
+    return false;
+  }
+
+  image_delete_guard.Dismiss();  // no need to delete the temp file anymore after the rename
+  return true;
+}
+
 bool SyncSDFolderToSDImage(const std::function<bool()>& cancelled, bool deterministic)
 {
   const std::string source_dir = File::GetUserPath(D_WIISDCARDSYNCFOLDER_IDX);
@@ -516,85 +626,91 @@ bool SyncSDFolderToSDImage(const std::function<bool()>& cancelled, bool determin
   }
   size = AlignUp(size, MAX_CLUSTER_SIZE);
 
-  std::lock_guard lk(s_fatfs_mutex);
-  SDCardFatFsCallbacks callbacks;
-  s_callbacks = &callbacks;
-  Common::ScopeGuard callbacks_guard{[] { s_callbacks = nullptr; }};
-
-  File::IOFile image;
-  callbacks.m_image = &image;
-  callbacks.m_deterministic = deterministic;
-
-  const std::string temp_image_path = File::GetTempFilenameForAtomicWrite(image_path);
-  if (!image.Open(temp_image_path, "w+b"))
-  {
-    ERROR_LOG_FMT(COMMON, "Failed to create or overwrite SD image at {}", image_path);
+  if (!WriteImage(cancelled, root, size, image_path, deterministic))
     return false;
-  }
-
-  // delete temp file in failure case
-  Common::ScopeGuard image_delete_guard{[&] {
-    image.Close();
-    File::Delete(temp_image_path);
-  }};
-
-  if (!image.Resize(size))
-  {
-    ERROR_LOG_FMT(COMMON, "Failed to allocate {} bytes for SD image at {}", size, image_path);
-    return false;
-  }
-
-  MKFS_PARM options = {};
-  options.fmt = FM_FAT32 | FM_SFD;
-  options.n_fat = 0;    // Number of FATs: automatic
-  options.align = 1;    // Alignment of the data region (in sectors)
-  options.n_root = 0;   // Number of root directory entries: automatic (and unused for FAT32)
-  options.au_size = 0;  // Cluster size: automatic
-
-  std::vector<u8> tmp_buffer(MAX_CLUSTER_SIZE);
-  const auto mkfs_error_code =
-      f_mkfs("", &options, tmp_buffer.data(), static_cast<UINT>(tmp_buffer.size()));
-  if (mkfs_error_code != FR_OK)
-  {
-    ERROR_LOG_FMT(COMMON, "Failed to initialize SD image filesystem: {}",
-                  FatFsErrorToString(mkfs_error_code));
-    return false;
-  }
-
-  FATFS fs{};
-  const auto mount_error_code = f_mount(&fs, "", 0);
-  if (mount_error_code != FR_OK)
-  {
-    ERROR_LOG_FMT(COMMON, "Failed to mount SD image filesystem: {}",
-                  FatFsErrorToString(mount_error_code));
-    return false;
-  }
-  Common::ScopeGuard unmount_guard{[] { f_unmount(""); }};
-
-  if (!Pack(cancelled, root, true, tmp_buffer))
-  {
-    ERROR_LOG_FMT(COMMON, "Failed to pack folder {} to SD image at {}", source_dir,
-                  temp_image_path);
-    return false;
-  }
-
-  unmount_guard.Exit();  // unmount before closing the image
-
-  if (!image.Close())
-  {
-    ERROR_LOG_FMT(COMMON, "Failed to close SD image at {}", temp_image_path);
-    return false;
-  }
-
-  if (!File::Rename(temp_image_path, image_path))
-  {
-    ERROR_LOG_FMT(COMMON, "Failed to rename SD image from {} to {}", temp_image_path, image_path);
-    return false;
-  }
-
-  image_delete_guard.Dismiss();  // no need to delete the temp file anymore after the rename
 
   INFO_LOG_FMT(COMMON, "Successfully packed folder {} to SD image at {}", source_dir, image_path);
+  return true;
+}
+
+bool BuildSDImageFromFiles(std::span<const SDImageFile> files, u64 size,
+                           const std::string& image_path, std::string* error, u32 cluster_bytes,
+                           u8 fats)
+{
+  if (cluster_bytes != 0 && (cluster_bytes < SECTOR_SIZE || cluster_bytes > MAX_CLUSTER_SIZE ||
+                             (cluster_bytes & (cluster_bytes - 1)) != 0))
+  {
+    *error = fmt::format("a cluster must be a power of two from {} to {} bytes", +SECTOR_SIZE,
+                         +MAX_CLUSTER_SIZE);
+    return false;
+  }
+  if (fats > 2)
+  {
+    *error = "a FAT32 volume has one or two FATs";
+    return false;
+  }
+  if (size == 0 || size % MAX_CLUSTER_SIZE != 0)
+  {
+    *error = fmt::format("an SD image's size must be whole {}-byte clusters", +MAX_CLUSTER_SIZE);
+    return false;
+  }
+  // The tree exactly as listed: folders from the paths, each file its listed source and size.
+  File::FSTEntry root;
+  root.isDirectory = true;
+  root.physicalName = "(listed files)";
+  for (const SDImageFile& file : files)
+  {
+    File::FSTEntry* dir = &root;
+    std::string_view rest = file.image_path;
+    for (size_t slash; (slash = rest.find('/')) != std::string_view::npos;
+         rest.remove_prefix(slash + 1))
+    {
+      const std::string_view name = rest.substr(0, slash);
+      auto it = std::ranges::find_if(dir->children, [&](const File::FSTEntry& e) {
+        return e.virtualName == name;
+      });
+      if (it == dir->children.end())
+      {
+        File::FSTEntry folder;
+        folder.isDirectory = true;
+        folder.virtualName = std::string(name);
+        folder.physicalName = folder.virtualName;
+        dir->children.push_back(std::move(folder));
+        it = std::prev(dir->children.end());
+      }
+      else if (!it->isDirectory)
+      {
+        *error = fmt::format("{} is both a file and a folder", file.image_path);
+        return false;
+      }
+      dir = &*it;
+    }
+    if (rest.empty() || std::ranges::any_of(dir->children, [&](const File::FSTEntry& e) {
+          return e.virtualName == rest;
+        }))
+    {
+      *error = fmt::format("{} is listed twice or names a folder", file.image_path);
+      return false;
+    }
+    File::FSTEntry leaf;
+    leaf.virtualName = std::string(rest);
+    leaf.physicalName = file.source_path;
+    leaf.size = file.size;
+    dir->children.push_back(std::move(leaf));
+  }
+  SortFSTFilesFirst(&root);
+  if (!CheckIfFATCompatible(root))
+  {
+    *error = "the files don't fit FAT (a name over 255 characters, a file of 4 GiB or more, or a "
+             "folder of more than 65,536 entries)";
+    return false;
+  }
+  if (!WriteImage([] { return false; }, root, size, image_path, /*deterministic*/ true,
+                  cluster_bytes, fats))
+  {
+    *error = "packing the files failed (the log says why; the card may be too small for them)";
+    return false;
+  }
   return true;
 }
 

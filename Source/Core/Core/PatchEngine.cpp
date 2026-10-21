@@ -32,6 +32,7 @@
 #include "Core/Debugger/PPCDebugInterface.h"
 #include "Core/GeckoCode.h"
 #include "Core/GeckoCodeConfig.h"
+#include "Core/Orca/Profile.h"
 #include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/System.h"
@@ -182,6 +183,9 @@ void LoadPatches()
   Common::IniFile localIni = sconfig.LoadLocalGameIni();
 
   LoadPatchSection("OnFrame", &s_on_frame, globalIni, localIni);
+  // Orca: a player's own game patches would write RAM on one machine only.
+  if (Orca::SessionActive())
+    s_on_frame.clear();
 
 #ifdef USE_RETRO_ACHIEVEMENTS
   AchievementManager::GetInstance().FilterApprovedPatches(s_on_frame, sconfig.GetGameID(),

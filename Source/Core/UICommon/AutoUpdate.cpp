@@ -13,6 +13,7 @@
 #include "Common/HttpRequest.h"
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
+#include "Common/Network.h"
 #include "Common/ScopeGuard.h"
 #include "Common/StringUtil.h"
 #include "Common/Version.h"
@@ -191,6 +192,9 @@ static u32 GetOwnProcessId()
 void AutoUpdateChecker::CheckForUpdate(std::string_view update_track,
                                        std::string_view hash_override, const CheckType check_type)
 {
+  if (Common::OfflineReplay())
+    return;
+
   bool expected_check_in_progress = false;
   if (!s_check_in_progress.compare_exchange_strong(expected_check_in_progress, true))
     return;
@@ -271,6 +275,9 @@ void AutoUpdateChecker::CheckForUpdate(std::string_view update_track,
 void AutoUpdateChecker::TriggerUpdate(const AutoUpdateChecker::NewVersionInformation& info,
                                       const AutoUpdateChecker::RestartMode restart_mode)
 {
+  if (Common::OfflineReplay())
+    return;
+
   // Check to make sure we don't already have an update triggered
   if (s_update_triggered)
   {

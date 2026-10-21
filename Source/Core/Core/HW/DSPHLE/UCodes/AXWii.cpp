@@ -5,7 +5,13 @@
 
 #include "Core/HW/DSPHLE/UCodes/AXWii.h"
 
+#include <algorithm>
 #include <array>
+#include <cstring>
+#include <iterator>
+#include <optional>
+#include <span>
+#include <type_traits>
 
 #include "Common/ChunkFile.h"
 #include "Common/CommonTypes.h"
@@ -17,6 +23,7 @@
 #include "Core/HW/DSPHLE/UCodes/AXVoice.h"
 #include "Core/HW/DSPHLE/UCodes/UCodes.h"
 #include "Core/HW/Memmap.h"
+#include "Core/Orca/Music.h"
 
 namespace DSP::HLE
 {
@@ -124,7 +131,9 @@ void AXWiiUCode::HandleCommandList()
         u16 frames = m_cmdlist[curr_idx++];
         addr_hi = m_cmdlist[curr_idx++];
         addr_lo = m_cmdlist[curr_idx++];
-        RunCompressor(threshold, frames, HILO_TO_32(addr), 3);
+        RunCompressor(threshold, frames, HILO_TO_32(addr), 3,
+                      m_music_split ? m_music_left : nullptr,
+                      m_music_split ? m_music_right : nullptr);
         break;
       }
 
@@ -221,7 +230,9 @@ void AXWiiUCode::HandleCommandList()
         u16 frames = m_cmdlist[curr_idx++];
         addr_hi = m_cmdlist[curr_idx++];
         addr_lo = m_cmdlist[curr_idx++];
-        RunCompressor(threshold, frames, HILO_TO_32(addr), 3);
+        RunCompressor(threshold, frames, HILO_TO_32(addr), 3,
+                      m_music_split ? m_music_left : nullptr,
+                      m_music_split ? m_music_right : nullptr);
         break;
       }
 
@@ -269,6 +280,10 @@ void AXWiiUCode::SetupProcessing(u32 init_addr)
       {m_samples_wm3, 6},        {m_samples_aux3, 6},
   }};
   InitMixingBuffers<3 /*ms*/>(init_addr, buffers);
+
+  m_music_split = !Orca::Music::On();
+  std::fill(std::begin(m_music_left), std::end(m_music_left), 0);
+  std::fill(std::begin(m_music_right), std::end(m_music_right), 0);
 }
 
 void AXWiiUCode::AddToLR(u32 val_addr, bool neg)
@@ -452,6 +467,24 @@ void AXWiiUCode::ProcessPBList(u32 pb_addr)
 
     ReadPB(memory, pb_addr, pb);
 
+    // A music voice mixes as any other; its share of the main bus is what it added there. Not
+    // checked for running: an old AXWii's per-ms updates can start it mid-frame. A stream voice
+    // stays music through its song's loops, when the game makes it a normal voice for a moment.
+    const bool music =
+        m_stream_voices.IsMusic(pb_addr, pb.is_stream, HILO_TO_32(pb.audio_addr.loop_addr),
+                                HILO_TO_32(pb.audio_addr.end_addr),
+                                HILO_TO_32(pb.audio_addr.cur_addr)) &&
+        m_music_split;
+    // The main buffers are sized for AX GC's 5 ms; a Wii frame uses the first 3 ms.
+    std::array<int, Orca::Music::FRAME_SAMPLES> left_before, right_before;
+    static_assert(Orca::Music::FRAME_SAMPLES <= std::extent_v<decltype(m_samples_main_left)> &&
+                  Orca::Music::FRAME_SAMPLES <= std::extent_v<decltype(m_samples_main_right)>);
+    if (music)
+    {
+      std::copy_n(m_samples_main_left, left_before.size(), left_before.begin());
+      std::copy_n(m_samples_main_right, right_before.size(), right_before.begin());
+    }
+
     if (m_old_axwii &&
         (pb.updates.num_updates[0] | pb.updates.num_updates[1] | pb.updates.num_updates[2]))
     {
@@ -475,6 +508,17 @@ void AXWiiUCode::ProcessPBList(u32 pb_addr)
       ProcessVoice(static_cast<HLEAccelerator*>(m_accelerator.get()), pb, buffers, 96,
                    ConvertMixerControl(HILO_TO_32(pb.mixer_control)),
                    m_coeffs_checksum ? m_coeffs.data() : nullptr, m_new_filter);
+    }
+
+    if (music)
+    {
+      for (size_t i = 0; i < left_before.size(); ++i)
+      {
+        m_music_left[i] += static_cast<int>(static_cast<u32>(m_samples_main_left[i]) -
+                                            static_cast<u32>(left_before[i]));
+        m_music_right[i] += static_cast<int>(static_cast<u32>(m_samples_main_right[i]) -
+                                             static_cast<u32>(right_before[i]));
+      }
     }
 
     WritePB(memory, pb_addr, pb);
@@ -586,6 +630,16 @@ void AXWiiUCode::OutputSamples(u32 lr_addr, u32 surround_addr, u16 volume, bool 
   GenerateVolumeRamp(volume_ramp.data(), m_last_main_volume, volume, volume_ramp.size());
   m_last_main_volume = volume;
 
+  // The same frame without the music, for this machine's speakers only (Orca/Music.h).
+  std::optional<Orca::Music::Frame> quiet;
+  if (m_music_split)
+  {
+    using Bus = std::span<const int, Orca::Music::FRAME_SAMPLES>;
+    quiet = Orca::Music::MixFrame(Bus{m_samples_main_left, Bus::extent},
+                                  Bus{m_samples_main_right, Bus::extent}, m_music_left,
+                                  m_music_right, volume_ramp);
+  }
+
   auto& memory = m_dsphle->GetSystem().GetMemory();
   memory.CopyToEmuSwapped(surround_addr, m_samples_main_surround, 3 * 32 * sizeof(int));
 
@@ -618,6 +672,13 @@ void AXWiiUCode::OutputSamples(u32 lr_addr, u32 surround_addr, u16 volume, bool 
   }
 
   memory.CopyToEmu(lr_addr, buffer.data(), sizeof(buffer));
+  if (quiet)
+  {
+    Orca::Music::Frame written;
+    static_assert(sizeof(buffer) == written.size());
+    std::memcpy(written.data(), buffer.data(), written.size());
+    Orca::Music::GetShadow().Put(lr_addr, written, *quiet);
+  }
   m_mail_handler.PushMail(DSP_SYNC, true);
 }
 

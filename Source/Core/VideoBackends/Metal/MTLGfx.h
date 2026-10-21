@@ -6,6 +6,8 @@
 #include <Metal/Metal.h>
 #include <QuartzCore/QuartzCore.h>
 
+#include <memory>
+
 #include "VideoCommon/AbstractGfx.h"
 
 #include "VideoBackends/Metal/MRCHelpers.h"
@@ -83,8 +85,29 @@ private:
   u32 m_staging_texture_counter = 0;
   std::array<u32, 4> m_shader_counter = {};
 
+  // Orca: background drawable acquire, used when nextDrawable would block the game (see
+  // AcquireDrawable in MTLGfx.mm).
+  struct DrawableProbe;
+  std::shared_ptr<DrawableProbe> m_drawable_probe;
+  // Why drawables come from a background acquire (No: plain nextDrawable on the CPU thread).
+  enum class Late
+  {
+    No,
+    Covered,     // a nextDrawable waited longer than LATE_DRAWABLE
+    SlowScreen,  // the screen refreshes below MIN_SCREEN_HZ
+    Paced,       // nextDrawable keeps waiting
+  };
+  Late m_late = Late::No;
+  u32 m_paced_waits = 0;  // bit i: the i-th most recent nextDrawable waited PACED_WAIT or more
+  int m_prompt_acquires = 0;
+  int m_paced_rounds = 0;  // times Paced began on this surface; each doubles the exit threshold
+
   void CheckForSurfaceChange();
   void CheckForSurfaceResize();
   void SetupSurface();
+  MRCOwned<id<CAMetalDrawable>> AcquireDrawable();
+  void StartDrawableProbe();
+  void DropProbedDrawable();
+  void SetLate(Late late);
 };
 }  // namespace Metal
