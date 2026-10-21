@@ -134,6 +134,8 @@ struct BackendInfo
 
   // TODO: merge AdapterName and Adapters array
   std::string AdapterName;  // for OpenGL
+  // Orca: the adapter's driver version where the backend can read it (D3D, D3D12), else empty.
+  std::string DriverVersion;
 
   u32 MaxTextureSize = 16384;
   bool bUsesLowerLeftOrigin = false;

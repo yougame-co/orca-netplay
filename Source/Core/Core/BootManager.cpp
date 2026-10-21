@@ -37,6 +37,11 @@
 #include "Core/HW/Sram.h"
 #include "Core/Movie.h"
 #include "Core/NetPlayProto.h"
+#include "Core/Orca/BootMemory.h"
+#include "Core/Orca/Bundle.h"
+#include "Core/Orca/Profile.h"
+#include "Core/Orca/Status.h"
+#include "Core/Orca/UX/UX.h"
 #include "Core/System.h"
 #include "Core/WiiRoot.h"
 
@@ -48,10 +53,30 @@ namespace BootManager
 bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
               const WindowSystemInfo& wsi)
 {
+  Orca::BootMemory::BeginBoot();
   if (!boot)
     return false;
 
   SConfig& StartUp = SConfig::GetInstance();
+
+  // Orca: the bundle this boot plays, if any (Core/Orca/Bundle.h), decided before anything
+  // reads a game setting (mod mode leaves the player's game INIs out). Once per process.
+  {
+    const auto* executable = std::get_if<BootParameters::Executable>(&boot->parameters);
+    // A launcher is checked as the bytes its reader already holds: those are what run.
+    std::span<const u8> launcher_bytes;
+    if (executable && executable->reader)
+      launcher_bytes = executable->reader->GetBytes();
+    Orca::Mod::ResolveBundle(executable ? &executable->path : nullptr, launcher_bytes);
+    if (!Orca::SessionActive() &&
+        Orca::Mod::ResolvedKind() == Orca::Mod::BundleKind::Refused)
+    {
+      const std::string error = Orca::Mod::ResolvedError();
+      Orca::Status::Error("profile", error);
+      PanicAlertFmt("{}", error);
+      return false;
+    }
+  }
 
   if (!StartUp.SetPathsAndGameMetadata(system, *boot))
     return false;
@@ -75,6 +100,102 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
           File::DeleteDirRecursively(movie_path);
       }
     }
+  }
+
+  // Orca rollback session: force the universal and the game profile's settings on both players.
+  std::optional<Orca::Profile> orca_profile;
+  if (Orca::SessionActive())
+  {
+    Orca::Status::State("booting");
+    std::string error;
+    // A disc boots with its own profile; a loader executable (a mod's launcher) only with the
+    // launcher profile ORCA_PROFILE names, which checks the loader, the disc and the SD card.
+    const auto* executable = std::get_if<BootParameters::Executable>(&boot->parameters);
+    bool mod_wrong_disc = false;
+    if (Orca::Mod::Requested())
+    {
+      // Mod mode (a tree bundle in ORCA_MOD_DIR, or a verified flat bundle): the game comes from
+      // the bundle, never from Data/Sys/Orca, and ORCA_PROFILE is ignored.
+      if (const Orca::Mod::FlatBundle* flat = Orca::Mod::ResolvedFlat())
+        orca_profile = Orca::LoadFlatProfile(*flat, &error);
+      else if (Orca::Mod::ResolvedKind() == Orca::Mod::BundleKind::Refused)
+        error = Orca::Mod::ResolvedError();
+      else
+        orca_profile = Orca::LoadModProfile(Orca::Mod::Dir(), &error);
+      if (orca_profile &&
+          !Orca::PrepareModBoot(&*orca_profile, executable ? &executable->path : nullptr,
+                                Config::Get(Config::MAIN_DEFAULT_ISO), StartUp.GetGameID(),
+                                StartUp.GetRevision(), &error, &mod_wrong_disc))
+      {
+        orca_profile.reset();
+      }
+      if (orca_profile)
+      {
+        const Orca::Mod::ModInfo& mod = *orca_profile->mod;
+        NOTICE_LOG_FMT(BOOT, "Orca mod: {} ({}, {} {} rev {}), tree {}, builtin {}, SD {}",
+                       mod.manifest.title.empty() ? "untitled" : mod.manifest.title,
+                       mod.flat ? "flat bundle" : "tree bundle",
+                       mod.manifest.launcher.empty() ? "disc" : "launcher on",
+                       mod.manifest.disc_id, mod.manifest.disc_revision, mod.tree.hash,
+                       Orca::Mod::BuiltinName(mod.manifest.builtin),
+                       mod.sd_image_hash.empty() ? "none" : mod.sd_image_hash);
+      }
+    }
+    else if (executable)
+    {
+      const std::string name = Orca::LauncherProfileName();
+      if (name.empty())
+        error = "Orca: booting a loader in a session needs ORCA_PROFILE (a launcher profile)";
+      else
+        orca_profile = Orca::LoadProfile(name, std::nullopt, &error);
+      if (orca_profile && !orca_profile->IsLauncher())
+      {
+        error = fmt::format("Orca: profile {} is not a launcher profile", name);
+        orca_profile.reset();
+      }
+      else if (orca_profile && !Orca::PrepareLauncherBoot(&*orca_profile, executable->path,
+                                                          Config::Get(Config::MAIN_DEFAULT_ISO),
+                                                          &error))
+      {
+        orca_profile.reset();
+      }
+    }
+    else
+    {
+      orca_profile = Orca::LoadProfile(StartUp.GetGameID(), StartUp.GetRevision(), &error);
+      if (orca_profile && orca_profile->IsLauncher())
+      {
+        error = fmt::format("Orca: profile {} boots through its loader, not the disc",
+                            orca_profile->game_id);
+        orca_profile.reset();
+      }
+    }
+    // A mod's refusal is the disc's only when PrepareModBoot says so (mod.json's own errors can
+    // name a revision too).
+    const char* error_code = !orca_profile && (Orca::Mod::Requested() ?
+                                                   mod_wrong_disc :
+                                                   error.find("revision") != std::string::npos) ?
+                                 "disc_revision" :
+                                 (!orca_profile ? "profile" : "settings");
+    if (orca_profile && NetPlay::IsNetPlayRunning())
+      error = "Orca: a session can't run alongside Dolphin netplay";
+    else if (orca_profile && !boot->riivolution_patches.empty())
+      error = "Orca: Riivolution patches are not allowed in a session";
+    else if (orca_profile && Config::Get(Config::MAIN_GFX_BACKEND) == "Software Renderer")
+      error = "Orca: the Software renderer can't keep EFB copies on the GPU";
+    if (!error.empty())
+    {
+      Orca::Status::Error(error_code, error);
+      PanicAlertFmt("{}", error);
+      return false;
+    }
+    orca_profile->boot_game_id = StartUp.GetGameID();
+    Config::AddLayer(Orca::GenerateConfigLoader(*orca_profile));
+    // A loader executable has no region of its own, so it got a fallback region from the host's
+    // locale, which differs between machines. Use the session's forced region so every player's
+    // console matches.
+    if (executable)
+      StartUp.m_region = Config::Get(Config::MAIN_FALLBACK_REGION);
   }
 
   if (NetPlay::IsNetPlayRunning())
@@ -155,6 +276,21 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
       Config::SetCurrent(Config::GFX_SUGGESTED_ASPECT_RATIO, AspectMode::ForceStandard);
     }
   }
+
+  // Orca: nothing set after the forced layer may outrank it.
+  if (orca_profile)
+  {
+    if (const auto problem = Orca::VerifyForcedSettings(*orca_profile))
+    {
+      Orca::Status::Error("settings", *problem);
+      PanicAlertFmt("{}", *problem);
+      return false;
+    }
+    NOTICE_LOG_FMT(BOOT, "{}", Orca::DescribeForcedSettings(*orca_profile));
+    NOTICE_LOG_FMT(BOOT, "{}", Orca::DescribeGraphics());
+  }
+  Orca::SetActiveProfile(orca_profile);
+  Orca::UX::SelectModule(Orca::ActiveProfile());
 
   system.Initialize();
 

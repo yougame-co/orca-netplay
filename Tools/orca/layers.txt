@@ -1,0 +1,202 @@
+# Orca layer map: which layer every path in the tree belongs to.
+#
+# Read by Tools/orca/layer-of-diff and Tools/orca/forbidden-calls (shared code in layerlib.py,
+# tests in test_layers.py). Crowd fixes are routed and gated by the layers their diff touches.
+#
+# Line format:   <class>  <glob>  [dev] [review]
+#
+#   class  One of four, from least to most risky:
+#          game-data         Data a game bundle will carry: profiles, .patches, JIT seeds, label
+#                            textures, test inputs. Once bundles boot (S4) a change is a mod
+#                            version, not an Orca release.
+#          game-logic        C++ that knows one game's memory (Brawl rev 2, Project+): stage flows,
+#                            rules, results, name tags, the match block layout. It moves into
+#                            Orca/Games/<game>/ (S2) and becomes a script, then a mod version (S7).
+#          engine            Game-agnostic: Dolphin, rollback, the session, host-only UI, tools.
+#                            Always an Orca release; the perf gate if it touches the frame path.
+#          engine-sensitive  Engine code a person reviews first: parsers of peer, network, app or
+#                            file bytes (rooms, keyframes, replays, direct links, chat, the embed
+#                            channel, profiles, patches, fonts, textures); sockets, HTTP, TLS,
+#                            crypto; the compatibility key, disc and SD checks and forced settings;
+#                            persistent formats (NAND and saves, savestates, settings, shader-cache
+#                            keys); build inputs that pull in code (Externals, root CMake);
+#                            entitlements; release scripts; and this map and its scanners.
+#   glob   A path from the repository root. `*` and `?` stay inside one path segment, `**` spans
+#          any number of segments, `{a,b}` lists alternatives, `[...]` is a character class.
+#   dev    The path never ships in an Orca build (docs, tests, tools). layer-of-diff leaves dev
+#          paths out when it decides whether a change needs an Orca build, but still reports and
+#          gates on their layer.
+#   review Code that carries competitive policy (ranked rules, what a room rates): game logic or
+#          engine (Orca/Policy), a person reviews the diff (layer-of-diff lists it under "review").
+#
+# The most specific rule wins: the one with the most literal (non-wildcard) characters. Two
+# matching rules with the same count and different classes or flags are an error (test_layers.py
+# checks every tracked path). Every path in Orca's own code must be matched by a rule other than
+# the `**` fallback, so a new area is classed on purpose, not by default.
+#
+# A gate runs the stable branch's copies of these tools (a checkout of origin/main) against the
+# branch with --repo, and reads this map with --rules-rev: a branch that edits the map or a tool
+# can't run its own copy through the gate (the tools refuse when the running copy differs from the
+# rev they are told to trust).
+#
+# Directives (one per line, starting with %):
+#   %orca-root <dir/>       Orca's own directories (besides every file that differs from upstream).
+#   %upstream-ref <ref>     Upstream Dolphin; Orca's changes are the diff from the merge-base.
+#   %upstream-base <sha>    The merge-base to use when <ref> is not fetched in this clone.
+
+%orca-root Source/Core/Core/Orca/
+%orca-root Source/Core/Core/Rollback/
+%orca-root Source/UnitTests/Core/Orca/
+%orca-root Data/Sys/Orca/
+%orca-root Tools/orca/
+%upstream-ref upstream/master
+%upstream-base f84df02055ab9610feec48e65648cac5a3c098fa
+
+# ---------------------------------------------------------------------------------------------
+# Fallback: upstream Dolphin and anything not named below. Changing it needs an Orca build.
+engine            **
+
+# ---------------------------------------------------------------------------------------------
+# Game data (Data/Sys/Orca: patches, JIT seeds, label textures), by kind: anything else there (a
+# new kind of file, code) is engine until it is named here.
+engine            Data/Sys/Orca/**
+game-data         Data/Sys/Orca/*.patches                 # game code patches (a validator in S5)
+game-data         Data/Sys/Orca/*.jitwarm                 # JIT warm-up seeds
+game-data         Data/Sys/Orca/Textures/**/*.png         # label textures
+engine            Data/Sys/Orca/Fonts/**                  # YouGame card font: an engine asset
+engine            Data/Sys/Orca/Input/**                  # default pad mapping: an engine asset
+# Profiles: [Forced] can set any Dolphin setting on the session's layer (after the universal list,
+# so it can undo it), and [Profile] holds owner-only fields (FrameHook, KeepGameCode, Launcher,
+# SDImageHash...). Engine-sensitive until S4's mod.json is checked field by field.
+engine-sensitive  Data/Sys/Orca/*.ini
+# Dolphin's own game settings for Brawl ([Core], [Video_*]: Dolphin settings), in the key.
+engine-sensitive  Data/Sys/GameSettings/RSB*.ini
+# Branding.
+engine            Data/Orca.{icns,png}
+engine            Installer/Orca.ico
+
+# ---------------------------------------------------------------------------------------------
+# Orca/: session plumbing.
+engine            Source/Core/Core/Orca/**
+engine-sensitive  Source/Core/Core/Orca/Status.*          # the app protocol on stdout, the app's caps
+engine-sensitive  Source/Core/Core/Orca/Disc.*            # disc check, Rev 1 alias
+engine-sensitive  Source/Core/Core/Orca/DiscVerify.*      # Orca --verify
+engine-sensitive  Source/Core/Core/Orca/JitWarm.*         # .jitwarm file parser
+engine-sensitive  Source/Core/Core/Orca/Launch.*          # orca-launch.ini parser
+engine-sensitive  Source/Core/Core/Orca/Profile.*         # profile parser, forced settings
+engine-sensitive  Source/Core/Core/Orca/Mod.*             # mods-p1: mod.json, tree hash, SD builder
+engine-sensitive  Source/Core/Core/Orca/Bundle.*          # flat bundles: discovery, mod.sig, the pinned key
+engine-sensitive  Source/Core/Core/Orca/Sandbox.*         # sandbox mode (0.3.39): --sandbox-probe's socket and file checks
+engine-sensitive  Source/Core/Core/Orca/LocalStore.*      # S2: kept seen keys and controls (user files)
+# S5: game data as files: the strict JSON reader, the one-schema interpreter and the ruleset reader
+# (pack bytes once a bundle carries a ruleset), and the schema itself, which is compiled in.
+engine-sensitive  Source/Core/Core/Orca/Engine/{StrictJson,Schema,Ruleset}.*
+engine-sensitive  Tools/orca/mods/ruleset.schema.json
+# Session/: rooms, direct links, keyframes, replays, pad codec, compatibility key, input exchange.
+engine-sensitive  Source/Core/Core/Orca/Session/**
+engine            Source/Core/Core/Orca/Session/Events.*  # engine-to-game callbacks, no parsing
+
+# Competitive policy machines, engine-side (S2 commit 7, Luis's decision 11): the queue's ready/
+# timer/skip machine and the character order. Engine code a person reviews (their numbers become
+# ruleset data in S5).
+engine            Source/Core/Core/Orca/Policy/**         review
+# Future game modules (S2): Orca/Games/<game>/. Their build files pull code in: engine-sensitive.
+game-logic        Source/Core/Core/Orca/Games/**
+game-logic        Source/Core/Core/Orca/Games/Generic/**   # engine-only game module
+engine-sensitive  Source/Core/Core/Orca/Games/**/CMakeLists.txt
+engine-sensitive  Source/Core/Core/Orca/Games/**/*.cmake
+# S5: the builtin module's rulesets (stages, timers, clauses, ledge limits, set rules) are data.
+game-data         Source/Core/Core/Orca/Games/**/Rulesets/*.json     review
+
+# UX/: host-only UI (overlay, kit, set end, orb, cards, controllers) and the composition root
+# are engine. RankedSteps (strikes, bans, DSR, timers) is competitive policy: engine (S2 keeps it
+# there; its tables become ruleset data in S5).
+engine            Source/Core/Core/Orca/UX/**
+engine-sensitive  Source/Core/Core/Orca/UX/Chat.*         # peer chat text
+engine-sensitive  Source/Core/Core/Orca/UX/ControllerSource.* # curl SSE client, YOUGAME_TOKEN
+engine-sensitive  Source/Core/Core/Orca/UX/Controllers.*  # the app's controller JSON
+engine-sensitive  Source/Core/Core/Orca/UX/YgOrb.*        # the app's orb and notice commands
+engine-sensitive  Source/Core/Core/Orca/UX/GameFont.*     # RFNT reader (fonts from the disc)
+engine-sensitive  Source/Core/Core/Orca/UX/GamePatches.*  # .patches parser and applier
+engine-sensitive  Source/Core/Core/Orca/UX/QueueApp.*     # S2: the queue identity codec (peer bytes)
+# Game logic (hardcoded Brawl rev 2 / Project+ memory) moved to Orca/Games/Brawl/ in S2 commit 1
+# (Tools/orca/split/s2-move.py) and is classed by the Games/** rule above: stage flows, rules, name
+# tags, the match block and set block layouts, free space, and the mixed text modules (an engine
+# mechanism carrying game data, classed by the data until S5 moves the mechanism to the engine).
+# Three of them carry competitive policy until S2 splits it out: the queue's ready/timer/skip
+# machine, ranked stocks and minutes (RankedSet), and the winner and set result the room rates
+# (Results).
+game-logic        Source/Core/Core/Orca/Games/Brawl/{Queue,RankedSet,Results,Rulesets}.* review
+
+# ---------------------------------------------------------------------------------------------
+# Rollback/: rollback core and test harness.
+engine            Source/Core/Core/Rollback/**
+engine-sensitive  Source/Core/Core/Rollback/OnlineMatch.* # replay rebuild, drop-in orchestration
+
+# ---------------------------------------------------------------------------------------------
+# Dolphin areas Orca changes.
+engine            Source/Core/AudioCommon/**
+engine            Source/Core/Common/**
+engine-sensitive  Source/Core/Common/{WebSocket,HttpRequest}.*
+engine-sensitive  Source/Core/Common/CurlTLS.h
+engine-sensitive  Source/Core/Common/Crypto/**
+engine-sensitive  Source/Core/Common/ChunkFile.h          # savestate format
+engine            Source/Core/Core/*
+engine-sensitive  Source/Core/Core/CMakeLists.txt         # links core's libraries; the bundle key it pins
+engine-sensitive  Source/Core/Core/BootManager.*          # forced settings at boot
+engine-sensitive  Source/Core/Core/State.*                # savestates
+engine-sensitive  Source/Core/Core/WiiRoot.*              # session NAND and save
+engine-sensitive  Source/Core/Core/Config/**              # settings schema
+engine-sensitive  Source/Core/Core/NetPlay*               # Dolphin NetPlay's parsers (sessions never use them)
+engine-sensitive  Source/Core/Core/ConfigLoaders/**       # game INIs (a mod session leaves the player's out)
+engine            Source/Core/Core/Boot/**
+engine            Source/Core/Core/HLE/**                 # frame hook install
+engine            Source/Core/Core/HW/**
+engine            Source/Core/Core/IOS/**
+engine-sensitive  Source/Core/Core/IOS/FS/**              # NAND journal
+engine-sensitive  Source/Core/Core/IOS/Network/**         # network refusal
+engine-sensitive  Source/Core/Core/IOS/SDIO/**            # the verified SD card
+engine            Source/Core/Core/PowerPC/**             # JIT float determinism
+engine-sensitive  Source/Core/DiscIO/**                   # disc reading, read patches
+engine-sensitive  Source/Core/DolphinNoGUI/**             # embed protocol, stdin, entitlements
+engine            Source/Core/InputCommon/**
+engine-sensitive  Source/Core/UICommon/**                 # user directory
+engine            Source/Core/VideoBackends/**
+engine-sensitive  Source/Core/VideoBackends/D3DCommon/FxcCache.*
+engine            Source/Core/VideoCommon/**
+engine-sensitive  Source/Core/VideoCommon/HiresTextures.* # texture pack loader
+engine-sensitive  Source/Core/VideoCommon/ShaderCache.*   # shader-cache keys
+
+# Dolphin's Qt UI never ships (Orca.app and the Windows zip carry dolphin-emu-nogui only). Classed
+# here because an upstream fix picked into it (0.3.36's NetPlay banner check) makes it an Orca path.
+engine            Source/Core/DolphinQt/**                dev
+
+# Build inputs and third-party code.
+engine-sensitive  .gitmodules
+engine-sensitive  CMakeLists.txt
+engine-sensitive  CMakePresets.json
+engine-sensitive  CMake/**
+engine-sensitive  Externals/**
+engine            .gitattributes
+engine            .gitignore
+
+# ---------------------------------------------------------------------------------------------
+# Never shipped: docs, unit tests, tools.
+engine            **/*.md                                 dev
+engine            docs/**                                 dev
+engine            Source/UnitTests/**                     dev
+game-logic        Source/UnitTests/Core/Orca/Games/**     dev     # game-module tests (S2)
+# (RankedTest.cpp tests the engine's RankedSteps: engine dev, from the line above.)
+engine            Tools/**                                dev
+engine-sensitive  Tools/orca-{package-macos,publish-public}.sh dev   # release scripts
+engine-sensitive  Tools/orca/upstream-sync.py              dev     # upstream Dolphin sync (release script)
+engine-sensitive  Tools/orca/layer*                       dev     # this map, layer-of-diff, layerlib
+engine-sensitive  Tools/orca/forbidden-calls*             dev
+engine-sensitive  Tools/orca/{firewall*,test_firewall.py}  dev     # S2: include firewall + float rule
+engine-sensitive  Tools/orca/test_layers.py               dev
+engine-sensitive  Tools/orca/mods/ruleset-vectors.json    dev     # S5: the cases Orca and the site must agree on
+game-data         Tools/orca/inputs/**                    dev     # scripted pads for bf-*/pplus-*
+game-data         Tools/orca/textures/**                  dev     # label art generator
+engine            Tools/orca/textures/*.py                dev     # its code
+game-logic        Tools/orca/free-space.py                dev
+engine-sensitive  .github/**                              dev

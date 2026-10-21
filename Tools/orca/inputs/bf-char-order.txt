@@ -1,0 +1,26 @@
+# Character order (CharOrder.h) on Brawl's character select (Group > Brawl from the main menu), with
+# ORCA_TEST_CHAR_ORDER brawl:2:2: both pick at once. Port 2 joins and puts its token on a character;
+# port 1 joins later, which starts the order with port 1's token in its hand.
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain mash 30 99999 1 40 A
+@scSelctCharacter:1 83 86 2 A
+@scSelctCharacter:1 113 153 2 SY=255
+@scSelctCharacter:1 193 196 2 A
+@scSelctCharacter:1 230 233 1 A
+# Presses the order masks: Start and B on both ports.
+@scSelctCharacter:1 260 263 2 START
+@scSelctCharacter:1 265 268 2 B
+@scSelctCharacter:1 270 273 1 START
+@scSelctCharacter:1 280 283 1 B
+# Port 2's A on its own token picks it up (no lock-in); it moves right and puts it down: its
+# lock-in, after which its presses are masked.
+@scSelctCharacter:1 300 303 2 A
+@scSelctCharacter:1 320 326 2 SX=255
+@scSelctCharacter:1 340 343 2 A
+# Port 1 moves up and puts its token on a character: its lock-in, then Orca's Start.
+@scSelctCharacter:1 360 400 1 SY=255
+@scSelctCharacter:1 420 423 1 A
+@scSelStage:1 35 73 1 SY=255
+@scSelStage:1 95 98 1 A

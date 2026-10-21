@@ -1,0 +1,73 @@
+# The stage select's two cursors (ORCA.md "Two cursors"), a ranked Brawl set,
+# Mario (P1) vs Samus (P2). Run with ORCA_TEST_QUEUE=ranked (the header's coin 0: port 1 strikes
+# first), ORCA_TEST_SET_RULES=1,8 (1-stock games) and ORCA_UX_TEST_NAMES=ada,bo, e.g. the sync test:
+#   ORCA_SESSION=1 ORCA_TEST_QUEUE=ranked ORCA_TEST_SET_RULES=1,8 ORCA_UX_TEST_NAMES=ada,bo \
+#   YG_INPUT=<this> YG_SYNCTEST=7 YG_SYNCTEST_FROM=1700 YG_EXIT_AFTER=<frames> \
+#   dolphin-emu-nogui -p headless -v Null -e <disc>
+# Each cursor starts just above the Random bar (port 1 at -2, -16.5; port 2 at 9, -16.5) and moves
+# 1.625 a frame at full tilt.
+# Game 1: both cursors move at once (port 1 up onto Battlefield, port 2 up and right onto
+# Smashville); port 2 proposes Smashville with A; port 1 strikes Battlefield with X; port 2 moves
+# onto Yoshi's Island and strikes it while port 1 moves onto the page button and turns the page
+# with A; port 1 proposes Pokemon Stadium on the Melee page; port 2 moves there and proposes it too:
+# agreed, the rest of the strikes and the pick skipped, the match on Pokemon Stadium. Port 2 walks
+# off.
+# Game 2 (port 1 won): the character order as bf-ranked-bo3.txt has it; then the
+# loser (port 2) proposes Battlefield, the winner (port 1) skips its ban with Y and proposes
+# Battlefield too: agreed.
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain mash 30 99999 1 40 A
+@scSelctCharacter:1 53 56 1 A
+@scSelctCharacter:1 83 86 2 A
+@scSelctCharacter:1 113 153 1 SY=255
+@scSelctCharacter:1 113 153 2 SY=255
+@scSelctCharacter:1 173 176 1 A
+@scSelctCharacter:1 193 196 2 A
+@scSelctCharacter:1 233 236 1 START
+# Game 1. Port 1: 21 frames up (y 17.6, Battlefield). Port 2: 9 frames up-right, 1 more up (23.6,
+# -0.25: Smashville).
+@scSelStage:1 40 60 1 SY=255
+@scSelStage:1 40 48 2 SX=255 SY=255
+@scSelStage:1 49 49 2 SY=255
+@scSelStage:1 64 66 2 A
+@scSelStage:1 70 72 1 X
+# Port 2: 4 frames up-left, 11 left (-0.75, 6.25: Yoshi's Island), then X. Port 1 at the same time:
+# 13 frames down-right, 9 down (19.1, -18.1: the page button), then A.
+@scSelStage:1 80 83 2 SX=0 SY=255
+@scSelStage:1 84 94 2 SX=0
+@scSelStage:1 100 102 2 X
+@scSelStage:1 80 92 1 SX=255 SY=0
+@scSelStage:1 93 101 1 SY=0
+@scSelStage:1 110 112 1 A
+# The Melee page: port 1 2 frames up-right, 5 up (22.4, -6.75: Pokemon Stadium), A. Port 2 8 frames
+# down-right, 6 right (22.0, -6.75), A: agreed.
+@scSelStage:1 140 141 1 SX=255 SY=255
+@scSelStage:1 142 146 1 SY=255
+@scSelStage:1 155 157 1 A
+@scSelStage:1 160 167 2 SX=255 SY=0
+@scSelStage:1 168 173 2 SX=255
+@scSelStage:1 185 187 2 A
+# Each game: port 2 walks off the left edge (1 stock).
+@scMelee 250 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START
+# Game 2: the character order (bf-ranked-bo3.txt's): the winner, port 1, then port 2.
+@scSelctCharacter:2 mash 60 99999 1 45 START
+@scSelctCharacter:2 30 33 1 A
+@scSelctCharacter:2 40 43 2 A
+@scSelctCharacter:2 100 135 1 SX=255
+@scSelctCharacter:2 150 153 1 A
+@scSelctCharacter:2 100 133 2 SY=255
+@scSelctCharacter:2 160 163 2 A
+# Port 2 (the loser): 7 frames up-left, 14 up (-2.4, 17.6: Battlefield), A. Port 1 (the winner): Y
+# (no ban), 21 frames up (-2, 17.6: Battlefield), A: agreed.
+@scSelStage:2 40 46 2 SX=0 SY=255
+@scSelStage:2 47 60 2 SY=255
+@scSelStage:2 70 72 2 A
+@scSelStage:2 80 82 1 Y
+@scSelStage:2 90 110 1 SY=255
+@scSelStage:2 120 122 1 A

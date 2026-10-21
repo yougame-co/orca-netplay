@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <string_view>
 
 #include "Common/CommonTypes.h"
+#include "Common/Logging/Log.h"
 
 #include "Core/Config/MainSettings.h"
 #include "Core/Core.h"
@@ -16,6 +18,7 @@
 #include "Core/HLE/HLE_OS.h"
 #include "Core/HW/Memmap.h"
 #include "Core/Host.h"
+#include "Core/Orca/Profile.h"
 #include "Core/PowerPC/PPCSymbolDB.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/System.h"
@@ -26,7 +29,7 @@ namespace HLE
 static std::map<u32, u32> s_hooked_addresses;
 
 // clang-format off
-constexpr std::array<Hook, 23> os_patches{{
+constexpr std::array<Hook, 24> os_patches{{
     // Placeholder, os_patches[0] is the "non-existent function" index
     {"FAKE_TO_SKIP_0",               HLE_Misc::UnimplementedFunction,       HookType::Replace, HookFlag::Generic},
 
@@ -58,7 +61,10 @@ constexpr std::array<Hook, 23> os_patches{{
 
     {"GeckoCodehandler",             HLE_Misc::GeckoCodeHandlerICacheFlush, HookType::Start,   HookFlag::Fixed},
     {"GeckoHandlerReturnTrampoline", HLE_Misc::GeckoReturnTrampoline,       HookType::Replace, HookFlag::Fixed},
-    {"AppLoaderReport",              HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Fixed} // apploader needs OSReport-like function
+    {"AppLoaderReport",              HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Fixed}, // apploader needs OSReport-like function
+
+    // Orca rollback: once per game frame, at the address the game's profile names (Core/Rollback)
+    {"OrcaFrameBoundary",            HLE_Misc::OrcaFrameBoundary,           HookType::Start,   HookFlag::Fixed},
 }};
 // clang-format on
 
@@ -104,6 +110,27 @@ void PatchFixedFunctions(Core::System& system)
   // This has to always be installed even if cheats are not enabled because of the possibility of
   // loading a savestate where PC is inside the code handler while cheats are disabled.
   Patch(system, Gecko::HLE_TRAMPOLINE_ADDRESS, "GeckoHandlerReturnTrampoline");
+
+  // Orca rollback frame boundary, in a session whose profile names one, after checking the
+  // instruction there.
+  if (const Orca::Profile* profile = Orca::ActiveProfile(); profile && profile->frame_hook)
+  {
+    const u32 hook = *profile->frame_hook;
+    const u32 word = system.GetMemory().Read_U32(hook & 0x1FFFFFFF);
+    // A launcher profile's game isn't in RAM yet when its loader boots: install the hook now, and
+    // the boundary ignores every pass until the expected instruction is there (FrameHookLive).
+    if (!profile->frame_hook_word || word == *profile->frame_hook_word || profile->IsLauncher())
+    {
+      Patch(system, hook, "OrcaFrameBoundary");
+      NOTICE_LOG_FMT(ROLLBACK, "{}: frame boundary hook at {:08x}{}", profile->game_id, hook,
+                     word == profile->frame_hook_word ? "" : " (live once the game is loaded)");
+    }
+    else
+    {
+      ERROR_LOG_FMT(ROLLBACK, "{}: expected {:08x} at {:08x}, found {:08x}; no frame boundary hook",
+                    profile->game_id, *profile->frame_hook_word, hook, word);
+    }
+  }
 }
 
 void PatchFunctions(Core::System& system)
@@ -305,5 +332,11 @@ u32 UnpatchRange(Core::System& system, u32 start_addr, u32 end_addr)
   Host_JitCacheInvalidation();
 
   return count;
+}
+
+bool NeedsExactTime(u32 hook_index)
+{
+  return hook_index < os_patches.size() &&
+         std::string_view(os_patches[hook_index].name) == "OrcaFrameBoundary";
 }
 }  // namespace HLE

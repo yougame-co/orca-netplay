@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "Core/HLE/HLE_Misc.h"
+#include "Core/Rollback/Diag.h"
+#include "Core/Rollback/Rollback.h"
 
 #include "Common/CommonTypes.h"
 #include "Core/Core.h"
@@ -54,6 +56,8 @@ void GeckoCodeHandlerICacheFlush(const Core::CPUThreadGuard& guard)
   }
   PowerPC::MMU::HostWrite<u32>(guard, gch_gameid + 1, Gecko::INSTALLER_BASE_ADDRESS);
 
+  if (Rollback::Diag::g_jit_code_log)
+    Rollback::Diag::JitCodeNote("Gecko code handler: icache reset");
   ppc_state.iCache.Reset(jit_interface);
 }
 
@@ -78,5 +82,11 @@ void GeckoReturnTrampoline(const Core::CPUThreadGuard& guard)
         PowerPC::MMU::HostRead<u64>(guard, SP + 24 + 2 * i * sizeof(u64)),
         PowerPC::MMU::HostRead<u64>(guard, SP + 24 + (2 * i + 1) * sizeof(u64)));
   }
+}
+// Start hook: runs before the instruction at the profile's frame boundary, which then executes
+// normally. Snapshots are saved and loaded here.
+void OrcaFrameBoundary(const Core::CPUThreadGuard& guard)
+{
+  Rollback::OnFrameBoundary(guard);
 }
 }  // namespace HLE_Misc

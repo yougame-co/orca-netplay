@@ -1,0 +1,49 @@
+# A ranked Brawl set's stage flow (ORCA.md "Ranked steps"), Mario (P1) vs Samus (P2):
+# game 1's strikes by X (Battlefield, Yoshi's Island, Lylat Cruise, Smashville) leave Pokemon
+# Stadium, which the flow selects on the Melee page; port 2 walks off; game 2's ban times out (33 s)
+# and port 2, the loser, picks Battlefield with A; port 2 walks off again (2-0).
+# Both ports always send the same menu inputs: only the turn's port acts (the input gate).
+# Run with ORCA_TEST_QUEUE=ranked (a ranked header as a queue room's host writes it), e.g. the sync
+# test (ranked-sprint: game 1's third step is the first striker's pick, which times out here):
+#   ORCA_SESSION=1 ORCA_TEST_QUEUE=ranked ORCA_TEST_SET_RULES=1,8 ORCA_UX_TEST_NAMES=ada,bo \
+#   YG_INPUT=<this> YG_SYNCTEST=7 YG_SYNCTEST_FROM=1700 \
+#   YG_EXIT_AFTER=6700 YG_RESULTS=1 dolphin-emu-nogui -p headless -v Null -e <disc>
+# The checked run also made the matches 1-stock with an ORCA_UX_PROBE file of two lines, written
+# before the sync test's window: `@scSelctCharacter:1 20 write 9017f362 0103` and
+# `@scSelctCharacter:1 20 write 9017f364 01`. Without it a fresh save's 2:00 timed matches run to
+# time (port 1 ahead), and the frames after game 1 move: raise YG_EXIT_AFTER.
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain mash 30 99999 1 40 A
+@scSelctCharacter:1 1853 1856 1 A
+@scSelctCharacter:1 1883 1886 2 A
+@scSelctCharacter:1 1913 1953 1 SY=255
+@scSelctCharacter:1 1913 1953 2 SY=255
+@scSelctCharacter:1 1973 1976 1 A
+@scSelctCharacter:1 1993 1996 2 A
+@scSelctCharacter:1 mash 2400 99999 1 120 START
+@scSelctCharacter:1 mash 2420 99999 2 120 START
+# Game 1: strike Battlefield, Yoshi's Island, Lylat Cruise, Smashville; Pokemon Stadium is left.
+@scSelStage:1 190 209 1 SY=255
+@scSelStage:1 190 209 2 SY=255
+@scSelStage:1 212 214 1 SX=1
+@scSelStage:1 212 214 2 SX=1
+@scSelStage:1 225 227 1 X
+@scSelStage:1 225 227 2 X
+@scSelStage:1 235 240 1 SY=1
+@scSelStage:1 235 240 2 SY=1
+@scSelStage:1 250 252 1 X
+@scSelStage:1 250 252 2 X
+@scSelStage:1 260 267 1 SX=255
+@scSelStage:1 260 267 2 SX=255
+@scSelStage:1 275 277 1 X
+@scSelStage:1 275 277 2 X
+@scSelStage:1 285 291 1 SX=255
+@scSelStage:1 285 291 2 SX=255
+@scSelStage:1 292 296 1 SY=1
+@scSelStage:1 292 296 2 SY=1
+@scSelStage:1 305 307 1 X
+@scSelStage:1 305 307 2 X
+@scMelee fuzz 400 99999 1 11
+@scMelee fuzz 400 99999 2 22

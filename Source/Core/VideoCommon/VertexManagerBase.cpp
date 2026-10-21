@@ -17,6 +17,7 @@
 
 #include "Core/DolphinAnalytics.h"
 #include "Core/HW/SystemTimers.h"
+#include "Core/Orca/Profile.h"
 #include "Core/System.h"
 
 #include "VideoCommon/AbstractGfx.h"
@@ -910,7 +911,33 @@ void VertexManagerBase::UpdatePipelineObject()
       return;
     }
 
-    if (g_ActiveConfig.iShaderCompilationMode == ShaderCompilationMode::AsynchronousUberShaders)
+    // Orca: in a session, never compile a missing ubershader here on the emulation thread; with
+    // D3D's FXC that freezes the game for seconds. Skip the draw instead, as in
+    // AsynchronousSkipRendering, until a pipeline is ready. This is safe for determinism because
+    // nothing drawn reaches RAM in a session. See ORCA.md, "Match start".
+    static const bool session = Orca::SessionActive();
+    if (g_ActiveConfig.iShaderCompilationMode == ShaderCompilationMode::AsynchronousUberShaders &&
+        session)
+    {
+      if (const auto uber =
+              g_shader_cache->GetUberPipelineForUidIfReady(m_current_uber_pipeline_config))
+      {
+        m_current_pipeline_object = *uber;
+      }
+      else
+      {
+        m_pipeline_config_changed = true;
+        static bool said = false;
+        if (!said)
+        {
+          said = true;
+          NOTICE_LOG_FMT(VIDEO, "Orca: skipping draws whose ubershader is still compiling in the "
+                                "background, until it or the specialized pipeline is ready");
+        }
+      }
+    }
+    else if (g_ActiveConfig.iShaderCompilationMode ==
+             ShaderCompilationMode::AsynchronousUberShaders)
     {
       // Specialized shaders not ready, use the ubershaders.
       m_current_pipeline_object =

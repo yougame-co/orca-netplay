@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "Common/FileUtil.h"
+#include "Common/Network.h"
 #include "Core/PowerPC/MMU.h"
 
 MemoryWatcher::MemoryWatcher()
@@ -59,6 +60,9 @@ void MemoryWatcher::ParseLine(const std::string& line)
 
 bool MemoryWatcher::OpenSocket(const std::string& path)
 {
+  if (Common::OfflineReplay())
+    return false;
+
   m_addr.sun_family = AF_UNIX;
   strncpy(m_addr.sun_path, path.c_str(), sizeof(m_addr.sun_path) - 1);
 

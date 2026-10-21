@@ -164,7 +164,9 @@ protected:
   void MixAUXSamples(int aux_id, u32 write_addr, u32 read_addr);
   void UploadLRS(u32 dst_addr);
   void SetMainLR(u32 src_addr);
-  void RunCompressor(u16 threshold, u16 release_stages, u32 table_addr, u32 millis);
+  // `also_left` / `also_right`, when set, get the same gain (Orca's music share, AXWii.h).
+  void RunCompressor(u16 threshold, u16 release_stages, u32 table_addr, u32 millis,
+                     int* also_left = nullptr, int* also_right = nullptr);
   void OutputSamples(u32 out_addr, u32 surround_addr);
   void MixAUXBLR(u32 ul_addr, u32 dl_addr);
   void SetOppositeLR(u32 src_addr);

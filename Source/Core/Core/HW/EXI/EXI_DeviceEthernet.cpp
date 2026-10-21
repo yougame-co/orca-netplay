@@ -365,13 +365,14 @@ void CEXIETHERNET::MXCommandHandler(u32 data, u32 size)
     {
       INFO_LOG_FMT(SP1, "Software reset");
       // MXSoftReset();
-      m_network_interface->Activate();
+      if (!Common::OfflineReplay())
+        m_network_interface->Activate();
     }
     if (((mBbaMem[BBA_NCRA] & NCRA_SR) ^ (data & NCRA_SR)) != 0)
     {
       DEBUG_LOG_FMT(SP1, "{} rx", (data & NCRA_SR) ? "start" : "stop");
 
-      if ((data & NCRA_SR) != 0)
+      if ((data & NCRA_SR) != 0 && !Common::OfflineReplay())
         m_network_interface->RecvStart();
       else
         m_network_interface->RecvStop();
@@ -452,7 +453,7 @@ void CEXIETHERNET::SendFromDirectFIFO()
 {
   const u8* frame = tx_fifo.get();
   const u16 size = std::min<u16>(BBA_TXFIFO_SIZE, Common::BitCastPtr<u16>(&mBbaMem[BBA_TXFIFOCNT]));
-  if (m_network_interface->SendFrame(frame, size))
+  if (!Common::OfflineReplay() && m_network_interface->SendFrame(frame, size))
     m_system.GetPowerPC().GetDebugInterface().NetworkLogger()->LogBBA(frame, size);
 }
 

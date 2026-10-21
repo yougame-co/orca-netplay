@@ -24,7 +24,12 @@ public:
   std::optional<IPCReply> IOCtl(const IOCtlRequest& request) override;
   void Update() override;
 
+protected:
+  virtual bool IsKeyPressed(int key) const;
+
 private:
+  friend class USBKeyboardTestPeer;
+
   enum class MessageType : u32
   {
     KeyboardConnect = 0,
@@ -52,8 +57,6 @@ private:
 
   std::array<bool, 256> m_old_key_buffer{};
   u8 m_old_modifiers = 0;
-
-  bool IsKeyPressed(int key) const;
 
   // This stuff should probably die
   enum

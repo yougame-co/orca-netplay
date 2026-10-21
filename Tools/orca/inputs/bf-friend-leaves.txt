@@ -1,0 +1,24 @@
+# A friend leaves With Friends' character select after picking (ORCA.md "No CPUs online"), Brawl.
+# Run with ORCA_TEST_PADS=4 ORCA_UX_TEST_PADS_FOLLOW_PLUGS=1 ORCA_UX_TEST_NAMES=ada,bo,cy
+# ORCA_UX_TEST_PLUG_AT=1600 ORCA_UX_TEST_UNPLUG_AT=1834:3. The friends plug in on the main menu and,
+# with no menu input, both games go to With Friends' select (1634); ports 1-3 go up into the grid
+# (joining at 1713) and pick. Port 3's friend leaves at 1834: its panel empties at once and is
+# hidden. Port 1 presses Start; with four pads, Brawl's stage select takes port 2's A; the fight at
+# 2195 has ports 1 and 2 (3 and 4 3E 03). YG_EXIT_AFTER=2300.
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@scSelctCharacter:1 60 100 1 SY=255
+@scSelctCharacter:1 60 100 2 SY=255
+@scSelctCharacter:1 60 100 3 SY=255
+@scSelctCharacter:1 120 123 1 A
+@scSelctCharacter:1 130 133 2 A
+@scSelctCharacter:1 140 143 3 A
+@scSelctCharacter:1 260 263 1 START
+@scSelctCharacter:1 300 303 1 START
+@scSelStage:1 60 63 1 A
+@scSelStage:1 100 103 1 A
+@scSelStage:1 150 153 2 A
+@scSelStage:1 200 203 1 A
+@scSelStage:1 250 253 2 A
+@scSelStage:1 300 303 3 A

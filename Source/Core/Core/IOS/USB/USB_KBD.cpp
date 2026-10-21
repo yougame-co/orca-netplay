@@ -15,6 +15,7 @@
 #include "Core/HW/Memmap.h"
 #include "Core/System.h"
 #include "InputCommon/ControlReference/ControlReference.h"  // For background input check
+#include "InputCommon/LocalInput.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -212,6 +213,12 @@ std::optional<IPCReply> USB_KBD::Write(const ReadWriteRequest& request)
 
 std::optional<IPCReply> USB_KBD::IOCtl(const IOCtlRequest& request)
 {
+  if (InputCommon::LocalInputDisabled())
+  {
+    m_message_queue = {};
+    return IPCReply(IPC_SUCCESS);
+  }
+
   if (Config::Get(Config::MAIN_WII_KEYBOARD) && !Core::WantsDeterminism() &&
       ControlReference::GetInputGate() && !m_message_queue.empty())
   {
@@ -235,6 +242,14 @@ bool USB_KBD::IsKeyPressed(int key) const
 
 void USB_KBD::Update()
 {
+  if (InputCommon::LocalInputDisabled())
+  {
+    m_message_queue = {};
+    m_old_key_buffer.fill(false);
+    m_old_modifiers = 0;
+    return;
+  }
+
   if (!Config::Get(Config::MAIN_WII_KEYBOARD) || Core::WantsDeterminism() || !m_is_active)
     return;
 
@@ -280,22 +295,22 @@ void USB_KBD::Update()
   }
 
 #ifdef _WIN32
-  if (GetAsyncKeyState(VK_LCONTROL) & 0x8000)
+  if (IsKeyPressed(VK_LCONTROL))
     modifiers |= 0x01;
-  if (GetAsyncKeyState(VK_LSHIFT) & 0x8000)
+  if (IsKeyPressed(VK_LSHIFT))
     modifiers |= 0x02;
-  if (GetAsyncKeyState(VK_MENU) & 0x8000)
+  if (IsKeyPressed(VK_MENU))
     modifiers |= 0x04;
-  if (GetAsyncKeyState(VK_LWIN) & 0x8000)
+  if (IsKeyPressed(VK_LWIN))
     modifiers |= 0x08;
-  if (GetAsyncKeyState(VK_RCONTROL) & 0x8000)
+  if (IsKeyPressed(VK_RCONTROL))
     modifiers |= 0x10;
-  if (GetAsyncKeyState(VK_RSHIFT) & 0x8000)
+  if (IsKeyPressed(VK_RSHIFT))
     modifiers |= 0x20;
   // TODO: VK_MENU is for ALT, not for ALT GR (ALT GR seems to work though...)
-  if (GetAsyncKeyState(VK_MENU) & 0x8000)
+  if (IsKeyPressed(VK_MENU))
     modifiers |= 0x40;
-  if (GetAsyncKeyState(VK_RWIN) & 0x8000)
+  if (IsKeyPressed(VK_RWIN))
     modifiers |= 0x80;
 #else
 // TODO: modifiers for non-Windows platforms

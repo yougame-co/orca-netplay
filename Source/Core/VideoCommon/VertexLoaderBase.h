@@ -11,6 +11,7 @@
 #include "Common/CommonTypes.h"
 #include "VideoCommon/CPMemory.h"
 #include "VideoCommon/NativeVertexFormat.h"
+#include "VideoCommon/VertexLoaderManager.h"
 
 class VertexLoaderUID
 {
@@ -70,6 +71,11 @@ public:
   // used by VertexLoaderManager
   NativeVertexFormat* m_native_vertex_format = nullptr;
   int m_numLoadedVertices = 0;
+  // Orca: the indexed reads each vertex makes (VertexLoaderManager::IndexedReadsFit).
+  std::array<VertexLoaderManager::IndexedRead, VertexLoaderManager::MAX_INDEXED_READS>
+      m_indexed_reads{};
+  std::size_t m_num_indexed_reads = 0;
+  bool m_indexed_reads_known = false;  // false: the layout can't be checked, draws are dropped
 
 protected:
   VertexLoaderBase(const TVtxDesc& vtx_desc, const VAT& vtx_attr)
@@ -77,6 +83,10 @@ protected:
         m_native_components{GetVertexComponents(vtx_desc, vtx_attr)}, m_VtxAttr{vtx_attr},
         m_VtxDesc{vtx_desc}
   {
+    const std::optional<std::size_t> reads =
+        VertexLoaderManager::GetIndexedReads(vtx_desc, vtx_attr, &m_indexed_reads);
+    m_indexed_reads_known = reads.has_value();
+    m_num_indexed_reads = reads.value_or(0);
   }
 
   // GC vertex format

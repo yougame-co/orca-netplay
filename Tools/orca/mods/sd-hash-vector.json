@@ -1,0 +1,5 @@
+{
+  "comment": "sdhash.py vector: byte i of the card is (i * 131 + 7) % 251",
+  "bytes": 67112961,
+  "chunkedSha256": "342e042340d5f480c975950c40c46d2882936670e57e66681daaffbdc5ca0fda"
+}

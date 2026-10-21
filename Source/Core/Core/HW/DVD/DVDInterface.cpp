@@ -38,6 +38,7 @@
 #include "Core/IOS/DI/DI.h"
 #include "Core/IOS/IOS.h"
 #include "Core/Movie.h"
+#include "Core/Orca/Profile.h"
 #include "Core/System.h"
 
 #include "DiscIO/Blob.h"
@@ -407,7 +408,9 @@ void DVDInterface::SetDisc(std::unique_ptr<DiscIO::VolumeDisc> disc,
     {
       OSD::AddMessage("You are running a disc image with a very large block size.", 60000);
       OSD::AddMessage("This will likely lead to performance problems.", 60000);
-      OSD::AddMessage("You can use Dolphin's convert feature to reduce the block size.", 60000);
+      // Orca has no convert tool to point a player at.
+      if (!Orca::SessionActive())
+        OSD::AddMessage("You can use Dolphin's convert feature to reduce the block size.", 60000);
     }
   }
 

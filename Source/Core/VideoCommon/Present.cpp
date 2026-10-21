@@ -3,12 +3,21 @@
 
 #include "VideoCommon/Present.h"
 
+#include <algorithm>
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
+#include <mutex>
+#include <optional>
+
 #include "Common/ChunkFile.h"
 #include "Core/Config/GraphicsSettings.h"
 #include "Core/Config/MainSettings.h"
+#include "Core/Core.h"
 #include "Core/CoreTiming.h"
 #include "Core/HW/VideoInterface.h"
 #include "Core/Host.h"
+#include "Core/Orca/Perf.h"
 #include "Core/System.h"
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
@@ -22,6 +31,7 @@
 #include "VideoCommon/VertexManagerBase.h"
 #include "VideoCommon/VideoConfig.h"
 #include "VideoCommon/VideoEvents.h"
+#include "VideoCommon/VideoState.h"
 #include "VideoCommon/Widescreen.h"
 
 std::unique_ptr<VideoCommon::Presenter> g_presenter;
@@ -132,6 +142,34 @@ bool Presenter::Initialize()
     g_gfx->BindBackbuffer({{0.0f, 0.0f, 0.0f, 1.0f}});
     g_gfx->PresentBackbuffer();
   }
+  else if (const char* size = std::getenv("ORCA_TEST_PRESENT");
+           size && g_gfx->SupportsUtilityDrawing())
+  {
+    // Orca tests: a headless run presents into its own image, OSD included, so screenshots show
+    // what a window would. Sizes down to 1x1 are allowed to test very thin windows.
+    int width = 0, height = 0;
+    if (std::sscanf(size, "%dx%d", &width, &height) != 2 || width < 1 || height < 1 ||
+        width > 7680 || height > 4320)
+    {
+      PanicAlertFmt("ORCA_TEST_PRESENT must be WxH");
+      return false;
+    }
+    SetBackbuffer({static_cast<u32>(width), static_cast<u32>(height), 1.0f,
+                   AbstractTextureFormat::RGBA8});
+    m_test_target = g_gfx->CreateTexture(
+        TextureConfig(width, height, 1, 1, 1, AbstractTextureFormat::RGBA8,
+                      AbstractTextureFlag_RenderTarget, AbstractTextureType::Texture_2DArray),
+        "Orca test present");
+    m_test_framebuffer =
+        m_test_target ? g_gfx->CreateFramebuffer(m_test_target.get(), nullptr) : nullptr;
+    m_post_processor = std::make_unique<VideoCommon::PostProcessing>();
+    m_onscreen_ui = std::make_unique<OnScreenUI>();
+    if (!m_test_framebuffer || !m_post_processor->Initialize(m_backbuffer_format) ||
+        !m_onscreen_ui->Initialize(m_backbuffer_width, m_backbuffer_height, m_backbuffer_scale))
+    {
+      return false;
+    }
+  }
 
   return true;
 }
@@ -221,7 +259,8 @@ void Presenter::ViSwap(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_height,
   }
 }
 
-void Presenter::ImmediateSwap(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_height)
+void Presenter::ImmediateSwap(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_height,
+                              bool redisplay)
 {
   if (m_immediate_swap_happened_this_field.exchange(true, std::memory_order_relaxed) &&
       Config::Get(Config::GFX_HACK_CAP_IMMEDIATE_XFB))
@@ -231,13 +270,21 @@ void Presenter::ImmediateSwap(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_
 
   const u64 ticks = m_next_swap_estimated_ticks;
 
+  // Orca: when the throttle schedules that field now. The estimate's own host time was taken at
+  // the field before it, and a rollback's re-run (whose fields run unthrottled) or a stall's pacing
+  // reset may have come since. Single core only: the CPU thread owns the throttle. Not for a
+  // redisplay: a loaded state's ticks belong to another timeline than the throttle's.
+  TimePoint due = m_next_swap_estimated_time;
+  if (!redisplay && Core::IsCPUThread())
+    due = Core::System::GetInstance().GetCoreTiming().GetTargetHostTime(static_cast<s64>(ticks));
+
   FetchXFB(xfb_addr, fb_width, fb_stride, fb_height, ticks);
 
   PresentInfo present_info{
       .frame_count = m_frame_count++,
       .present_count = m_present_count++,
       .emulated_timestamp = ticks,
-      .intended_present_time = m_next_swap_estimated_time,
+      .intended_present_time = due,
       .reason = PresentInfo::PresentReason::Immediate,
       .frame_buffer_width = fb_width,
       .frame_buffer_height = fb_height,
@@ -261,6 +308,12 @@ void Presenter::SetNextSwapEstimatedTime(u64 ticks, TimePoint host_time)
 
 void Presenter::ProcessFrameDumping(u64 ticks) const
 {
+  if (g_frame_dumper->IsFrameDumping() && m_xfb_entry && m_test_target)
+  {
+    g_frame_dumper->DumpCurrentFrame(m_test_target.get(), m_test_target->GetRect(),
+                                     m_test_target->GetRect(), ticks, m_frame_count);
+    return;
+  }
   if (g_frame_dumper->IsFrameDumping() && m_xfb_entry)
   {
     MathUtil::Rectangle<int> target_rect;
@@ -490,8 +543,11 @@ float Presenter::CalculateDrawAspectRatio(bool allow_stretch) const
   // If stretch is enabled, we prefer the aspect ratio of the window.
   if (aspect_mode == AspectMode::Stretch)
   {
+    // Orca: use the layout box (the window, unless an embed `view` sets another box).
     resulting_aspect_ratio =
-        (static_cast<float>(m_backbuffer_width) / static_cast<float>(m_backbuffer_height));
+        m_layout_box.w > 0 && m_layout_box.h > 0 ?
+            m_layout_box.w / m_layout_box.h :
+            (static_cast<float>(m_backbuffer_width) / static_cast<float>(m_backbuffer_height));
   }
   else
   {
@@ -592,6 +648,73 @@ void Presenter::ChangeSurface(void* new_surface_handle)
   std::lock_guard<std::mutex> lock(m_swap_mutex);
   m_new_surface_handle = new_surface_handle;
   m_surface_changed.Set();
+}
+
+static std::atomic<bool> s_surface_visible{true};
+
+void Presenter::SetSurfaceVisible(bool visible)
+{
+  s_surface_visible.store(visible, std::memory_order_relaxed);
+}
+
+bool Presenter::IsSurfaceVisible()
+{
+  return s_surface_visible.load(std::memory_order_relaxed);
+}
+
+static std::atomic<int> s_surface_refresh_rate{0};
+
+void Presenter::SetSurfaceRefreshRate(int hz)
+{
+  s_surface_refresh_rate.store(hz, std::memory_order_relaxed);
+}
+
+int Presenter::SurfaceRefreshRate()
+{
+  return s_surface_refresh_rate.load(std::memory_order_relaxed);
+}
+
+// Orca: the newest embed layout hint. The backbuffer catches up with a window resize a present or
+// two later; until then the presenter keeps using the previous hint (see ChooseLayout).
+static std::mutex s_layout_lock;
+static std::optional<LayoutHint> s_layout_latest;
+
+void Presenter::SetLayoutHint(std::optional<LayoutHint> hint)
+{
+  std::lock_guard lock(s_layout_lock);
+  s_layout_latest = hint;
+}
+
+// Orca tests: requested size as width << 32 | height, or 0 when none is pending.
+static std::atomic<u64> s_test_present_size{0};
+
+void Presenter::RequestTestPresentSize(int width, int height)
+{
+  width = std::clamp(width, 1, 7680);
+  height = std::clamp(height, 1, 4320);
+  s_test_present_size.store(static_cast<u64>(width) << 32 | static_cast<u32>(height),
+                            std::memory_order_relaxed);
+}
+
+void Presenter::ApplyTestPresentSize()
+{
+  const u64 size = s_test_present_size.exchange(0, std::memory_order_relaxed);
+  if (!size || !m_test_target)
+    return;
+  const u32 width = static_cast<u32>(size >> 32), height = static_cast<u32>(size);
+  if (width == m_test_target->GetWidth() && height == m_test_target->GetHeight())
+    return;
+  // Safe to replace: presents end with the EFB framebuffer bound, not this one.
+  auto target = g_gfx->CreateTexture(
+      TextureConfig(width, height, 1, 1, 1, AbstractTextureFormat::RGBA8,
+                    AbstractTextureFlag_RenderTarget, AbstractTextureType::Texture_2DArray),
+      "Orca test present");
+  auto framebuffer = target ? g_gfx->CreateFramebuffer(target.get(), nullptr) : nullptr;
+  if (!framebuffer)
+    return;
+  m_test_framebuffer = std::move(framebuffer);
+  m_test_target = std::move(target);
+  SetBackbuffer(static_cast<int>(width), static_cast<int>(height));
 }
 
 void Presenter::ResizeSurface()
@@ -707,6 +830,19 @@ std::tuple<float, float> Presenter::ApplyStandardAspectCrop(float width, float h
 
 void Presenter::UpdateDrawRectangle()
 {
+  // Orca: pick the box to lay the picture out in (the window, unless an embed `view` sets one; see
+  // PresentLayout.h). The code below fits the picture to this box as Dolphin fits it to the window.
+  {
+    std::optional<LayoutHint> latest;
+    {
+      std::lock_guard lock(s_layout_lock);
+      latest = s_layout_latest;
+    }
+    LayoutChoice layout =
+        ChooseLayout(latest, m_layout_applied, m_backbuffer_width, m_backbuffer_height);
+    m_layout_box = layout.box;
+    m_layout_applied = std::move(layout.hint);
+  }
   const float draw_aspect_ratio = CalculateDrawAspectRatio();
 
   // Update aspect ratio hack values
@@ -742,9 +878,9 @@ void Presenter::UpdateDrawRectangle()
     g_Config.fAspectRatioHackH = 1;
   }
 
-  // The rendering window size
-  const float win_width = static_cast<float>(m_backbuffer_width);
-  const float win_height = static_cast<float>(m_backbuffer_height);
+  // The rendering window size (Orca: the layout box)
+  const float win_width = m_layout_box.w;
+  const float win_height = m_layout_box.h;
   const float win_aspect_ratio = win_width / win_height;
 
   // FIXME: this breaks at very low widget sizes
@@ -809,10 +945,8 @@ void Presenter::UpdateDrawRectangle()
     int_draw_height = rect.GetHeight();
   }
 
-  m_target_rectangle.left = static_cast<int>(std::round(win_width / 2.0 - int_draw_width / 2.0));
-  m_target_rectangle.top = static_cast<int>(std::round(win_height / 2.0 - int_draw_height / 2.0));
-  m_target_rectangle.right = m_target_rectangle.left + int_draw_width;
-  m_target_rectangle.bottom = m_target_rectangle.top + int_draw_height;
+  // Orca: centre in the box; it may run past the backbuffer, and Present() crops it.
+  m_target_rectangle = PlaceInBox(m_layout_box, int_draw_width, int_draw_height);
 }
 
 std::tuple<float, float> Presenter::ScaleToDisplayAspectRatio(const int width, const int height,
@@ -903,11 +1037,28 @@ void Presenter::RenderXFBToScreen(const MathUtil::Rectangle<int>& target_rc,
   }
 }
 
+void Presenter::RepresentLast()
+{
+  // Present() flushes any pending vertex batch, so only redraw when nothing is pending. Otherwise
+  // this host-timed redraw would change when emulated GPU work is submitted.
+  if (m_xfb_entry && g_vertex_manager->IsFlushed())
+  {
+    Present();
+    // Orca tests: a screenshot requested during a stall captures this redraw, overlay included.
+    // Never adds an extra frame to a real frame dump.
+    if (m_test_target && !Config::Get(Config::MAIN_MOVIE_DUMP_FRAMES) &&
+        g_frame_dumper->IsFrameDumping())
+    {
+      ProcessFrameDumping(m_last_xfb_ticks);
+    }
+  }
+}
+
 void Presenter::Present(PresentInfo* present_info)
 {
   m_present_count++;
 
-  if (g_gfx->IsHeadless() || (!m_onscreen_ui && !m_xfb_entry))
+  if ((g_gfx->IsHeadless() && !m_test_framebuffer) || (!m_onscreen_ui && !m_xfb_entry))
     return;
 
   if (!g_gfx->SupportsUtilityDrawing())
@@ -931,13 +1082,26 @@ void Presenter::Present(PresentInfo* present_info)
   // with the loader, and it has not been unmapped yet. Force a pipeline flush to avoid this.
   g_vertex_manager->Flush();
 
+  if (m_test_target)
+    ApplyTestPresentSize();
   UpdateDrawRectangle();
 
   g_gfx->BeginUtilityDrawing();
-  const bool backbuffer_bound = g_gfx->BindBackbuffer({{0.0f, 0.0f, 0.0f, 1.0f}});
+  if (m_test_framebuffer)
+    g_gfx->SetAndClearFramebuffer(m_test_framebuffer.get(), {{0.0f, 0.0f, 0.0f, 1.0f}});
+  // Orca: time spent blocked on the graphics card (waiting for a back buffer, presenting) counts
+  // toward this machine's speed as its GPU share (Orca/Perf.h). In a session this is the CPU
+  // thread.
+  const bool time_gpu = Core::IsCPUThread();
+  auto gpu_start = Clock::now();
+  const bool backbuffer_bound =
+      m_test_framebuffer || g_gfx->BindBackbuffer({{0.0f, 0.0f, 0.0f, 1.0f}});
+  if (time_gpu)
+    Orca::Perf::AddPresent(Clock::now() - gpu_start);
 
-  // Render the XFB to the screen.
-  if (backbuffer_bound && m_xfb_entry)
+  // Render the XFB to the screen (Orca: only if some of the picture is on it).
+  if (backbuffer_bound && m_xfb_entry &&
+      PictureInBackbuffer(GetTargetRectangle(), m_backbuffer_width, m_backbuffer_height))
   {
     // Adjust the source rectangle instead of using an oversized viewport to render the XFB.
     MathUtil::Rectangle<int> render_target_rc = GetTargetRectangle();
@@ -969,7 +1133,20 @@ void Presenter::Present(PresentInfo* present_info)
       present_info->present_time_accuracy = PresentInfo::PresentTimeAccuracy::PresentInProgress;
     }
 
-    g_gfx->PresentBackbuffer();
+    if (!m_test_framebuffer)
+    {
+      gpu_start = Clock::now();
+      g_gfx->PresentBackbuffer();
+      if (time_gpu)
+        Orca::Perf::AddPresent(Clock::now() - gpu_start);
+    }
+    else
+    {
+      // Orca tests (ORCA_TEST_PRESENT): nothing is presented, so the frame's GPU work is submitted
+      // here instead. Metal otherwise keeps every frame's command buffers open and runs out of GPU
+      // memory after a few thousand frames ("Failed to allocate IOGPUDeviceShmem").
+      g_gfx->Flush();
+    }
   }
 
   if (m_xfb_entry)
@@ -1001,6 +1178,18 @@ TimePoint Presenter::GetUpdatedPresentationTime(TimePoint intended_presentation_
       return now;
 
     return intended_presentation_time;
+  }
+
+  // Orca: Immediate XFB frames follow a quantile of recent arrivals instead (PresentPacing.h). The
+  // rule below moves half the way to any late frame at once, so with the copy early in the frame
+  // each rollback's re-run dragged the presents after it.
+  if (g_ActiveConfig.bImmediateXFB)
+  {
+    m_presentation_time_offset = std::chrono::duration_cast<DT>(m_present_pacer.Next(
+        std::chrono::duration_cast<PresentPacer::Duration>(now - intended_presentation_time)));
+    // A copy is never due more than a field or so ahead: never hold the CPU thread longer than two.
+    return std::min(intended_presentation_time + m_presentation_time_offset,
+                    now + std::chrono::milliseconds(34));
   }
 
   // Adjust slowly backward in time but quickly forward in time.
@@ -1047,8 +1236,9 @@ void Presenter::DoState(PointerWrap& p)
   p.Do(m_last_xfb_stride);
   p.Do(m_last_xfb_height);
 
-  // If we're loading and there is a last XFB, re-display it.
-  if (p.IsReadMode() && m_last_xfb_stride != 0)
+  // If we're loading and there is a last XFB, re-display it. (Orca: not on a rollback load; the
+  // re-run frames present the corrected frame themselves.)
+  if (p.IsReadMode() && m_last_xfb_stride != 0 && VideoCommon_LoadRedisplays())
   {
     // This technically counts as the end of the frame
     GetVideoEvents().after_frame_event.Trigger(Core::System::GetInstance());
@@ -1058,7 +1248,7 @@ void Presenter::DoState(PointerWrap& p)
 
     m_immediate_swap_happened_this_field.store(false, std::memory_order_relaxed);
 
-    ImmediateSwap(m_last_xfb_addr, m_last_xfb_width, m_last_xfb_stride, m_last_xfb_height);
+    ImmediateSwap(m_last_xfb_addr, m_last_xfb_width, m_last_xfb_stride, m_last_xfb_height, true);
   }
 }
 

@@ -26,6 +26,8 @@
 #include "Core/IOS/USB/Host.h"
 #include "Core/System.h"
 
+#include "InputCommon/LocalInput.h"
+
 #include "VideoCommon/OnScreenDisplay.h"
 
 namespace IOS::HLE
@@ -44,6 +46,9 @@ BluetoothRealDevice::~BluetoothRealDevice()
 
 std::optional<IPCReply> BluetoothRealDevice::Open(const OpenRequest& request)
 {
+  if (InputCommon::LocalInputDisabled())
+    return IPCReply{IPC_ENOENT};
+
   m_lib_usb_bt_adapter = std::make_unique<LibUSBBluetoothAdapter>();
 
   return Device::Open(request);
@@ -57,7 +62,8 @@ std::optional<IPCReply> BluetoothRealDevice::Close(u32 fd)
   m_fake_replies = {};
 
   // FYI: LibUSBBluetoothAdapter destruction will attempt to wait for command completion.
-  SendHCIResetCommand();
+  if (m_lib_usb_bt_adapter)
+    SendHCIResetCommand();
 
   m_lib_usb_bt_adapter.reset();
 
@@ -66,6 +72,9 @@ std::optional<IPCReply> BluetoothRealDevice::Close(u32 fd)
 
 std::optional<IPCReply> BluetoothRealDevice::IOCtlV(const IOCtlVRequest& request)
 {
+  if (InputCommon::LocalInputDisabled() || !m_lib_usb_bt_adapter)
+    return IPCReply{IPC_ENOENT};
+
   switch (request.request)
   {
   // HCI commands to the Bluetooth adapter
@@ -158,6 +167,9 @@ std::optional<IPCReply> BluetoothRealDevice::IOCtlV(const IOCtlVRequest& request
 
 void BluetoothRealDevice::Update()
 {
+  if (InputCommon::LocalInputDisabled() || !m_lib_usb_bt_adapter)
+    return;
+
   TryToFillHCIEndpoint();
   TryToFillACLEndpoint();
 }
@@ -324,6 +336,17 @@ void BluetoothRealDevice::DoState(PointerWrap& p)
 {
   bool passthrough_bluetooth = true;
   p.Do(passthrough_bluetooth);
+  if (p.IsReadMode() && InputCommon::LocalInputDisabled())
+  {
+    m_is_active = false;
+    m_hci_endpoint.reset();
+    m_acl_endpoint.reset();
+    m_fake_replies = {};
+    Core::DisplayMessage("State requires local input. Aborting load.", 4000);
+    p.SetVerifyMode();
+    return;
+  }
+
   if (!passthrough_bluetooth && p.IsReadMode())
   {
     Core::DisplayMessage("State needs Bluetooth passthrough to be disabled. Aborting load.", 4000);

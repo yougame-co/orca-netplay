@@ -4,6 +4,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -99,6 +100,7 @@ public:
   // Without this, our devices list might end up in a mixed state.
   void PlatformPopulateDevices(const std::function<void()>& callback);
   bool IsInit() const { return m_is_init; }
+  std::size_t GetInputBackendCount() const;
   void UpdateInput();
 
   // Set adjustment from the full render window aspect-ratio to the drawn aspect-ratio.
