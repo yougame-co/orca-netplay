@@ -2831,6 +2831,11 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.74
+
+- Games no longer stop when a match starts on older Windows graphics (for example Intel HD
+  Graphics 4000) that can't do one kind of blending.
+
 ### 0.3.73
 
 - If the game ever stops on an internal check, its message now says exactly which check, so a
