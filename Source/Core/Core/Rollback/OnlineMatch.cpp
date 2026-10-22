@@ -183,6 +183,9 @@ struct Match
   // Host: its room ended without this player leaving it. Reported once, then reopened with a
   // growing backoff; `home_code` is the last room that worked.
   bool room_lost = false;
+  bool reopen_gave_up = false;
+  unsigned reopen_attempts = 0;
+  std::optional<Clock::time_point> network_failure_since;
   Clock::time_point room_lost_at{}, reopen_at{};
   std::chrono::seconds reopen_backoff{0};
   std::string home_code;
@@ -1073,6 +1076,9 @@ void ForgetRoom(Match& match)
 {
   match.reopen_join = false;
   match.room_lost = false;
+  match.reopen_gave_up = false;
+  match.reopen_attempts = 0;
+  match.network_failure_since.reset();
   match.reopen_backoff = {};
   match.home_code.clear();
   match.reopen_pending.reset();
@@ -1138,19 +1144,28 @@ void AfterFriendsGone(Match& match)
 // Host on port 1: its room ended without this player leaving, so friends can't drop in. Report
 // once, then reopen after 2 s, backing off to 30 s. While the server holds a friends-room seat
 // (ROOM_HOLD), reuse the code so pending invites still work; queue rooms need a fresh solo room.
-void KeepRoomOpen(Match& match)
+void KeepRoomOpen(Match& match, Clock::time_point now = Clock::now())
 {
   if (match.local_seat != 0)
     return;
   // The room ReopenRoom asked for, once its time comes.
   if (match.reopen_pending)
   {
-    if (Clock::now() < *match.reopen_pending)
+    if (now < *match.reopen_pending)
       return;
     match.reopen_pending.reset();
     Orca::Online::StartRoom("", false);
     return;
   }
+  const auto give_up = [&] {
+    match.reopen_gave_up = true;
+    NOTICE_LOG_FMT(ROLLBACK, "Drop-in: room {} stopped reopening after {} attempts",
+                   Orca::Online::Code(), match.reopen_attempts);
+    Orca::Status::Report("network", "The room couldn't reconnect. Your game continues solo; "
+                                     "start a new game to open a room.");
+    // Both old and new apps know this state and offer a new game, without retrying this one.
+    Orca::Status::Event("no-room");
+  };
   if (!Orca::Online::RoomEnded())
   {
     if (Orca::Online::InRoom())
@@ -1171,8 +1186,18 @@ void KeepRoomOpen(Match& match)
           Orca::Status::Event("playing");
       }
       match.room_lost = false;
+      match.reopen_gave_up = false;
+      match.reopen_attempts = 0;
+      match.network_failure_since.reset();
       match.reopen_backoff = {};
       match.home_code = Orca::Online::Code();
+    }
+    else if (!match.reopen_gave_up && !match.session && match.network_failure_since &&
+             now - *match.network_failure_since >= std::chrono::minutes(5))
+    {
+      give_up();
+      // A slow ticket or upgrade cannot extend the outage's deadline.
+      Orca::Online::ShutdownInBackground();
     }
     return;
   }
@@ -1196,7 +1221,23 @@ void KeepRoomOpen(Match& match)
     Orca::Online::StartRoom("", false);
     return;
   }
-  const auto now = Clock::now();
+  if (match.reopen_gave_up)
+    return;
+  if (code == "network")
+  {
+    if (!match.network_failure_since)
+      match.network_failure_since = now;
+  }
+  else
+  {
+    match.network_failure_since.reset();
+  }
+  if (match.reopen_attempts >= 10 ||
+      (match.network_failure_since && now - *match.network_failure_since >= std::chrono::minutes(5)))
+  {
+    give_up();
+    return;
+  }
   if (!match.room_lost)
   {
     match.room_lost = true;
@@ -1224,8 +1265,9 @@ void KeepRoomOpen(Match& match)
   if (now < match.reopen_at)
     return;
   const std::string reopen = match.home_code;
-  NOTICE_LOG_FMT(ROLLBACK, "Drop-in: reopening {} (the last ended: {}: {})",
-                 reopen.empty() ? std::string("a new room") : "room " + reopen, code,
+  ++match.reopen_attempts;
+  NOTICE_LOG_FMT(ROLLBACK, "Drop-in: reopening room {} attempt={} (previous room={}, ended: {}: {})",
+                 reopen.empty() ? "new" : reopen, match.reopen_attempts, Orca::Online::Code(), code,
                  Orca::Online::StatusLine());
   Orca::Online::ShutdownInBackground();
   // FailJoin keeps an automatic adoption on its own game even without "caps join".
@@ -5104,6 +5146,20 @@ bool PumpRoomReopenForTest()
   Match match;
   KeepRoomOpen(match);
   return match.joining && match.reopen_join;
+}
+
+std::vector<unsigned> TraceRoomReopenForTest(const std::vector<std::chrono::seconds>& times,
+                                              const std::function<void()>& after_step)
+{
+  Match match;
+  std::vector<unsigned> attempts;
+  for (const auto time : times)
+  {
+    KeepRoomOpen(match, Clock::time_point{} + time);
+    after_step();
+    attempts.push_back(match.reopen_attempts);
+  }
+  return attempts;
 }
 
 int PumpRoomReopenFailureForTest(const std::function<void()>& wait_for_failure)

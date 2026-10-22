@@ -330,7 +330,7 @@ public:
   // seat). The room ends with "network".
   // No-op unless ORCA_TEST_ROOM_DROP=1. ORCA_TEST_DROP_SILENT keeps the old socket unread;
   // ORCA_TEST_ROOM_CLOSE_CODE=1013 exercises that close classification.
-  void TestDropConnection();
+  void TestDropConnection(std::chrono::seconds ticket_age = {});
 
 private:
   YouGameRoom(RoomOptions options, bool start_io);

@@ -5025,6 +5025,230 @@ TEST_F(OrcaRoomRuntime, FriendsAutomaticReopenWaitsUntilAfterThePause)
   EXPECT_EQ(Orca::Online::Code(), code);
 }
 
+TEST(OrcaRoomResilience, ReconnectUpgradeCapsGrowWithinTheOriginalHold)
+{
+  const auto trace = TraceRoomForTest(TraceOptions(), {
+      {RK::Message, 0, RosterMessage("welcome")}, {RK::Message, 0, PeerHello()},
+      {RK::SocketClose, 1000, "WebSocket closed by the server"},
+      {RK::PollReconnect, 1000}, {RK::ConnectFailure, 1000, "timeout"},
+      {RK::PollReconnect, 1500}, {RK::ConnectFailure, 1500, "timeout"},
+      {RK::PollReconnect, 2500}, {RK::ConnectFailure, 2500, "timeout"},
+      {RK::PollReconnect, 89000}, {RK::ConnectFailure, 89000, "timeout"},
+      {RK::PollReconnect, 91000},
+  });
+  for (const auto& [index, cap] : std::vector<std::pair<size_t, int>>{
+           {3, 5000}, {5, 8000}, {7, 10000}, {9, 2000}})
+  {
+    ASSERT_FALSE(trace[index].notices.empty());
+    EXPECT_NE(trace[index].notices.front().find(fmt::format("cap_ms={}", cap)), std::string::npos);
+    EXPECT_NE(trace[index].notices.front().find("ticket_age="), std::string::npos);
+  }
+  EXPECT_EQ(trace.back().state, RoomState::Ended);
+  RoomReconnect reconnect;
+  const auto now = RoomClock::time_point{};
+  ASSERT_TRUE(reconnect.Start(now, 0));
+  EXPECT_EQ(reconnect.UpgradeCap(now, now + 1234ms), 1234ms);
+  EXPECT_EQ(reconnect.UpgradeCap(now, now - 1ms), 0ms);
+}
+
+TEST_F(OrcaRoomRuntime, ReconnectUsesFreshTicketsAfterLongRoomsAndKeepsRecentSeatTickets)
+{
+  for (const auto age : {100s, 240s, 1800s})
+  {
+    SCOPED_TRACE(age.count());
+    const std::string code = fmt::format("aged{}", age.count());
+    auto room = Open(code);
+    ASSERT_TRUE(Wait([&] { return room->Seat() == 1 && room->RoundTripMs() >= 0; }));
+    u32 before;
+    room->RoundTripMs(&before);
+    room->TestDropConnection(age);
+    ASSERT_TRUE(Wait([&] {
+      u32 sequence;
+      room->RoundTripMs(&sequence);
+      return sequence > before && Connections(code) == 2;
+    }));
+    auto state = Request("/state/" + code);
+    const int ticket = age < 240s ? 1 : 2;
+    EXPECT_EQ(state.get("tickets").get<double>(), ticket);
+    auto uses = state.get("ticket_uses").get<picojson::array>();
+    ASSERT_EQ(uses.size(), 2u);
+    EXPECT_EQ(uses[0].get<double>(), 1);
+    EXPECT_EQ(uses[1].get<double>(), ticket);
+    // A successful mint records its age too: the next drop keeps that new seat ticket.
+    room->RoundTripMs(&before);
+    room->TestDropConnection();
+    ASSERT_TRUE(Wait([&] {
+      u32 sequence;
+      room->RoundTripMs(&sequence);
+      return sequence > before && Connections(code) == 3;
+    }));
+    state = Request("/state/" + code);
+    EXPECT_EQ(state.get("tickets").get<double>(), ticket);
+    uses = state.get("ticket_uses").get<picojson::array>();
+    ASSERT_EQ(uses.size(), 3u);
+    EXPECT_EQ(uses.back().get<double>(), ticket);
+  }
+}
+
+TEST_F(OrcaRoomRuntime, ReconnectTicketRefreshFailureRetriesAfterTheCachedTicketRefusal)
+{
+  const std::string code = "refresh368";
+  auto room = Open(code);
+  ASSERT_TRUE(Wait([&] { return room->Seat() == 1 && room->RoundTripMs() >= 0; }));
+  Action(code, R"({"reject_first_ticket":true,"ticket_fail_count":1})");
+  u32 before;
+  room->RoundTripMs(&before);
+  room->TestDropConnection();
+  ASSERT_TRUE(Wait([&] {
+    u32 sequence;
+    room->RoundTripMs(&sequence);
+    return room->GetState() == RoomState::Ended || sequence > before;
+  }));
+  EXPECT_NE(room->GetState(), RoomState::Ended) << room->Status();
+  EXPECT_TRUE(room->ErrorCode().empty());
+  const auto state = Request("/state/" + code);
+  EXPECT_EQ(state.get("tickets").get<double>(), 3);
+  const auto uses = state.get("ticket_uses").get<picojson::array>();
+  ASSERT_EQ(uses.size(), 4u);
+  EXPECT_EQ(uses[1].get<double>(), 1);
+  EXPECT_EQ(uses[2].get<double>(), 1);
+  EXPECT_EQ(uses[3].get<double>(), 3);
+}
+
+TEST_F(OrcaRoomRuntime, ReconnectAllowsASlowUpgradeWithoutBlockingLeave)
+{
+  const std::string code = "slowup368";
+  auto room = Open(code);
+  ASSERT_TRUE(Wait([&] { return room->Seat() == 1 && room->RoundTripMs() >= 0; }));
+  Action(code, R"({"upgrade_delay":3})");
+  u32 before;
+  room->RoundTripMs(&before);
+  room->TestDropConnection();
+  ASSERT_TRUE(Wait([&] {
+    u32 sequence;
+    room->RoundTripMs(&sequence);
+    return sequence > before;
+  }, 6s));
+  EXPECT_EQ(Connections(code), 2);
+  Action(code, R"({"upgrade_delay":20})");
+  room->TestDropConnection();
+  ASSERT_TRUE(Wait([&] { return Connections(code) == 3; }));
+  // The in-flight reconnect keeps its delay; the separate best-effort leave can finish.
+  Action(code, R"({"upgrade_delay":0})");
+  const auto start = RoomClock::now();
+  room->Leave();
+  EXPECT_LT(RoomClock::now() - start, 2s);
+  EXPECT_TRUE(Sent(code, "leave"));
+}
+
+TEST_F(OrcaRoomRuntime, ReconnectAllowsASlowTicketMintOnItsWorkerAndCancelsLeave)
+{
+  const std::string code = "slowmint368";
+  auto room = Open(code);
+  ASSERT_TRUE(Wait([&] { return room->Seat() == 1 && room->RoundTripMs() >= 0; }));
+  Action(code, R"({"ticket_delay":11})");
+  u32 before;
+  room->RoundTripMs(&before);
+  room->TestDropConnection(1800s);
+  ASSERT_TRUE(Wait([&] {
+    u32 sequence;
+    room->RoundTripMs(&sequence);
+    return sequence > before;
+  }, 15s));
+  EXPECT_EQ(Connections(code), 2);
+  EXPECT_TRUE(room->ErrorCode().empty());
+  Action(code, R"({"ticket_delay":20})");
+  room->TestDropConnection(1800s);
+  ASSERT_TRUE(Wait([&] { return Request("/state/" + code).get("tickets").get<double>() == 3; }));
+  const auto start = RoomClock::now();
+  room->Leave();
+  EXPECT_LT(RoomClock::now() - start, 2s);
+}
+
+TEST_F(OrcaRoomRuntime, KeepRoomOpenStopsAfterTenFailuresOrFiveMinutesAndTellsTheAppOnce)
+{
+  FriendsHeadlessCore core;
+  const ScopedEnv session("ORCA_SESSION", "1");
+  Orca::Status::SetAppCaps("join");
+  const Common::ScopeGuard cleanup([] {
+    Orca::Online::Shutdown();
+    Orca::Status::SetAppCaps("");
+  });
+  const std::vector<std::vector<std::chrono::seconds>> times{
+      {0s, 2s, 6s, 14s, 30s, 60s, 90s, 120s, 150s, 180s, 210s, 211s, 600s},
+      {0s, 2s, 299s, 300s, 301s, 600s},
+  };
+  for (size_t i = 0; i < times.size(); ++i)
+  {
+    SCOPED_TRACE(i);
+    const std::string code = fmt::format("giveup368{}", i);
+    const ScopedEnv fresh_room("ORCA_TEST_ROOM", code.c_str());
+    Request("/configure/" + code, R"({"joining":false,"refuse":"fixture unavailable","refuse_status":503})");
+    Orca::Online::StartRoom(code, false, true);
+    ASSERT_TRUE(Wait([] { return Orca::Online::RoomEnded(); }));
+    ASSERT_EQ(Orca::Online::RoomErrorCode(), "network");
+    auto* out = std::tmpfile();
+    ASSERT_NE(out, nullptr);
+    Orca::Status::SetOutput(out);
+    const Common::ScopeGuard output_cleanup([&] {
+      Orca::Status::SetOutput(nullptr);
+      std::fclose(out);
+    });
+    const auto attempts = Rollback::OnlineMatch::TraceRoomReopenForTest(times[i], [&] {
+      ASSERT_TRUE(Wait([] { return Orca::Online::RoomEnded(); }));
+    });
+    ASSERT_EQ(attempts.size(), times[i].size());
+    EXPECT_EQ(attempts, i == 0 ? std::vector<unsigned>({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10}) :
+                                std::vector<unsigned>({0, 1, 2, 2, 2, 2}));
+    EXPECT_EQ(Connections(code), i == 0 ? 11 : 3);
+    std::rewind(out);
+    std::string lines;
+    char buffer[512];
+    while (std::fgets(buffer, sizeof(buffer), out))
+      lines += buffer;
+    const std::string error = "orca error network The room couldn't reconnect.";
+    const std::string state = "orca state no-room\n";
+    ASSERT_NE(lines.find(error), std::string::npos) << lines;
+    ASSERT_NE(lines.find(state), std::string::npos) << lines;
+    EXPECT_EQ(lines.find(error, lines.find(error) + error.size()), std::string::npos);
+    EXPECT_EQ(lines.find(state, lines.find(state) + state.size()), std::string::npos);
+    EXPECT_GT(lines.find(state), lines.find(error));
+    Orca::Online::Shutdown();
+  }
+}
+
+TEST_F(OrcaRoomRuntime, KeepRoomOpenCancelsAPendingReopenAtTheNetworkDeadline)
+{
+  FriendsHeadlessCore core;
+  const ScopedEnv session("ORCA_SESSION", "1");
+  const std::string code = "pending368";
+  const ScopedEnv fresh_room("ORCA_TEST_ROOM", code.c_str());
+  Orca::Status::SetAppCaps("join");
+  const Common::ScopeGuard cleanup([] {
+    Orca::Online::Shutdown();
+    Orca::Status::SetAppCaps("");
+  });
+  Request("/configure/" + code, R"({"joining":false,"refuse":"fixture unavailable","refuse_status":503})");
+  Orca::Online::StartRoom(code, false, true);
+  ASSERT_TRUE(Wait([] { return Orca::Online::RoomEnded(); }));
+  Action(code, R"({"upgrade_delay":20})");
+  int step = 0;
+  const auto attempts = Rollback::OnlineMatch::TraceRoomReopenForTest({0s, 2s, 300s, 600s}, [&] {
+    if (step++ == 1)
+    {
+      ASSERT_TRUE(Wait([&] { return Connections(code) == 2; }));
+      EXPECT_FALSE(Orca::Online::RoomEnded());
+    }
+    else
+    {
+      EXPECT_TRUE(Orca::Online::RoomEnded());
+    }
+  });
+  EXPECT_EQ(attempts, (std::vector<unsigned>{0, 1, 1, 1}));
+  EXPECT_EQ(Orca::Online::Transport(), nullptr);
+  EXPECT_EQ(Connections(code), 2);
+}
+
 TEST_F(OrcaRoomRuntime, CompletedRecoveryEndsEitherSessionAwayFromItsNextFrame)
 {
   FriendsHeadlessCore core;

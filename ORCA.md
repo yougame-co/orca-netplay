@@ -2831,6 +2831,12 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.68
+
+- If you drop out of a long friends room, you get back in: the game asks YouGame for a fresh pass
+  when the old one has expired and gives a waking room more time to answer. If the room can't be
+  reached, it stops trying after a few minutes and says so, instead of retrying for ever.
+
 ### 0.3.67
 
 - Broadcast a replay or a live match you're watching through YouGame, with game sound.

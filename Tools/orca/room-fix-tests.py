@@ -86,6 +86,12 @@ class Handler(BaseHTTPRequestHandler):
                 cfg["tickets"] += 1
                 ticket_number = cfg["tickets"]
                 delay = cfg.get("ticket_delay", 0) if cfg["tickets"] > 1 else 0
+                ticket_failed = cfg.get("ticket_fail_count", 0) > 0 and ticket_number > 1
+                if ticket_failed:
+                    cfg["ticket_fail_count"] -= 1
+            if ticket_failed:
+                self.reply({"error": "fixture ticket unavailable"}, 503)
+                return
             if delay:
                 time.sleep(delay)
             try:
@@ -113,7 +119,8 @@ class Handler(BaseHTTPRequestHandler):
                     cfg["blocked_until"] = time.monotonic() + body["block_for"]
                 if "upgrade_delay" in body:
                     cfg["upgrade_delay"] = body["upgrade_delay"]
-                for name in ("refuse", "refuse_status", "refuse_count", "reject_first_ticket"):
+                for name in ("refuse", "refuse_status", "refuse_count", "reject_first_ticket",
+                             "ticket_fail_count"):
                     if name in body:
                         cfg[name] = body[name]
             if ws:

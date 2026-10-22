@@ -97,6 +97,9 @@ std::string RoomReopenCode(const std::string& previous_code, const std::string& 
                             bool held, bool taken);
 // Pumps the actual reopen path against Online's room and returns whether it adopted a friend.
 bool PumpRoomReopenForTest();
+// Pumps the actual automatic reopen loop at supplied times, with a callback after each step.
+std::vector<unsigned> TraceRoomReopenForTest(const std::vector<std::chrono::seconds>& times,
+                                              const std::function<void()>& after_step);
 // Adopts the room, waits for its failure, then pumps the actual fallback and one solo frame.
 int PumpRoomReopenFailureForTest(const std::function<void()>& wait_for_failure);
 

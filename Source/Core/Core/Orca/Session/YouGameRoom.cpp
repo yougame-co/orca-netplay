@@ -1206,6 +1206,7 @@ struct YouGameRoom::Impl
   // keyframe store's URL from the ticket reply.
   std::string site, dev_player, keyframes_url;
   std::string current_ticket;  // under mutex
+  Clock::time_point ticket_minted{};  // under mutex
   std::thread bridge_thread, events_thread;
   std::atomic<bool> bridge_done{false};
   std::mutex bridge_mutex;
@@ -1724,6 +1725,7 @@ struct YouGameRoom::Impl
     std::lock_guard lock(mutex);
     code = room;
     current_ticket = *ticket;
+    ticket_minted = Now();
     role_known = true;
     if (const auto it = reply.find("ice"); it != reply.end())
       ParseIce(it->second, &ice);
@@ -1745,7 +1747,8 @@ struct YouGameRoom::Impl
   // A fresh room/store ticket (tickets last five minutes; a keyframe goes out much
   // later). Any thread, once the room has its first ticket; no side effects.
   bool FreshTicket(bool fresh, std::string* ticket, std::string* store_url, std::string* error,
-                   const std::atomic<bool>* cancel = nullptr)
+                   const std::atomic<bool>* cancel = nullptr,
+                   std::optional<Clock::time_point> deadline = std::nullopt)
   {
     if (Common::OfflineReplay())
     {
@@ -1762,8 +1765,9 @@ struct YouGameRoom::Impl
       }
       room = code;
       // YouGame's keyframe store accepts a room ticket for hours past expiry, so only mint another
-      // when it refused this one.
-      if (!fresh && !current_ticket.empty())
+      // when it refused this one. A reconnect must refresh before the five-minute expiry.
+      if (!fresh && !current_ticket.empty() &&
+          (!deadline || Now() - ticket_minted < std::chrono::seconds(240)))
       {
         *ticket = current_ticket;
         *store_url = keyframes_url + "/" + room;
@@ -1780,8 +1784,20 @@ struct YouGameRoom::Impl
     request["mode"] = picojson::value(options.mode);
     request["room"] = picojson::value(room);
     request["lobby"] = picojson::value(lobby);
-    Common::HttpRequest http(cancel ? std::chrono::seconds(2) : std::chrono::seconds(10), [this, cancel](s64, s64, s64, s64) {
-      return !cancel || (!stop && !leave_requested && !*cancel);
+    const auto mint_cap = deadline ?
+        std::min(std::chrono::milliseconds(25000),
+                 std::chrono::duration_cast<std::chrono::milliseconds>(*deadline - Now())) :
+        std::chrono::milliseconds(cancel ? 2000 : 10000);
+    if (mint_cap <= std::chrono::milliseconds::zero())
+    {
+      *error = "hold-expired";
+      return false;
+    }
+    const auto cancelled = [this, cancel, deadline] {
+      return (cancel && (stop || leave_requested || *cancel)) || (deadline && Now() >= *deadline);
+    };
+    Common::HttpRequest http(mint_cap, [cancelled](s64, s64, s64, s64) {
+      return !cancelled();
     });
     Common::HttpRequest::Response response;
     std::optional<picojson::object> answer;  // the stdio bridge's reply
@@ -1789,10 +1805,9 @@ struct YouGameRoom::Impl
     {
       request["type"] = picojson::value("mpTicket");
       request["ranked"] = picojson::value(false);
-      answer = Orca::Bridge::Request(std::move(request), std::chrono::seconds(10),
-                                   [this, cancel] {
-                                     return cancel && (stop || leave_requested || *cancel);
-                                   });
+      answer = Orca::Bridge::Request(std::move(request),
+                                   deadline ? mint_cap : std::chrono::milliseconds(10000),
+                                   cancelled);
     }
     else if (bridged)
     {
@@ -1854,6 +1869,7 @@ struct YouGameRoom::Impl
     *store_url = KeyframesUrl(Str(reply, "keyframes")) + "/" + room;
     std::lock_guard lock(mutex);
     current_ticket = *ticket;
+    ticket_minted = Now();
     if (const auto it = reply.find("ice"); it != reply.end() && ParseIce(it->second, &ice))
       ice_minted = Clock::now();
     ticket_direct = TicketAllowsDirect(reply);
@@ -2092,9 +2108,12 @@ struct YouGameRoom::Impl
 
   std::string ReconnectContext() const
   {
-    return fmt::format("attempt={} close-code={} close-reason={} last-error={}",
-                       reconnect.attempts, reconnect_close_code, reconnect_reason,
-                       reconnect_error.empty() ? "none" : reconnect_error);
+    const auto cap = reconnect.UpgradeCap(Now(), PublicDeadline());
+    std::lock_guard lock(mutex);
+    const auto age = std::chrono::duration_cast<std::chrono::seconds>(Now() - ticket_minted);
+    return fmt::format("attempt={} close-code={} ticket_age={} cap_ms={} close-reason={} last-error={}",
+                       reconnect.attempts, reconnect_close_code, age.count(), cap.count(),
+                       reconnect_reason, reconnect_error.empty() ? "none" : reconnect_error);
   }
 
   // "room-away self" plus the loss class, errno and edge colos, BEFORE any free text
@@ -2473,16 +2492,23 @@ struct YouGameRoom::Impl
     ReconnectJob* const raw = job.get();
     const auto deadline = PublicDeadline().value_or(*reconnect.since + ROOM_HOLD);
     const bool server_closed = reconnect_reason.starts_with("WebSocket closed by the server");
-    job->thread = std::thread([this, raw, deadline, server_closed] {
+    const auto upgrade_cap = reconnect.UpgradeCap(now, deadline);
+    job->thread = std::thread([this, raw, deadline, server_closed, upgrade_cap] {
       std::string ticket, store, ticket_error;
       // Ticket responses can include app-provided text. Log only this stage's fixed outcome.
       raw->error = "ticket-refresh-failed";
-      // A returning guest must first present the ticket that owns its live seat. Refresh only
-      // after a ticket refusal; seat-in-use and a restarted room keep the same ticket.
+      // Keep a recent seat ticket first; FreshTicket refreshes an old one before upgrading.
       for (const bool fresh : {false, true})
       {
-        if (!FreshTicket(fresh, &ticket, &store, &ticket_error, &raw->cancel) || raw->cancel ||
-            stop || leave_requested || Clock::now() >= deadline)
+        if (raw->cancel || stop || leave_requested || Clock::now() >= deadline)
+          break;
+        if (!FreshTicket(fresh, &ticket, &store, &ticket_error, &raw->cancel, deadline))
+        {
+          // Never let an earlier upgrade refusal turn a failed mint into a final room error.
+          raw->error = "ticket-refresh-failed";
+          break;
+        }
+        if (raw->cancel || stop || leave_requested || Clock::now() >= deadline)
           break;
         auto socket = std::make_unique<Common::WebSocket>();
         const auto remaining =
@@ -2494,8 +2520,10 @@ struct YouGameRoom::Impl
           return;
         }
         if (ConnectRoom(*socket, ticket,
-                        std::min(remaining, std::chrono::milliseconds(2000)), &raw->error,
-                        [this, raw] { return stop || leave_requested || raw->cancel; }))
+                        std::min(remaining, upgrade_cap), &raw->error,
+                        [this, raw, deadline] {
+                          return stop || leave_requested || raw->cancel || Clock::now() >= deadline;
+                        }))
         {
           raw->socket = std::move(socket);
           break;
@@ -5860,10 +5888,17 @@ void YouGameRoom::SendReplayPacked(const std::vector<std::vector<u8>>& pieces, i
                                std::make_move_iterator(texts.end()));
 }
 
-void YouGameRoom::TestDropConnection()
+void YouGameRoom::TestDropConnection(std::chrono::seconds ticket_age)
 {
   if (Env("ORCA_TEST_ROOM_DROP") == "1")
+  {
+    if (ticket_age > std::chrono::seconds::zero())
+    {
+      std::lock_guard lock(m_impl->mutex);
+      m_impl->ticket_minted = Clock::now() - ticket_age;
+    }
     m_impl->test_drop = true;
+  }
 }
 
 void YouGameRoom::Send(const Packet& packet)

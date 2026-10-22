@@ -152,6 +152,16 @@ struct RoomReconnect
     return true;
   }
 
+  std::chrono::milliseconds UpgradeCap(
+      RoomClock::time_point now,
+      std::optional<RoomClock::time_point> deadline = std::nullopt) const
+  {
+    const auto cap = std::chrono::milliseconds(attempts <= 1 ? 5000 : attempts == 2 ? 8000 : 10000);
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline.value_or(since.value_or(now) + ROOM_HOLD) - now);
+    return std::clamp(remaining, std::chrono::milliseconds::zero(), cap);
+  }
+
   void Retry(RoomClock::time_point now, unsigned sample = 30,
              std::optional<RoomClock::time_point> deadline = std::nullopt)
   {
