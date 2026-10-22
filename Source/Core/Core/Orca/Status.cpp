@@ -16,6 +16,7 @@
 
 #include "Core/Orca/Activity.h"
 #include "Core/Orca/BootMemory.h"
+#include "Core/Orca/Branding.h"
 #include "Core/Orca/Bundle.h"
 #include "Core/Orca/Mod.h"
 #include "Core/Orca/Music.h"
@@ -147,7 +148,7 @@ void Report(std::string_view code, std::string_view sentence)
   if (!SessionActive())
     return;
   std::lock_guard lock(s_mutex);
-  Print(fmt::format("orca error {} {}\n", code, OneLine(sentence)));
+  Print(fmt::format("orca error {} {}\n", code, OneLine(BrandWords(sentence))));
 }
 
 std::string OfferedCaps()
@@ -300,9 +301,10 @@ void Error(std::string_view code, std::string_view sentence)
   if (s_errored)
     return;
   s_errored = true;
-  Print(fmt::format("orca error {} {}\n", code, OneLine(sentence)));
+  const std::string branded = OneLine(BrandWords(sentence));
+  Print(fmt::format("orca error {} {}\n", code, branded));
   if (s_error_listener)
-    s_error_listener(code, OneLine(sentence));
+    s_error_listener(code, branded);
 }
 
 void SetOutput(std::FILE* out)

@@ -14,6 +14,7 @@
 #include "Common/FileUtil.h"
 #include "Common/IOFile.h"
 #include "Core/IOS/ES/Formats.h"
+#include "Core/Orca/Branding.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Sandbox.h"
 #include "DiscIO/Enums.h"
@@ -87,7 +88,7 @@ DiscCheck CheckDisc(const std::string& path, std::string_view game_id)
   if (!profile)
   {
     if (error.find("revision") == std::string::npos)
-      return DiscCheck{false, "profile", error};
+      return DiscCheck{false, "profile", BrandWords(error)};
     if (revision == BRAWL_REV1)
     {
       return refuse("That Brawl disc is Rev 1 but not an unmodified copy of it. YG Dolphin plays "

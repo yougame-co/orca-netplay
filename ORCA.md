@@ -2831,6 +2831,11 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.72
+
+- The game's messages say "YG Dolphin" everywhere, also before YouGame shows them.
+- A broadcast from a muted game keeps a silent sound track, so the video never waits for sound.
+
 ### 0.3.70
 
 - If a friends room keeps breaking right after you get back in, the game opens a fresh room for

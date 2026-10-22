@@ -17,6 +17,7 @@
 #include "Common/FileUtil.h"
 #include "Common/Logging/Log.h"
 #include "Common/TimeUtil.h"
+#include "Core/BroadcastSink.h"
 #include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/System.h"
@@ -65,6 +66,7 @@ void InitSoundStream(Core::System& system)
     sound_stream->Init();
   }
 
+  Broadcast::SetSilentAudio(!sound_stream->GetMixer()->IsOutputSampleRateValid());
   system.SetSoundStream(std::move(sound_stream));
 }
 
@@ -86,6 +88,7 @@ void ShutdownSoundStream(Core::System& system)
   if (Config::Get(Config::MAIN_DUMP_AUDIO) && system.IsAudioDumpStarted())
     StopAudioDump(system);
 
+  Broadcast::SetSilentAudio(false);
   SetSoundStreamRunning(system, false);
   system.SetSoundStream(nullptr);
 

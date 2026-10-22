@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://yougame.co/schemas/orca-mod.json",
-  "title": "Orca mod bundle: mod.json",
-  "description": "What Orca's engine reads from a mod bundle (YouGame docs/ORCA_MODS.md, section 2.1 and the Phase 1 contract): format 1, a tree bundle (ORCA_MOD_DIR with tree.json), or format 2, a flat bundle (ORCA.md \"Flat bundles\", Source/Core/Core/Orca/Bundle.h). Orca's parser (Source/Core/Core/Orca/Mod.cpp, ParseManifest) is the reference; this schema states the same rules for the site's publish check, and the unit tests OrcaMod.SchemaMatchesTheEngine and OrcaBundle.SchemaKnowsTheFlatForm keep the lists here equal to the engine's. Anything unknown or malformed refuses the session. Rules a JSON schema can't state are in x-orca-rules.",
+  "title": "YG Dolphin mod bundle: mod.json",
+  "description": "What YG Dolphin's engine reads from a mod bundle (YouGame docs/ORCA_MODS.md, section 2.1 and the Phase 1 contract): format 1, a tree bundle (ORCA_MOD_DIR with tree.json), or format 2, a flat bundle (ORCA.md \"Flat bundles\", Source/Core/Core/Orca/Bundle.h). YG Dolphin's parser (Source/Core/Core/Orca/Mod.cpp, ParseManifest) is the reference; this schema states the same rules for the site's publish check, and the unit tests OrcaMod.SchemaMatchesTheEngine and OrcaBundle.SchemaKnowsTheFlatForm keep the lists here equal to the engine's. Anything unknown or malformed refuses the session. Rules a JSON schema can't state are in x-orca-rules.",
   "type": "object",
   "additionalProperties": false,
   "required": ["format", "engine", "disc", "frameHook"],
@@ -66,12 +66,12 @@
   "properties": {
     "format": { "enum": [1, 2] },
     "listing": {
-      "description": "Format 2: the YouGame listing the bundle is for. Orca refuses it under another listing (YOUGAME_GAME).",
+      "description": "Format 2: the YouGame listing the bundle is for. YG Dolphin refuses it under another listing (YOUGAME_GAME).",
       "type": "string",
       "pattern": "^[a-z0-9-]{1,80}$"
     },
     "serial": {
-      "description": "Format 2: the bundle's serial, above every bundle signed for the listing before. Orca refuses one below its MIN_FLAT_SERIAL, which a release raises to retire old bundles.",
+      "description": "Format 2: the bundle's serial, above every bundle signed for the listing before. YG Dolphin refuses one below its MIN_FLAT_SERIAL, which a release raises to retire old bundles.",
       "type": "integer",
       "minimum": 1,
       "maximum": 9007199254740992
@@ -107,7 +107,7 @@
       "required": ["api", "minOrca"],
       "properties": {
         "api": {
-          "description": "The script API version the mod needs; Orca refuses a mod above its own (Mod::ENGINE_API).",
+          "description": "The script API version the mod needs; YG Dolphin refuses a mod above its own (Mod::ENGINE_API).",
           "type": "integer",
           "minimum": 1,
           "maximum": 1
@@ -216,7 +216,7 @@
       "enum": ["brawl-rev2", "brawl-rev2-pplus", "brawl-rev2-results"]
     },
     "pplusGuards": {
-      "description": "Format 2, owner-only, brawl-rev2-pplus only: where a Project+ fork's codeset holds the three instruction pairs Orca checks, as the address of each pair's first word; the words stay the engine's. Absent: Project+ v3.2's addresses. The pairs must not overlap.",
+      "description": "Format 2, owner-only, brawl-rev2-pplus only: where a Project+ fork's codeset holds the three instruction pairs YG Dolphin checks, as the address of each pair's first word; the words stay the engine's. Absent: Project+ v3.2's addresses. The pairs must not overlap.",
       "type": "object",
       "additionalProperties": false,
       "required": ["rssExdata", "pageIndex", "currentPage"],

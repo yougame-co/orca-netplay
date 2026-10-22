@@ -61,7 +61,11 @@ add_dolphin_test(OrcaBootLogsTest Orca/BootLogsTest.cpp)
 add_dolphin_test(OrcaBootThrottleTest Orca/BootThrottleTest.cpp)
 add_dolphin_test(OrcaBootAuditTest Orca/BootAuditTest.cpp)
 add_dolphin_test(OrcaBrandingTest Orca/BrandingTest.cpp)
-add_dolphin_test(BroadcastRingTest Orca/BroadcastRingTest.cpp Orca/BroadcastPresentationTest.cpp)
+add_dolphin_test(BroadcastRingTest
+  Orca/BroadcastRingTest.cpp
+  Orca/BroadcastPresentationTest.cpp
+  Orca/BroadcastSinkTest.cpp
+)
 add_dolphin_test(OrcaLaunchTest Orca/LaunchTest.cpp)
 add_dolphin_test(OrcaLocalStoreTest Orca/LocalStoreTest.cpp)
 add_dolphin_test(OrcaModTest Orca/ModTest.cpp)

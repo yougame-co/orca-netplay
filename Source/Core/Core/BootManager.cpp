@@ -40,6 +40,7 @@
 #include "Core/NetPlayProto.h"
 #include "Core/Orca/BootAudit.h"
 #include "Core/Orca/BootMemory.h"
+#include "Core/Orca/Branding.h"
 #include "Core/Orca/Bundle.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Status.h"
@@ -77,7 +78,7 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
       Orca::Status::Error("profile", error);
       // Local CLI failures return to the frontend immediately; a modal alert would wait for input.
       if (!Orca::Mod::LocalPackRequested())
-        PanicAlertFmt("{}", error);
+        PanicAlertFmt("{}", Orca::BrandWords(error));
       return false;
     }
   }
@@ -194,7 +195,7 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
     if (!error.empty())
     {
       Orca::Status::Error(error_code, error);
-      PanicAlertFmt("{}", error);
+      PanicAlertFmt("{}", Orca::BrandWords(error));
       return false;
     }
     orca_profile->boot_game_id = StartUp.GetGameID();

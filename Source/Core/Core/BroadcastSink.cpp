@@ -6,7 +6,10 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
+#include <thread>
 
 #include "Common/BroadcastRing.h"
 #include "Core/Orca/Status.h"
@@ -88,6 +91,61 @@ private:
 // The OS releases the mapping and handles after the last thread has gone.
 Mapping* s_mapping = nullptr;
 bool s_attempted = false;
+
+// The null backend never calls Mixer::Mix. Give the muxer a real-time sample clock without
+// consuming game audio or competing with a real backend for the ring's single audio producer.
+class SilentAudioClock
+{
+public:
+  ~SilentAudioClock() { Stop(); }
+  bool Running() const { return m_thread.joinable(); }
+  void Start()
+  {
+    if (m_thread.joinable())
+      return;
+    m_stop = false;
+    m_thread = std::thread([this] {
+      constexpr auto period = std::chrono::milliseconds(10);
+      const std::array<u8, AUDIO_BYTES> silence{};
+      auto deadline = std::chrono::steady_clock::now();
+      u64 timestamp = NowMicros();
+      std::unique_lock lock(m_mutex);
+      while (!m_wake.wait_until(lock, deadline += period, [this] { return m_stop; }))
+      {
+        if (Active())
+          Write(s_mapping->Memory(), true, silence, timestamp);
+        timestamp += AUDIO_FRAMES * 1000000ull / RATE;
+      }
+    });
+  }
+  void Stop()
+  {
+    if (!m_thread.joinable())
+      return;
+    {
+      std::lock_guard lock(m_mutex);
+      m_stop = true;
+    }
+    m_wake.notify_one();
+    m_thread.join();
+  }
+private:
+  std::thread m_thread;
+  std::mutex m_mutex;
+  std::condition_variable m_wake;
+  bool m_stop = false;
+};
+SilentAudioClock s_silent_clock;
+// Serialize sink/backend lifetime changes; the clock and real mixer callbacks never share state.
+std::mutex s_control_mutex;
+bool s_silent_audio = false;
+void UpdateSilentAudio()
+{
+  if (Active() && s_silent_audio)
+    s_silent_clock.Start();
+  else
+    s_silent_clock.Stop();
+}
 }  // namespace
 
 u64 NowMicros()
@@ -97,6 +155,7 @@ u64 NowMicros()
 }
 void StartReplay()
 {
+  std::lock_guard lock(s_control_mutex);
   if (s_attempted || !Rollback::ReplayStream::ProductMode())
     return;
   s_attempted = true;
@@ -112,12 +171,26 @@ void StartReplay()
   s_mapping = mapping.release();
   Store(s_mapping->Memory(), 80, 1);
   s_enabled.store(true, std::memory_order_release);
+  UpdateSilentAudio();
 }
 void StopReplay()
 {
+  std::lock_guard lock(s_control_mutex);
   s_enabled.store(false, std::memory_order_release);
+  UpdateSilentAudio();
   if (s_mapping)
     Store(s_mapping->Memory(), 80, 2);
+}
+void SetSilentAudio(bool enabled)
+{
+  std::lock_guard lock(s_control_mutex);
+  s_silent_audio = enabled;
+  UpdateSilentAudio();
+}
+bool SilentAudioRunning()
+{
+  std::lock_guard lock(s_control_mutex);
+  return s_silent_clock.Running();
 }
 void Video(const u8* rgba, size_t stride, u64 timestamp)
 {

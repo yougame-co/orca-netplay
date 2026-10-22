@@ -145,3 +145,58 @@ TEST(OrcaStatus, AppSetResultsMarkHarnessInputAndPreserveNormalBytes)
     std::fclose(output);
   }
 }
+
+TEST(OrcaStatus, ReportsBrandOnlyTheSentence)
+{
+  const auto old_session = Orca::GetEnv("ORCA_SESSION");
+  Common::ScopeGuard restore([&] {
+    Orca::Status::SetOutput(nullptr);
+    Orca::Status::SetAppCaps("");
+    SetEnv("ORCA_SESSION", old_session);
+  });
+  SetEnv("ORCA_SESSION", "1");
+  Orca::Status::SetAppCaps("join");
+  std::FILE* out = std::tmpfile();
+  ASSERT_NE(out, nullptr);
+  Common::ScopeGuard close([&] { std::fclose(out); });
+  Orca::Status::SetOutput(out);
+  Orca::Status::Report("orca_code", "Restart Orca from /Applications/Orca.app.\nUpdate YG Baiji.");
+  std::rewind(out);
+  char buffer[256]{};
+  ASSERT_NE(std::fgets(buffer, sizeof(buffer), out), nullptr);
+  EXPECT_EQ(std::string(buffer), "orca error orca_code Restart YG Dolphin from "
+                                "/Applications/Orca.app. Update YG Dolphin.\n");
+}
+
+TEST(OrcaStatusDeathTest, ErrorsAndLegacyReportsBrandTheOutputAndListener)
+{
+  // Error's first-failure state lasts for the process, so exercise each route in a fresh child.
+  for (bool report : {false, true})
+  {
+    ASSERT_EXIT(
+        {
+          SetEnv("ORCA_SESSION", "1");
+          Orca::Status::SetAppCaps("");
+          std::FILE* out = std::tmpfile();
+          if (!out)
+            std::_Exit(2);
+          Orca::Status::SetOutput(out);
+          Orca::Status::SetErrorListener([](std::string_view code, std::string_view sentence) {
+            if (code != "orca_code" || sentence != "YG Dolphin needs /Applications/Orca.app")
+              std::_Exit(3);
+          });
+          if (report)
+            Orca::Status::Report("orca_code", "Orca needs /Applications/Orca.app");
+          else
+            Orca::Status::Error("orca_code", "Orca needs /Applications/Orca.app");
+          std::rewind(out);
+          char buffer[256]{};
+          const bool ok = std::fgets(buffer, sizeof(buffer), out) &&
+              std::string(buffer) == "orca error orca_code YG Dolphin needs /Applications/Orca.app\n" &&
+              Orca::Status::ExitCode() == 1;
+          std::fclose(out);
+          std::_Exit(ok ? 0 : 4);
+        },
+        ::testing::ExitedWithCode(0), "");
+  }
+}

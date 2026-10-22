@@ -508,7 +508,8 @@ TEST_F(OrcaBootAuditDeathTest, FailedAuditRefusesStartAndStartRoomWithoutARoom)
           lines += buffer;
         std::_Exit(!Orca::Online::Transport() && Orca::Status::ExitCode() == 1 &&
                           failed->Error() == Entry().refusal &&
-                          lines == "orca error profile " + Entry().refusal + "\n"
+                          lines == "orca error profile YG Dolphin: " + path +
+                                       " is not the loader profile PPLUS32 names\n"
                       ? 0
                       : 1);
       },
@@ -751,7 +752,8 @@ TEST_F(OrcaBootAuditRoomDeathTest, FailedWatchAuditReportsTheProfileRefusalOnce)
         char buffer[512];
         while (std::fgets(buffer, sizeof(buffer), output))
           lines += buffer;
-        const std::string refusal = "orca error profile " + Entry().refusal + "\n";
+        const std::string refusal = "orca error profile YG Dolphin: " + path +
+                                    " is not the loader profile PPLUS32 names\n";
         const auto first = lines.find(refusal);
         std::_Exit(!HasFailure() && Orca::Status::ExitCode() == 1 &&
                           first != std::string::npos &&
