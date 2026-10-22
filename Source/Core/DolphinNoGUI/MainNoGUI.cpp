@@ -77,6 +77,9 @@
 static std::unique_ptr<Platform> s_platform;
 // True in embed mode (Embed.h): drawn inside the YouGame app's window, controlled over stdin.
 static bool s_embedded = false;
+static bool s_single_line_panics = false;
+// Embed::ClaimStdout redirects stdout to stderr; diagnostics for the app use its private stream.
+static std::FILE* s_panic_output = nullptr;
 // The disc of a --verify run (DiscVerify.h), which checks it and exits without booting.
 static std::string s_verify_disc;
 // --sandbox-probe (ORCA.md "The sandbox"): SandboxProbe instead of a boot.
@@ -117,6 +120,11 @@ static void PrintAlert(const char* text) noexcept
 #endif
 }
 
+static void PrintPanicLine(const char* text) noexcept
+{
+  Orca::CrashNote::WriteLine(s_panic_output ? s_panic_output : stdout, text);
+}
+
 // At the game's first frame: restore pacing; embedded boot logs go off (Orca/BootLogs.h).
 // On the CPU thread, so std::fprintf: a throw from there can't unwind (Orca/CrashNote.h).
 static void EndBootLogs()
@@ -135,6 +143,9 @@ static void EndBootLogs()
 static bool MsgAlertHandler(const char* caption, const char* text, bool yes_no,
                             Common::MsgType style)
 {
+  if (s_single_line_panics &&
+      (style == Common::MsgType::Warning || style == Common::MsgType::Critical))
+    return false;  // Already emitted and logged before the handler was called.
   // When embedded, verifying or probing, log the alert instead of popping a message box.
   if (s_embedded || !s_verify_disc.empty() || s_sandbox_probe)
   {
@@ -153,8 +164,11 @@ static bool MsgAlertHandler(const char* caption, const char* text, bool yes_no,
 }
 #else
 // Like the default handler (print to stderr), but with Orca branding.
-static bool MsgAlertHandler(const char*, const char* text, bool, Common::MsgType)
+static bool MsgAlertHandler(const char*, const char* text, bool, Common::MsgType style)
 {
+  if (s_single_line_panics &&
+      (style == Common::MsgType::Warning || style == Common::MsgType::Critical))
+    return false;
   PrintAlert(text);
   // Answer no to any question, like the default handler.
   return false;
@@ -459,6 +473,8 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
   // Register before reading the boot file, so an embedded alert never becomes a message box hidden
   // behind the app's window.
   Common::RegisterMsgAlertHandler(MsgAlertHandler);
+  s_single_line_panics = embed.enabled || Orca::SessionActive() || options.is_set("pack");
+  Common::RegisterPanicAlertLogHandler(s_single_line_panics ? PrintPanicLine : nullptr);
 
   if (options.is_set("pack"))
   {
@@ -837,7 +853,8 @@ int main(const int raw_argc, char* raw_argv[])
   s_embedded = embed->enabled;
   if (s_embedded)
   {
-    Orca::Status::SetOutput(Embed::ClaimStdout());
+    s_panic_output = Embed::ClaimStdout();
+    Orca::Status::SetOutput(s_panic_output);
     // Also send every error to the app as "error <sentence>".
     Orca::Status::SetErrorListener([](std::string_view, std::string_view sentence) {
       Embed::Out(fmt::format("error {}", sentence));

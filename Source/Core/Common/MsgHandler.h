@@ -22,9 +22,14 @@ enum class MsgType
 };
 
 using MsgAlertHandler = bool (*)(const char* caption, const char* text, bool yes_no, MsgType style);
+using PanicAlertLogHandler = void (*)(const char* text);
 using StringTranslator = std::string (*)(const char* text);
 
-void RegisterMsgAlertHandler(MsgAlertHandler handler);
+MsgAlertHandler RegisterMsgAlertHandler(MsgAlertHandler handler);
+// Opt in to Orca's single-line panic diagnostics before the normal alert/abort path. The handler
+// writes the line to the app; Dolphin also logs it at ERROR, even with its category disabled.
+// Both registrations return the previous handler so scoped users can restore it.
+PanicAlertLogHandler RegisterPanicAlertLogHandler(PanicAlertLogHandler handler);
 void RegisterStringTranslator(StringTranslator translator);
 
 [[nodiscard]] std::string GetStringT(const char* string);

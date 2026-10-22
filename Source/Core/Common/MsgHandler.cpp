@@ -3,6 +3,7 @@
 
 #include "Common/MsgHandler.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 
@@ -13,6 +14,7 @@
 #endif
 
 #include "Common/Logging/Log.h"
+#include "Common/Logging/LogManager.h"
 #ifdef _WIN32
 #include "Common/StringUtil.h"
 #endif
@@ -48,9 +50,54 @@ std::string DefaultStringTranslator(const char* text)
 }
 
 MsgAlertHandler s_msg_handler = DefaultMsgHandler;
+PanicAlertLogHandler s_panic_log_handler = nullptr;
 StringTranslator s_str_translator = DefaultStringTranslator;
 bool s_alert_enabled = true;
 bool s_abort_on_panic_alert = false;
+
+std::string SourceRelativePath(std::string path)
+{
+  std::replace(path.begin(), path.end(), '\\', '/');
+  const size_t source = path.rfind("/Source/");
+  if (source != std::string::npos)
+    return path.substr(source + 8);
+  if (path.starts_with("Source/"))
+    return path.substr(7);
+  // A compiler may already supply a relative path. For an absolute path outside Source, keep
+  // only the filename rather than disclosing the build machine's directories.
+  if (path.starts_with('/') || (path.size() > 1 && path[1] == ':'))
+    return path.substr(path.find_last_of('/') + 1);
+  return path;
+}
+
+std::string SingleLinePanic(std::string text, const std::string& file, int line)
+{
+  // ASSERT and ASSERT_MSG include __FILE__ in their text as well as in the log callsite.
+  constexpr std::string_view file_label = "\n  File: ";
+  const size_t label = text.rfind(file_label);
+  if (label != std::string::npos)
+  {
+    const size_t start = label + file_label.size();
+    const size_t end = text.find_first_of("\r\n", start);
+    text.replace(start, end - start, SourceRelativePath(text.substr(start, end - start)));
+  }
+
+  std::string result = fmt::format("orca error assert at {}:{} | ", file, line);
+  for (size_t i = 0; i < text.size(); ++i)
+  {
+    if (text[i] == '\r' || text[i] == '\n')
+    {
+      if (text[i] == '\r' && i + 1 < text.size() && text[i + 1] == '\n')
+        ++i;
+      result += " | ";
+    }
+    else
+    {
+      result += text[i];
+    }
+  }
+  return result;
+}
 
 const char* GetCaption(MsgType style)
 {
@@ -90,9 +137,14 @@ Log::LogLevel GetMessageAlertLogLevel(const MsgType style)
 
 // Select which of these functions that are used for message boxes. If
 // Qt is enabled we will use QtMsgAlertHandler() that is defined in Main.cpp
-void RegisterMsgAlertHandler(MsgAlertHandler handler)
+MsgAlertHandler RegisterMsgAlertHandler(MsgAlertHandler handler)
 {
-  s_msg_handler = handler;
+  return std::exchange(s_msg_handler, handler);
+}
+
+PanicAlertLogHandler RegisterPanicAlertLogHandler(PanicAlertLogHandler handler)
+{
+  return std::exchange(s_panic_log_handler, handler);
 }
 
 // Select translation function.
@@ -121,10 +173,24 @@ static bool ShowMessageAlert(std::string_view text, bool yes_no, Common::Log::Lo
                              MsgType style, const char* file, int line)
 {
   const char* caption = GetCaption(style);
-  const Log::LogLevel level = GetMessageAlertLogLevel(style);
-  // Directly call GenericLogFmt rather than using the normal log macros so that we can use the
-  // caller's line file and line number
-  Common::Log::GenericLogFmt<2>(level, log_type, file, line, FMT_STRING("{}: {}"), caption, text);
+  if (s_panic_log_handler && (style == MsgType::Warning || style == MsgType::Critical))
+  {
+    const std::string relative_file = SourceRelativePath(file);
+    const std::string diagnostic = SingleLinePanic(std::string(text), relative_file, line);
+    s_panic_log_handler(diagnostic.c_str());
+    if (auto* logs = Log::LogManager::GetInstance())
+    {
+      logs->LogWithFullPath(Log::LogLevel::LERROR, log_type, relative_file.c_str(), line,
+                            diagnostic.c_str());
+    }
+  }
+  else
+  {
+    const Log::LogLevel level = GetMessageAlertLogLevel(style);
+    // Directly call GenericLogFmt rather than using the normal log macros so that we can use the
+    // caller's line file and line number
+    Common::Log::GenericLogFmt<2>(level, log_type, file, line, FMT_STRING("{}: {}"), caption, text);
+  }
 
   // Panic alerts.
   if (style == MsgType::Warning && s_abort_on_panic_alert)

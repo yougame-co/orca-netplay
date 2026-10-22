@@ -2831,6 +2831,11 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.73
+
+- If the game ever stops on an internal check, its message now says exactly which check, so a
+  crash report shows what went wrong.
+
 ### 0.3.72
 
 - The game's messages say "YG Dolphin" everywhere, also before YouGame shows them.

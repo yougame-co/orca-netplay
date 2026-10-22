@@ -5,6 +5,7 @@
 #include <array>
 #include <chrono>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -63,7 +64,8 @@ public:
   std::vector<u32> Read()
   {
     std::vector<u32> memory(Broadcast::SIZE / 4);
-    File::IOFile file(m_path, "rb");
+    // The sink keeps the ring mapped read-write; on Windows only a sharing reader may open it.
+    File::IOFile file(m_path, "rb", File::SharedAccess::ReadWrite);
     EXPECT_TRUE(file.ReadArray(memory.data(), memory.size()));
     return memory;
   }
@@ -128,9 +130,10 @@ void CheckMixerCallbacks()
   Broadcast::StartReplay();
   EXPECT_TRUE(Broadcast::Active());
   EXPECT_FALSE(Broadcast::SilentAudioRunning());
-  Mixer mixer(Broadcast::RATE);
+  // A Mixer is several MB: on the heap, since Windows test threads have a 1 MB stack.
+  const auto mixer = std::make_unique<Mixer>(Broadcast::RATE);
   std::array<s16, Broadcast::AUDIO_FRAMES * Broadcast::CHANNELS> samples{};
-  EXPECT_EQ(mixer.Mix(samples.data(), Broadcast::AUDIO_FRAMES), Broadcast::AUDIO_FRAMES);
+  EXPECT_EQ(mixer->Mix(samples.data(), Broadcast::AUDIO_FRAMES), Broadcast::AUDIO_FRAMES);
   auto memory = fixture.Read();
   EXPECT_EQ(Broadcast::Load(memory, 68), 1u);
   // A final mixed callback retains its sample bytes; no silent producer adds packets.
