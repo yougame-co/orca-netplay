@@ -1032,6 +1032,16 @@ void VKStagingTexture::Unmap()
   // Always mapped.
 }
 
+bool VKStagingTexture::TryFlush()
+{
+  if (m_needs_flush && !g_command_buffer_mgr->IsFenceComplete(m_flush_fence_counter))
+    return false;
+  if (m_needs_flush && (m_type == StagingTextureType::Readback || m_type == StagingTextureType::Mutable))
+    m_staging_buffer->InvalidateCPUCache();
+  m_needs_flush = false;
+  return true;
+}
+
 void VKStagingTexture::Flush()
 {
   if (!m_needs_flush)

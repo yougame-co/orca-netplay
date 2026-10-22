@@ -193,7 +193,12 @@ std::string OfferedCaps()
   // so an app that reads fewer words drops them before any other.
   caps += fmt::format(" {} {}", TALK_CAP, RUMBLE_CAP);
   if (Rollback::ReplayStream::ProductMode())
+  {
     caps += fmt::format(" {}", REPLAY_CAP);
+#ifdef HAVE_BROADCAST_SINK
+    caps += " broadcast";
+#endif
+  }
   caps += fmt::format(" {} {}", RECORD_CAP, HOSTUI_CAP);
   return caps;
 }

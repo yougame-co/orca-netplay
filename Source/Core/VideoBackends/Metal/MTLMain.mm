@@ -118,9 +118,13 @@ bool Metal::VideoBackend::Initialize(const WindowSystemInfo& wsi)
     UpdateActiveConfig();
 
     MRCOwned<CAMetalLayer*> layer = MRCRetain(static_cast<CAMetalLayer*>(wsi.render_surface));
+    // Initialization runs on the GPU thread, which has no Core Animation run loop.
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     [layer setDevice:adapter];
     if (Util::ToAbstract([layer pixelFormat]) == AbstractTextureFormat::Undefined)
       [layer setPixelFormat:MTLPixelFormatBGRA8Unorm];
+    [CATransaction commit];
 
     ObjectCache::Initialize(std::move(adapter));
     g_state_tracker = std::make_unique<StateTracker>();

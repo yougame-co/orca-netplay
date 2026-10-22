@@ -99,6 +99,8 @@ public:
 
   // Last "completed" fence.
   u64 GetCompletedFenceValue() const { return m_completed_fence_value; }
+  // Live readback polls the actual fence without updating resource cleanup or waiting.
+  bool IsFenceComplete(u64 value) const { return m_fence->GetCompletedValue() >= value; }
 
   // Texture streaming buffer for uploads.
   StreamBuffer& GetTextureUploadBuffer() { return m_texture_upload_buffer; }

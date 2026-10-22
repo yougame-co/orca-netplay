@@ -9,12 +9,14 @@
 
 #include "Core/Config/GraphicsSettings.h"
 #include "Core/Config/MainSettings.h"
+#include "Core/BroadcastSink.h"
 #include "Core/Core.h"
 
 #include "VideoCommon/AbstractFramebuffer.h"
 #include "VideoCommon/AbstractGfx.h"
 #include "VideoCommon/AbstractStagingTexture.h"
 #include "VideoCommon/AbstractTexture.h"
+#include "VideoCommon/BroadcastFrame.h"
 #include "VideoCommon/OnScreenDisplay.h"
 #include "VideoCommon/Present.h"
 
@@ -40,6 +42,16 @@ FrameDumper::~FrameDumper()
   // A renderer can stop before the first XFB. Complete that request as a failure too.
   if (m_screenshot_callback)
     m_screenshot_callback(false);
+}
+
+void FrameDumper::BroadcastCurrentFrame(const AbstractTexture* texture,
+                                       const MathUtil::Rectangle<int>& rect, float aspect_ratio)
+{
+  if (!Broadcast::Active())
+    return;
+  if (!m_broadcast)
+    m_broadcast = std::make_unique<BroadcastFrame>();
+  m_broadcast->Capture(texture, rect, aspect_ratio);
 }
 
 void FrameDumper::DumpCurrentFrame(const AbstractTexture* src_texture,

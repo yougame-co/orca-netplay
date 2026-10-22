@@ -2368,6 +2368,38 @@ overlay docks its lines on the bar instead), native words on the results screen,
 
 ## Embedding
 
+**Private live broadcast sink (v1).** The desktop app may set `ORCA_BROADCAST_SINK=<file>` on a
+product replay (`ORCA_REPLAY_SOURCE`, a file or ticketed watch URL). Only a product replay player's
+lifetime enables the sink; setting the sink on a playing machine exports nothing. Finish and
+destruction disable it. The app creates the private file in its run directory, initializes every
+page, grants this single file read-write, then launches YG Dolphin. No listener, loopback, screen,
+microphone, or system audio source is used. The sink never records media for later playback.
+
+`Common/BroadcastRing.h` defines the little-endian file ABI, 11,186,624 bytes. Its 256-byte header
+has u32 magic `0x31424759` (YGB1), version 1, width 1280, height 720, fps 30, rate 48000,
+channels 2, video slots 3, audio slots 64, video bytes 3686400, audio frames 480, total size, at
+offsets 0 through 44. Video/audio latest tickets, video/audio drop counters and state are u32 at
+64/68/72/76/80. State is 0 waiting, 1 active replay, 2 stopped. Other header words are reserved.
+
+Three video slots start at 256, stride 3,686,464. Audio starts at 11,059,648, with 64 slots of
+stride 1,984 (10ms each). Each slot has a 64-byte prefix: u32 sequence guard, payload byte count,
+timestamp low/high words, and sample count at 0/4/8/12/16. Timestamp is steady-clock microseconds,
+shared by video and audio. Count is 1 for video, 480 for audio. Video is top-first RGBA8, audio is
+interleaved little-endian signed 16-bit L/R, tapped after every mixer source and resampled to 48k.
+Both rings are single producer; they never wait for the reader. Nonzero u31 tickets wrap from
+0x7fffff80 to 1, slot `(ticket-1)%slots`. Writers mark the guard odd (`ticket*2+1`), write, mark it
+even (`ticket*2`), then publish latest. Readers require that same even guard before and after the
+copy; a mismatched guard drops the copy. Video consumes newest only, audio consumes retained
+chunks in order (desktop caps catch-up at 100ms). Independent rings avoid a mixer/render lock.
+
+Video uses three GPU staging textures and one bounded CPU writer job beside FrameDumper. It
+polls `TryFlush`, scales the game XFB to 720p, and drops busy/stale work (100ms) without waiting
+on the GPU or writer. Metal, D3D11, D3D12, Vulkan and persistent-buffer OpenGL supply nonblocking
+readback. Other backends drop frames. Normal disk frame dumping retains its original behavior.
+The lead must measure CPU/GPU load, output fps and drops, A/V drift over a long match, and output
+with the window minimized. Render/audio shutdown and readback orientation on each backend need
+runtime validation; none of these code changes are a substitute for those checks.
+
 The YouGame desktop app shows Orca inside its own window, at the page's player box, using the same
 line protocol as its libretro host. Code: `Source/Core/DolphinNoGUI/Embed.*`, `Platform.cpp`
 (commands), `PlatformWin32.cpp`, `PlatformMacos.mm` and `PlatformX11.cpp` (the window). Test hosts:
@@ -2798,6 +2830,13 @@ STUN and TURN are internet traffic and work in every mode.
 ## Changes by release
 
 What each release changed for players, in plain words.
+
+### 0.3.67
+
+- Broadcast a replay or a live match you're watching through YouGame, with game sound.
+  The broadcast keeps going when the game view is hidden or has no room on screen.
+- On Mac, the game finishes every change to its picture at once, so the screen can't be left
+  waiting on it.
 
 ### 0.3.66
 

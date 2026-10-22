@@ -6,6 +6,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include <Common/WorkQueueThread.h>
@@ -44,6 +45,7 @@ public:
   // associated counter N has been completed by the GPU. The value of N to associate with
   // commands can be retrieved by calling GetCurrentFenceCounter().
   u64 GetCompletedFenceCounter() const { return m_completed_fence_counter; }
+  bool IsFenceComplete(u64 counter) const;
 
   // Gets the fence that will be signaled when the currently executing command buffer is
   // queued and executed. Do not wait for this fence before the buffer is executed.
@@ -153,6 +155,7 @@ private:
     u32 command_buffer_index;
   };
   Common::WorkQueueThreadSP<PendingCommandBufferSubmit> m_submit_thread;
+  mutable std::mutex m_fence_mutex;  // Host access to fences during queue submit and live polling.
   std::vector<VkSemaphore> m_present_semaphores = {};
   Common::Flag m_last_present_failed;
   VkResult m_last_present_result = VK_SUCCESS;

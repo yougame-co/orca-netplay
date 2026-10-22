@@ -369,6 +369,23 @@ void DXStagingTexture::Unmap()
   m_map_pointer = nullptr;
 }
 
+bool DXStagingTexture::TryFlush()
+{
+  if (m_map_pointer)
+    return true;
+  if (m_type != StagingTextureType::Readback)
+    return false;
+  D3D11_MAPPED_SUBRESOURCE mapped;
+  const HRESULT hr = D3D::context->Map(m_tex.Get(), 0, D3D11_MAP_READ,
+                                      D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+  if (FAILED(hr))
+    return false;
+  m_map_pointer = static_cast<char*>(mapped.pData);
+  m_map_stride = mapped.RowPitch;
+  m_needs_flush = false;
+  return true;
+}
+
 void DXStagingTexture::Flush()
 {
   // Flushing is handled by the API.

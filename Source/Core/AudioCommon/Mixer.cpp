@@ -16,6 +16,7 @@
 #include "Common/Swap.h"
 #include "Core/Config/MainSettings.h"
 #include "Core/Core.h"
+#include "Core/BroadcastSink.h"
 #include "Core/Rollback/Rollback.h"
 #include "Core/System.h"
 
@@ -179,6 +180,9 @@ std::size_t Mixer::Mix(s16* samples, std::size_t num_samples)
   m_skylander_portal_mixer.Mix(samples, num_samples);
   for (auto& mixer : m_gba_mixers)
     mixer.Mix(samples, num_samples);
+
+  if (Broadcast::Active())
+    Broadcast::Audio(samples, num_samples, m_output_sample_rate);
 
   return num_samples;
 }

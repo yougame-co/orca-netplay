@@ -414,6 +414,14 @@ void PlatformWin32::ProcessEvents()
     TranslateMessage(&msg);
     DispatchMessage(&msg);
   }
+  // Child visibility alone does not reflect a minimized app window. Publish the surface's
+  // state as on macOS/X11, so a broadcast can omit window work while its XFB keeps flowing.
+  const HWND root = GetAncestor(m_hwnd, GA_ROOT);
+  RECT client{};
+  const bool visible = IsWindowVisible(m_hwnd) && root && !IsIconic(root) &&
+                       GetClientRect(m_hwnd, &client) && client.right > client.left &&
+                       client.bottom > client.top;
+  VideoCommon::Presenter::SetSurfaceVisible(visible);
 }
 
 LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wParam,

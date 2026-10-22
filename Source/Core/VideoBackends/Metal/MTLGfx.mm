@@ -27,7 +27,11 @@
 Metal::Gfx::Gfx(MRCOwned<CAMetalLayer*> layer) : m_layer(std::move(layer))
 {
   UpdateActiveConfig();
+  // The GPU thread has no run loop to commit implicit Core Animation transactions.
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
   [m_layer setDisplaySyncEnabled:g_ActiveConfig.bVSyncActive];
+  [CATransaction commit];
 
   SetupSurface();
   g_state_tracker->FlushEncoders();
@@ -295,7 +299,12 @@ void Metal::Gfx::OnConfigChanged(u32 bits)
   AbstractGfx::OnConfigChanged(bits);
 
   if (bits & CONFIG_CHANGE_BIT_VSYNC)
+  {
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     [m_layer setDisplaySyncEnabled:g_ActiveConfig.bVSyncActive];
+    [CATransaction commit];
+  }
 
   if (bits & CONFIG_CHANGE_BIT_ANISOTROPY)
   {
@@ -702,7 +711,10 @@ void Metal::Gfx::SetupSurface()
 {
   auto info = GetSurfaceInfo();
 
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
   [m_layer setDrawableSize:{static_cast<double>(info.width), static_cast<double>(info.height)}];
+  [CATransaction commit];
 
   TextureConfig cfg(info.width, info.height, 1, 1, 1, info.format, AbstractTextureFlag_RenderTarget,
                     AbstractTextureType::Texture_2DArray);

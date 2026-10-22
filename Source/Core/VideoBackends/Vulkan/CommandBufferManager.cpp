@@ -267,6 +267,22 @@ void CommandBufferManager::WaitForFenceCounter(u64 fence_counter)
   WaitForCommandBufferCompletion(index);
 }
 
+bool CommandBufferManager::IsFenceComplete(u64 counter) const
+{
+  if (counter <= m_completed_fence_counter)
+    return true;
+  std::unique_lock lock(m_fence_mutex, std::try_to_lock);
+  if (!lock.owns_lock())
+    return false;
+  for (const auto& resources : m_command_buffers)
+  {
+    if (resources.fence_counter == counter &&
+        !resources.waiting_for_submit.load(std::memory_order_acquire))
+      return vkGetFenceStatus(g_vulkan_context->GetDevice(), resources.fence) == VK_SUCCESS;
+  }
+  return false;
+}
+
 void CommandBufferManager::WaitForCommandBufferCompletion(u32 index)
 {
   CmdBufferResources& resources = m_command_buffers[index];
@@ -426,8 +442,11 @@ void CommandBufferManager::SubmitCommandBuffer(u32 command_buffer_index,
     submit_info.pSignalSemaphores = &m_present_semaphores[present_image_index];
   }
 
-  VkResult res =
-      vkQueueSubmit(g_vulkan_context->GetGraphicsQueue(), 1, &submit_info, resources.fence);
+  VkResult res;
+  {
+    std::lock_guard lock(m_fence_mutex);
+    res = vkQueueSubmit(g_vulkan_context->GetGraphicsQueue(), 1, &submit_info, resources.fence);
+  }
   if (res != VK_SUCCESS)
   {
     LOG_VULKAN_ERROR(res, "vkQueueSubmit failed: ");

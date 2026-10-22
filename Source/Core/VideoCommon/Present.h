@@ -46,7 +46,7 @@ public:
 
   void SetNextSwapEstimatedTime(u64 ticks, TimePoint host_time);
 
-  void Present(PresentInfo* present_info = nullptr);
+  void Present(PresentInfo* present_info = nullptr, bool window_requested = true);
   // Orca: presents the last frame again, so the online overlay keeps updating during a stall.
   // Doesn't fetch, dump frames or fire present events.
   void RepresentLast();

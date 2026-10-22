@@ -11,6 +11,7 @@
 #include <optional>
 
 #include "Common/ChunkFile.h"
+#include "Core/BroadcastSink.h"
 #include "Core/Config/GraphicsSettings.h"
 #include "Core/Config/MainSettings.h"
 #include "Core/Core.h"
@@ -25,6 +26,7 @@
 
 #include "Present.h"
 #include "VideoCommon/AbstractGfx.h"
+#include "VideoCommon/BroadcastPresentation.h"
 #include "VideoCommon/FrameDumper.h"
 #include "VideoCommon/FramebufferManager.h"
 #include "VideoCommon/OnScreenUI.h"
@@ -251,9 +253,10 @@ void Presenter::ViSwap(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_height,
 
   video_events.before_present_event.Trigger(present_info);
 
-  if (!is_duplicate || !g_ActiveConfig.bSkipPresentingDuplicateXFBs)
+  const bool window_requested = !is_duplicate || !g_ActiveConfig.bSkipPresentingDuplicateXFBs;
+  Present(&present_info, window_requested);
+  if (window_requested)
   {
-    Present(&present_info);
     ProcessFrameDumping(ticks);
 
     video_events.after_present_event.Trigger(present_info);
@@ -1055,8 +1058,34 @@ void Presenter::RepresentLast()
   }
 }
 
-void Presenter::Present(PresentInfo* present_info)
+void Presenter::Present(PresentInfo* present_info, bool window_requested)
 {
+  // One atomic check when disabled, before any crop/aspect math or surface queries.
+  if (Broadcast::Active())
+  {
+    // Query the live surface size: a surface created at 0x0 must recover when it grows,
+    // even though BindBackbuffer has not yet updated the presenter's cached dimensions.
+    const auto surface = g_gfx->GetSurfaceInfo();
+    const auto output = ChooseBroadcastPresentation(true, m_xfb_entry != nullptr,
+                                                    IsSurfaceVisible(), surface.width,
+                                                    surface.height, window_requested);
+    if (output.capture)
+    {
+      // Capture and submit before acquiring a window image. A hidden/minimized window or a
+      // failed swapchain must never prevent offscreen readbacks from reaching their fences.
+      g_vertex_manager->Flush();
+      g_frame_dumper->BroadcastCurrentFrame(m_xfb_entry->texture.get(),
+                                           AdjustForCustomCrop(m_xfb_rect),
+                                           CalculateDrawAspectRatio(false));
+      g_gfx->Flush();
+    }
+    if (output.skip_window)
+      return;
+  }
+  else if (!window_requested)
+  {
+    return;
+  }
 #ifdef _WIN32
   Orca::GpuDiagnostics::LogMemory();
 #endif

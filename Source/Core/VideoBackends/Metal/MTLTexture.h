@@ -51,6 +51,7 @@ public:
   bool Map() override;
   void Unmap() override;
   void Flush() override;
+  bool TryFlush() override;
 
 private:
   MRCOwned<id<MTLBuffer>> m_buffer;

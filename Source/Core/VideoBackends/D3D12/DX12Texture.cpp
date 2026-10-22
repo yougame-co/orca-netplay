@@ -769,6 +769,14 @@ void DXStagingTexture::Unmap()
   m_map_pointer = nullptr;
 }
 
+bool DXStagingTexture::TryFlush()
+{
+  if (m_needs_flush && !g_dx_context->IsFenceComplete(m_completed_fence))
+    return false;
+  m_needs_flush = false;
+  return true;
+}
+
 void DXStagingTexture::Flush()
 {
   if (!m_needs_flush)

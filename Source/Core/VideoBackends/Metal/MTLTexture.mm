@@ -174,6 +174,15 @@ void Metal::StagingTexture::Unmap()
   // Always mapped
 }
 
+bool Metal::StagingTexture::TryFlush()
+{
+  if (m_wait_buffer && [m_wait_buffer status] != MTLCommandBufferStatusCompleted)
+    return false;
+  m_wait_buffer = nullptr;
+  m_needs_flush = false;
+  return true;
+}
+
 void Metal::StagingTexture::Flush()
 {
   m_needs_flush = false;

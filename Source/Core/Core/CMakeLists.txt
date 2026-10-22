@@ -507,6 +507,8 @@ add_library(core
   NetPlayCommon.h
   NetPlayServer.cpp
   NetPlayServer.h
+  BroadcastSink.cpp
+  BroadcastSink.h
   Orca/Activity.cpp
   Orca/Activity.h
   Orca/BootAudit.cpp
@@ -868,6 +870,9 @@ elseif(_M_ARM_64)
     PowerPC/JitArmCommon/BackPatch.h
   )
 endif()
+
+# Keep the offered capability tied to the target that includes BroadcastSink.cpp.
+target_compile_definitions(core PRIVATE HAVE_BROADCAST_SINK=1)
 
 target_link_libraries(core
 PUBLIC

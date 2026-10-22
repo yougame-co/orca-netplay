@@ -29,6 +29,7 @@
 #include "Common/Version.h"
 #include "Common/WebSocket.h"
 #include "Core/HW/Memmap.h"
+#include "Core/BroadcastSink.h"
 #include "Core/Orca/BootAudit.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/SafeJson.h"
@@ -673,6 +674,8 @@ Player::Player() = default;
 
 Player::~Player()
 {
+  if (m_product)
+    Broadcast::StopReplay();
   if (m_watch)
   {
     m_watch->stop = true;
@@ -968,6 +971,7 @@ std::unique_ptr<Player> Player::FromEnv()
   play->m_product = product;
   if (product)
   {
+    Broadcast::StartReplay();
     // Names only when the app gives them (a public replay's view-time names); a player's own replay
     // keeps the recording's labels. A malformed map shows every port as "Player N".
     if (const std::string names = Orca::GetEnv("ORCA_REPLAY_NAMES"); !names.empty())
@@ -1146,6 +1150,8 @@ void Player::Finish(const PlayerHost& host, bool ok, const std::string& why)
   NOTICE_LOG_FMT(ROLLBACK, "Replay: {} after {} frames, {} checksums checked, {} differ ({})",
                  ok ? "over" : "failed", m_played, m_checked, m_mismatched, why);
   m_over = true;
+  if (m_product)
+    Broadcast::StopReplay();
   host.stop(ok ? "The replay is over; " + std::string(comparison) :
                  "The replay couldn't be played: " + why);
 }

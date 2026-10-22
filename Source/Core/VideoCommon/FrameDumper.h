@@ -18,6 +18,7 @@
 class AbstractStagingTexture;
 class AbstractTexture;
 class AbstractFramebuffer;
+class BroadcastFrame;
 namespace Core
 {
 enum class State;
@@ -41,11 +42,14 @@ public:
   bool SaveScreenshot(std::string filename, std::function<void(bool)> completed = {});
 
   bool IsFrameDumping() const;
+  void BroadcastCurrentFrame(const AbstractTexture* texture, const MathUtil::Rectangle<int>& rect,
+                             float aspect_ratio);
   int GetRequiredResolutionLeastCommonMultiple() const;
 
   void DoState(PointerWrap& p);
 
 private:
+  std::unique_ptr<BroadcastFrame> m_broadcast;
   // NOTE: The methods below are called on the framedumping thread.
   void FrameDumpThreadFunc();
   bool StartFrameDumpToFFMPEG(const FrameData&);

@@ -609,6 +609,23 @@ void OGLStagingTexture::CopyToTexture(const MathUtil::Rectangle<int>& src_rect,
   m_needs_flush = true;
 }
 
+bool OGLStagingTexture::TryFlush()
+{
+  // The nonpersistent path maps synchronously and cannot serve the live sink.
+  if (!UsePersistentStagingBuffers())
+    return false;
+  if (m_fence)
+  {
+    const GLenum status = glClientWaitSync(m_fence, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
+    if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED)
+      return false;
+    glDeleteSync(m_fence);
+    m_fence = nullptr;
+  }
+  m_needs_flush = false;
+  return true;
+}
+
 void OGLStagingTexture::Flush()
 {
   // No-op when not using buffer storage, as the transfers happen on Map().

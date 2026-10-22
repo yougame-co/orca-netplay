@@ -67,6 +67,10 @@ public:
   // call to CopyFromTexture()/CopyToTexture() and the Flush() call.
   virtual void Flush() = 0;
 
+  // Completes readback only if the GPU is already done. Never waits. Backends without a
+  // nonblocking path refuse it, so the live broadcaster drops instead of stalling emulation.
+  virtual bool TryFlush() { return false; }
+
   // Reads the specified rectangle from the staging texture to out_ptr, with the specified stride
   // (length in bytes of each row). CopyFromTexture must be called first. The contents of any
   // texels outside of the rectangle used for CopyFromTexture is undefined.
