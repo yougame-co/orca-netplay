@@ -217,7 +217,9 @@ bool WebSocket::Connect(const std::string& url, std::chrono::milliseconds timeou
     }
     else if (status == 409)
     {
-      if (code == "seat_in_use")
+      if (code == "room_unstable")
+        *error += " room_unstable";
+      else if (code == "seat_in_use")
         *error += " seat in use";
       else if (refusal.find("This match is complete") != std::string::npos)
         *error += " match complete";

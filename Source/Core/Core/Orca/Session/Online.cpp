@@ -806,6 +806,14 @@ bool ReportSessionEnd(const std::string& session_error, bool from_peer)
   // first: once Ended, the code is final.
   if (room && room->GetState() == Net::RoomState::Ended)
   {
+    // KeepRoomOpen reports the host's replacement once. A joiner uses the app's existing
+    // network sentence; the internal end reason is only for the engine's reopen policy.
+    if (room->ErrorCode() == "room-unstable")
+    {
+      if (room->Joining().value_or(false))
+        Status::Report("network", room->Status());
+      return true;
+    }
     // A matchmade room closed after its result: a clean end, reported by the caller.
     if (const std::string code = AppCode(room->ErrorCode()); !code.empty() && code != "match-over")
       Status::Report(code, room->Status());

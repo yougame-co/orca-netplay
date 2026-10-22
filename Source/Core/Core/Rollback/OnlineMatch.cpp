@@ -184,6 +184,8 @@ struct Match
   // growing backoff; `home_code` is the last room that worked.
   bool room_lost = false;
   bool reopen_gave_up = false;
+  bool unstable_reopening = false;
+  std::optional<Clock::time_point> unstable_hosted_since;
   unsigned reopen_attempts = 0;
   std::optional<Clock::time_point> network_failure_since;
   Clock::time_point room_lost_at{}, reopen_at{};
@@ -1077,6 +1079,8 @@ void ForgetRoom(Match& match)
   match.reopen_join = false;
   match.room_lost = false;
   match.reopen_gave_up = false;
+  match.unstable_reopening = false;
+  match.unstable_hosted_since.reset();
   match.reopen_attempts = 0;
   match.network_failure_since.reset();
   match.reopen_backoff = {};
@@ -1187,8 +1191,23 @@ void KeepRoomOpen(Match& match, Clock::time_point now = Clock::now())
       }
       match.room_lost = false;
       match.reopen_gave_up = false;
-      match.reopen_attempts = 0;
-      match.network_failure_since.reset();
+      // Keep the episode's budget across replacements until one hosts for five minutes
+      // without another room loss. An ordinary later outage gets its own budget.
+      if (match.unstable_reopening)
+      {
+        if (!match.unstable_hosted_since)
+          match.unstable_hosted_since = now;
+        if (now - *match.unstable_hosted_since >= std::chrono::minutes(5))
+        {
+          match.unstable_reopening = false;
+          match.unstable_hosted_since.reset();
+        }
+      }
+      if (!match.unstable_reopening)
+      {
+        match.reopen_attempts = 0;
+        match.network_failure_since.reset();
+      }
       match.reopen_backoff = {};
       match.home_code = Orca::Online::Code();
     }
@@ -1201,6 +1220,7 @@ void KeepRoomOpen(Match& match, Clock::time_point now = Clock::now())
     }
     return;
   }
+  match.unstable_hosted_since.reset();
   // A session ends with its room: it fails at its next step and the host goes solo.
   if (match.session)
     return;
@@ -1223,7 +1243,9 @@ void KeepRoomOpen(Match& match, Clock::time_point now = Clock::now())
   }
   if (match.reopen_gave_up)
     return;
-  if (code == "network")
+  if (code == "room-unstable")
+    match.unstable_reopening = true;
+  if (code == "network" || match.unstable_reopening)
   {
     if (!match.network_failure_since)
       match.network_failure_since = now;
@@ -1243,14 +1265,18 @@ void KeepRoomOpen(Match& match, Clock::time_point now = Clock::now())
     match.room_lost = true;
     match.room_lost_at = now;
     match.reopen_backoff = std::chrono::seconds(2);
-    match.reopen_at = now + match.reopen_backoff;
+    const auto delay = code == "room-unstable" ? std::chrono::seconds(0) : match.reopen_backoff;
+    match.reopen_at = now + delay;
     const std::string why = Orca::Online::StatusLine();
     NOTICE_LOG_FMT(ROLLBACK, "Drop-in: this game's room ended ({}: {}); another opens in {} s",
-                   code, why, match.reopen_backoff.count());
+                   code, why, delay.count());
     Core::DisplayMessage(why, 6000);
     if (Soft())
     {
-      if (Orca::Online::RoomTaken() || code == "room_full")
+      if (code == "room-unstable")
+        Orca::Status::Report("network", "The room keeps disconnecting. Opening a new room; "
+                                         "send your friend a new invite.");
+      else if (Orca::Online::RoomTaken() || code == "room_full")
         Orca::Status::Event("playing");
       else
         Orca::Status::Report("network", fmt::format("{}: your game opens its room again", why));
@@ -1261,7 +1287,8 @@ void KeepRoomOpen(Match& match, Clock::time_point now = Clock::now())
   // Forget queue codes before trying a private room, including on later retries.
   match.home_code = RoomReopenCode(match.home_code, Orca::Online::RoomQueue(),
                                    now - match.room_lost_at < ROOM_HOLD,
-                                   Orca::Online::RoomTaken() || code == "room_full");
+                                   Orca::Online::RoomTaken() || code == "room_full" ||
+                                       code == "room-unstable");
   if (now < match.reopen_at)
     return;
   const std::string reopen = match.home_code;
@@ -2835,6 +2862,8 @@ void TakeCommands(Core::System& system, Match& match)
   // Restore this player's own game once a queue room is over, so the next pairing doesn't start
   // from the last opponent's character select.
   const bool restored = MaybeRestoreQueueImage(system, match);
+  if (match.finished || !match.port)
+    return;
   // On the queue's own character select, the current game is the one to come back to.
   const bool queue_css =
       Orca::Status::Cap("queue2") && (restored || Orca::UX::QueueApp::OnSoloCss());
@@ -4069,6 +4098,8 @@ std::optional<int> Boundary(Core::System& system,
   // already sees its own character select.
   if (MaybeRestoreQueueImage(system, match))
     rewound_to = match.running + 1;
+  if (match.finished || !match.port)
+    return std::nullopt;
 
   // The header this game's room calls for, written only where HeaderFreeAt allows (never in the
   // canonical boot).
@@ -4118,6 +4149,8 @@ std::optional<int> Boundary(Core::System& system,
   }
 
   TakeCommands(system, match);
+  if (match.finished || !match.port)
+    return std::nullopt;
   LeaveOnMismatch(match);
   if (match.want_queue_image)
     CaptureQueueImage(system, match);
@@ -4125,6 +4158,8 @@ std::optional<int> Boundary(Core::System& system,
   {
     if (MaybeRestoreQueueImage(system, match))
       rewound_to = match.running + 1;
+    if (match.finished || !match.port)
+      return std::nullopt;
   }
   // After the app's commands and the frame hook: a Casual or Ranked pick made with friends, a kept
   // pick to arm, a former joiner's way home, then "no-room" for one that didn't come home.
@@ -4170,14 +4205,15 @@ std::optional<int> Boundary(Core::System& system,
     // host's offer meanwhile; the join goes on from there (JoinHost).
     if (PumpJoin(match, &match.join_status) == JoinPump::Failed)
       FailJoin(system, match);
+    // A launch refusal before "caps join" ends the match and releases its port.
+    if (match.finished || Stopping(system) || !match.port)
+      return std::nullopt;
     if (match.joining)
     {
       RunSolo(match, local_pad);
       return std::nullopt;
     }
-    // Failed (with "caps join" this player now plays its own boot on port 1), or stopping.
-    if (match.finished || Stopping(system))
-      return std::nullopt;
+    // Failed with "caps join": this player now plays its own boot on port 1.
   }
   else if (match.joining && !match.session)
   {
@@ -4804,7 +4840,7 @@ void ReportJoinFailure(std::string_view code, std::string_view sentence)
   else if (code == "match-over")
     Orca::Status::Event("host-left match-over");
   else
-    Orca::Status::Report(code.empty() ? "network" : code, sentence);
+    Orca::Status::Report(code.empty() || code == "room-unstable" ? "network" : code, sentence);
 }
 
 bool Active()
@@ -5160,6 +5196,22 @@ std::vector<unsigned> TraceRoomReopenForTest(const std::vector<std::chrono::seco
     attempts.push_back(match.reopen_attempts);
   }
   return attempts;
+}
+
+LaunchJoinBoundaryResult PumpLaunchJoinBoundaryForTest()
+{
+  Core::System& system = Core::System::GetInstance();
+  Match& match = TheMatch();
+  match = {};
+  const Common::ScopeGuard cleanup([&] { match = {}; });
+  match.started = true;
+  match.joining = true;
+  match.local_seat = 1;
+  match.boot_time = Clock::now();
+  match.port = std::make_unique<RingPort>(system, MAX_ROLLBACK, true);
+  match.port->SetCatchingUp(true);
+  Boundary(system, [](int) { return Pad{}; }, [](int, bool, const auto&, bool) {}, {});
+  return {match.finished, match.joining, match.port != nullptr, match.running};
 }
 
 int PumpRoomReopenFailureForTest(const std::function<void()>& wait_for_failure)

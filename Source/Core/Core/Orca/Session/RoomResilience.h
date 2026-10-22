@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <deque>
 #include <optional>
 
@@ -104,6 +105,36 @@ struct RoomReconnectBudget
       return false;
     connections.push_back(now);
     return true;
+  }
+};
+
+// Only a recovered socket that dies before a minute counts. A healthy rejoin leaves the
+// rolling history intact; initial connections and failed upgrades never enter it.
+struct RoomRejoinFlaps
+{
+  static constexpr auto SHORT_LIFE = std::chrono::seconds(60);
+  static constexpr auto WINDOW = std::chrono::minutes(5);
+  static constexpr unsigned LIMIT = 4;
+  std::optional<RoomClock::time_point> welcome;
+  std::deque<RoomClock::time_point> losses;
+
+  void Rejoined(RoomClock::time_point now) { welcome = now; }
+
+  std::size_t Count(RoomClock::time_point now) const
+  {
+    return std::count_if(losses.begin(), losses.end(),
+                        [now](const auto loss) { return now - loss < WINDOW; });
+  }
+
+  bool Lost(RoomClock::time_point now)
+  {
+    while (!losses.empty() && now - losses.front() >= WINDOW)
+      losses.pop_front();
+    const bool short_lived = welcome && now - *welcome < SHORT_LIFE;
+    welcome.reset();
+    if (short_lived)
+      losses.push_back(now);
+    return short_lived && losses.size() >= LIMIT;
   }
 };
 

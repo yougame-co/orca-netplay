@@ -2831,6 +2831,13 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.70
+
+- If a friends room keeps breaking right after you get back in, the game opens a fresh room for
+  you instead of trying the broken one again; send your friend a new invite.
+- Opening an invite whose host already left shows "Your friend left that game" instead of
+  closing the game.
+
 ### 0.3.68
 
 - If you drop out of a long friends room, you get back in: the game asks YouGame for a fresh pass

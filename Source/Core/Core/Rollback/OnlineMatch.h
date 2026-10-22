@@ -103,6 +103,16 @@ std::vector<unsigned> TraceRoomReopenForTest(const std::vector<std::chrono::seco
 // Adopts the room, waits for its failure, then pumps the actual fallback and one solo frame.
 int PumpRoomReopenFailureForTest(const std::function<void()>& wait_for_failure);
 
+struct LaunchJoinBoundaryResult
+{
+  bool finished;
+  bool joining;
+  bool has_port;
+  int frame;
+};
+// Runs the actual boundary before a launch joiner's origin, against Online's room.
+LaunchJoinBoundaryResult PumpLaunchJoinBoundaryForTest();
+
 // Refused joins whose host or match ended use the app's existing state events.
 void ReportJoinFailure(std::string_view code, std::string_view sentence);
 
