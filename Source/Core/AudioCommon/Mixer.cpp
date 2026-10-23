@@ -16,6 +16,7 @@
 #include "Common/Swap.h"
 #include "Core/Config/MainSettings.h"
 #include "Core/Core.h"
+#include "Core/Rollback/Rollback.h"
 #include "Core/System.h"
 
 static u32 DPL2QualityToFrameBlockSize(AudioCommon::DPL2Quality quality)
@@ -215,6 +216,9 @@ std::size_t Mixer::MixSurround(float* samples, std::size_t num_samples)
 
 void Mixer::PushSamples(const s16* samples, std::size_t num_samples)
 {
+  // Orca rollback: frames re-run after a load already played their sound the first time.
+  if (Rollback::IsResimulating())
+    return;
   if (IsOutputSampleRateValid())
   {
     // Big-endian RL-orderered stereo samples.
@@ -238,6 +242,8 @@ void Mixer::PushSamples(const s16* samples, std::size_t num_samples)
 
 void Mixer::PushStreamingSamples(const s16* samples, std::size_t num_samples)
 {
+  if (Rollback::IsResimulating())
+    return;
   if (IsOutputSampleRateValid())
   {
     // Big-endian RL-orderered stereo samples.
@@ -262,8 +268,11 @@ void Mixer::PushStreamingSamples(const s16* samples, std::size_t num_samples)
 void Mixer::PushWiimoteSpeakerSamples(std::size_t wiimote_index, const s16* samples,
                                       std::size_t num_samples, u32 sample_rate_divisor)
 {
-  if (!IsOutputSampleRateValid() || wiimote_index >= m_wiimote_speaker_mixers.size())
+  if (!IsOutputSampleRateValid() || wiimote_index >= m_wiimote_speaker_mixers.size() ||
+      Rollback::IsResimulating())
+  {
     return;
+  }
 
   // WiimoteEmu produces host-endian mono samples.
 

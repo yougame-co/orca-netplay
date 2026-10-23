@@ -1,0 +1,6 @@
+# Long-host runs (Tools/orca/long-join.py), menus: through the title to character select, then
+# nothing.
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain mash 30 99999 1 40 A

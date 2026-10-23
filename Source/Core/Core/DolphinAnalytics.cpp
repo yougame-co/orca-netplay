@@ -30,6 +30,7 @@
 #include "Common/CommonTypes.h"
 #include "Common/Config/Config.h"
 #include "Common/Crypto/SHA1.h"
+#include "Common/Network.h"
 #include "Common/Random.h"
 #include "Common/Timer.h"
 #include "Common/Version.h"
@@ -92,7 +93,7 @@ void DolphinAnalytics::ReloadConfig()
 
   // Install the HTTP backend if analytics support is enabled.
   std::unique_ptr<Common::AnalyticsReportingBackend> new_backend;
-  if (m_last_analytics_enabled)
+  if (m_last_analytics_enabled && !Common::OfflineReplay())
   {
     new_backend = std::make_unique<Common::HttpAnalyticsBackend>(ANALYTICS_ENDPOINT);
   }

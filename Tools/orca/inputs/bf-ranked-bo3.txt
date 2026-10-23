@@ -1,0 +1,72 @@
+# A ranked Brawl set's stage flow (ORCA.md "Ranked steps"), Mario (P1) vs Samus (P2):
+# game 1's strikes by X (Battlefield, Yoshi's Island, Lylat Cruise, Smashville) leave Pokemon
+# Stadium, which the flow selects on the Melee page; port 2 walks off; game 2's ban times out (33 s)
+# and port 2, the loser, picks Battlefield with A; port 2 walks off again (2-0).
+# Both ports always send the same menu inputs: only the turn's port acts (the input gate).
+# Run with ORCA_TEST_QUEUE=ranked (a ranked header as a queue room's host writes it), e.g. the sync
+# test (ranked-sprint: game 1's third step is the first striker's pick, which times out here):
+#   ORCA_SESSION=1 ORCA_TEST_QUEUE=ranked ORCA_TEST_SET_RULES=1,8 ORCA_UX_TEST_NAMES=ada,bo \
+#   YG_INPUT=<this> YG_SYNCTEST=7 YG_SYNCTEST_FROM=1700 \
+#   YG_EXIT_AFTER=6700 YG_RESULTS=1 dolphin-emu-nogui -p headless -v Null -e <disc>
+# The checked run also made the matches 1-stock with an ORCA_UX_PROBE file of two lines, written
+# before the sync test's window: `@scSelctCharacter:1 20 write 9017f362 0103` and
+# `@scSelctCharacter:1 20 write 9017f364 01`. Without it a fresh save's 2:00 timed matches run to
+# time (port 1 ahead), and the frames after game 1 move: raise YG_EXIT_AFTER.
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain mash 30 99999 1 40 A
+@scSelctCharacter:1 53 56 1 A
+@scSelctCharacter:1 83 86 2 A
+@scSelctCharacter:1 113 153 1 SY=255
+@scSelctCharacter:1 113 153 2 SY=255
+@scSelctCharacter:1 173 176 1 A
+@scSelctCharacter:1 193 196 2 A
+@scSelctCharacter:1 233 236 1 START
+# Game 1: strike Battlefield, Yoshi's Island, Lylat Cruise, Smashville; Pokemon Stadium is left.
+@scSelStage:1 40 59 1 SY=255
+@scSelStage:1 40 59 2 SY=255
+@scSelStage:1 62 64 1 SX=1
+@scSelStage:1 62 64 2 SX=1
+@scSelStage:1 75 77 1 X
+@scSelStage:1 75 77 2 X
+@scSelStage:1 85 90 1 SY=1
+@scSelStage:1 85 90 2 SY=1
+@scSelStage:1 100 102 1 X
+@scSelStage:1 100 102 2 X
+@scSelStage:1 110 117 1 SX=255
+@scSelStage:1 110 117 2 SX=255
+@scSelStage:1 125 127 1 X
+@scSelStage:1 125 127 2 X
+@scSelStage:1 135 141 1 SX=255
+@scSelStage:1 135 141 2 SX=255
+@scSelStage:1 142 146 1 SY=1
+@scSelStage:1 142 146 2 SY=1
+@scSelStage:1 155 157 1 X
+@scSelStage:1 155 157 2 X
+# Each game: port 2 walks off the left edge (1 stock).
+@scMelee 250 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START
+# Game 2: back on the character select, P1 starts.
+@scSelctCharacter:2 mash 60 99999 1 45 START
+# The hands come back on the bottom panels, each on its own player-type button, where A would make
+# the player a CPU (and A on an empty panel's button would add one). The online rules pass A only in
+# the grid (OnlineRules.h), so both stay human: A on their own buttons, then port 1 moves onto
+# panel 3's button and presses A, and port 2 goes up into the grid (below its token, which A would
+# take up) and locks its pick in with A.
+@scSelctCharacter:2 30 33 1 A
+@scSelctCharacter:2 40 43 2 A
+@scSelctCharacter:2 100 135 1 SX=255
+@scSelctCharacter:2 150 153 1 A
+@scSelctCharacter:2 100 133 2 SY=255
+@scSelctCharacter:2 160 163 2 A
+# Port 1 won: its ban times out (33 s, no ban); then port 2 picks Battlefield (A).
+@scSelStage:2 2060 2079 1 SY=255
+@scSelStage:2 2060 2079 2 SY=255
+@scSelStage:2 2082 2084 1 SX=1
+@scSelStage:2 2082 2084 2 SX=1
+@scSelStage:2 2095 2097 1 A
+@scSelStage:2 2095 2097 2 A

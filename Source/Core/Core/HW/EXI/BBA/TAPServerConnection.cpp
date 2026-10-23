@@ -128,6 +128,9 @@ static int ConnectToDestination(const std::string& destination)
 
 bool TAPServerConnection::Activate()
 {
+  if (Common::OfflineReplay())
+    return false;
+
   if (IsActivated())
     return true;
 

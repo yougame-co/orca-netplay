@@ -1,0 +1,510 @@
+# Orca's game patches for Super Smash Bros. Brawl (NTSC-U, revision 2), forced on in every session
+# (Source/Core/Core/Orca/UX/GamePatches.h): `<address> <original|*> <value>`, hex. A line with an
+# original is written only while that word is there. This file is hashed into the lobby key.
+#
+# Sections: the boot straight to the main menu; the main menu's Play Online, the game's own ONLINE
+# page with no connection (ORCA.md "Online menu": with Orca's texture pack and its rewrite of the
+# menu's text, UX/MenuText.h, nothing on it says Nintendo); everything unlocked; items off by
+# default; Options > Sound's balance held in the middle; no random tripping in fights.
+#
+# Found with Orca's harness (ORCA_UX_PROBE watches, RAM dumps and Dolphin's disassembler); the
+# unlock words, the input-lag fix and the no-tripping word are from the community "Global Brawl
+# Netplay Settings" Gecko code shipped in Dolphin's GameSettings/RSBE01.ini (vBrawl's "Global Brawl
+# Netplay Settings V1"), those parts only.
+
+# --- Boot straight to the main menu -------------------------------------------------------------
+
+# scStrap (sora_scene, its process at 0x806CAC24, state at +0x28): skip the Wii Remote strap pages
+# (state 3 -> 7, not 4) and the ESRB "online interactions" notice (state 11 -> 15, not 12). The
+# scene still copies its packs to the NAND's /tmp and still waits for that copy (state 17) before
+# it leaves, so everything the game later reads from /tmp is there.
+806CAD50 41820010 48000010    # beq- +0x10 -> b +0x10 (state 3: always state 7)
+806CAF80 41820010 48000010    # beq- +0x10 -> b +0x10 (state 11: always state 15)
+
+# muBootNandTask (sora_menu_boot, loaded at 0x811A6000 on the boot scene; process 0x811A6300,
+# state at +0x78): with no save, state 5 would open "Create a new save file?" (state 6 waits for
+# it) and, on Yes, write a new save to the NAND. In its place: the game's own "continue without
+# saving" (state 24 on No then Yes): clear the save flags (+0x48 &= 0xE0) and go to state 55, the
+# end of the boot check. No dialog, no save written; a session's NAND is thrown away anyway. A
+# session that seeds a save never reaches state 5. The six words are one group (GamePatches.h),
+# written only while all six originals are there, the relocated `bl` included: other menu modules
+# use this memory after the boot.
+811A6430 80030068 88030048    # lbz   r0, 0x48(r3)
+811A6434 83E3005C 54000634    # rlwinm r0, r0, 0, 24, 26
+811A6438 2C000000 98030048    # stb   r0, 0x48(r3)
+811A643C 4182001C 38000037    # li    r0, 55
+811A6440 7C030378 90030078    # stw   r0, 0x78(r3)
+811A6444 4AF193ED 48001204    # b     0x811A7648 (the process's end)
+
+# scTitle (sora_scene, process 0x806CA098, state at +0x370, result at +0x36C, 0 = Start pressed):
+# the title screen. Once state 2 has built it, it goes to the opening movie (3) or the logo (12);
+# both become state 16, the title's own clean-up and exit, with result 0, which sqTitle takes to
+# the main menu the usual way (through the scene change that frees the boot's menu modules: going to
+# sqMenuMain straight from sqBoot runs out of the OverlayMenu heap).
+806CA1F8 38000003 38000010    # li r0, 3 -> 16 (the opening movie)
+806CA204 3800000C 38000010    # li r0, 12 -> 16 (the "press Start" logo)
+
+# --- Main menu: Play Online, the game's own ONLINE page with no connection -----------------------
+
+# The main menu's Wi-Fi button reads PLAY ONLINE (Orca's texture pack, Data/Sys/Orca/Textures, our
+# own art) and opens the game's own ONLINE page (With Friends / With Anyone), relabelled and
+# rewritten so nothing on it is Nintendo's (the breadcrumb by texture; the button's description
+# by Orca's UX, UX/MenuText.h). Every way on from it leaves through the game's own exit to the local
+# Versus character select; Orca reads which (UX/OnlineMenu.h) and tells the app. Nintendo's servers
+# are never asked for: the connection window (muWifiCnctWndTask), which creates the network
+# interface task, checks the save's Wi-Fi data and then connects, is never created; the Spectator
+# and Options buttons (Options runs WiiConnect24 jobs) never show on the ONLINE page (the game
+# hides them without a connection: nteGlobal's button flags) and nothing here shows them.
+#
+# Found under the harness (ORCA_UX_PROBE watches, RAM dumps and Dolphin's disassembler) with
+# sora_menu_main.rel loaded at 0x81163780 (text at 0x8116384C); Project+'s own copy of the module
+# sits 0x1480 higher (PPLUS32.patches).
+#
+# The cursor table of muProcTop (the top page's six buttons: 0 Group, 1 Solo, 2 Wi-Fi, 3 Vault,
+# 4 Options, 5 Data) is the game's own again: Group moves down onto the button.
+#
+# muProcTop's update (0x811787F8): A on button 2 would create the connection window (mode 0) and
+# wait for its result; instead the press takes the path every other button takes into its page
+# (the cursor's proc, 3: muProcWifi). Two copies of the press check, one group each.
+81178A58 A01D0042 A01D0042    # lhz    r0, 0x42(r29) (the cursor; guard)
+81178A5C 28000002 28000002    # cmplwi r0, 2 (guard)
+81178A60 4082007C 4800007C    # bne +0x7C -> b +0x7C: button 2 enters its page like the others
+
+81178C30 A01D0042 A01D0042    # lhz    r0, 0x42(r29) (guard)
+81178C34 28000002 28000002    # cmplwi r0, 2 (guard)
+81178C38 4082007C 4800007C    # bne +0x7C -> b +0x7C
+
+# muProcWifi (the ONLINE page), its update (0x81179CB0), two copies of its input handling (two
+# input paths), one group each, from A's path through B's into the dead code after it:
+# - A on With Friends (cursor 0) would set the next proc to 0x1A, the With Friends page, whose four
+#   buttons all went to the same character select (player feedback: "every single button in with
+#   friends menu does the exact same thing ... just have with friends and get rid of that extra
+#   submenu"). Instead it leaves the menu as that page's FIGHT! does (0x81191904): the proc's exit
+#   with code 25 (0x806A5604, which plays the button's decided animation and has the menu leave two
+#   frames later, the procs no longer running meanwhile), the same sound (0x800742B0 with 0x13),
+#   return 0. The code sits in the window code B no longer reaches (below), and 25 takes the usual
+#   way: Orca's block to the local Versus character select, `orca menu online friends`, FRIENDS on
+#   the character select's title. With Anyone (0x1B) and Options (0x1C, never shown) are as before.
+# - B would open the same window in mode 1, "Disconnect from Nintendo WFC?", and go back once it
+#   closed. Instead what the game does when that window returns: the back animation (0x806A5A58),
+#   next proc 0 (the top page), sub-state 3, return 1.
+# Found under the harness (next proc +0x634 watched, the module disassembled from a RAM
+# dump; nothing branches into the window code after B's path, and its last word is already the
+# branch to the function's `li r3, 0`). One group, so the redirect never lands without its code.
+81179F04 3800001A 48000068    # li r0, 0x1A -> b 0x81179F6C (With Friends: leave the menu)
+81179F08 901D0634 901D0634    # stw  r0, 0x634(r29) (guard)
+81179F0C 48000018 48000018    # (guard)
+81179F10 3800001B 3800001B    # li   r0, 0x1B (With Anyone; guard)
+81179F14 901D0634 901D0634    # (guard)
+81179F18 4800000C 4800000C    # (guard)
+81179F1C 3800001C 3800001C    # li   r0, 0x1C (Options; guard)
+81179F20 901D0634 901D0634    # (guard)
+81179F24 7FA3EB78 7FA3EB78    # mr   r3, r29 (into the page; guard)
+81179F28 38800001 38800001    # (guard)
+81179F2C 4B52BB2D 4B52BB2D    # bl   0x806A5A58 (guard)
+81179F30 38000003 38000003    # (guard)
+81179F34 38600002 38600002    # (guard)
+81179F38 901D0664 901D0664    # (guard)
+81179F3C 48000298 48000298    # (guard)
+81179F40 57C006B5 57C006B5    # rlwinm. r0, r30, 0, 26, 26 (B; guard)
+81179F44 4182028C 4182028C    # (guard)
+81179F48 4AEB30D1 7FA3EB78    # mr   r3, r29
+81179F4C 3CA0811A 38800000    # li   r4, 0
+81179F50 3CC0811A 4B52BB09    # bl   0x806A5A58 (the back animation)
+81179F54 80630004 38000000    # li   r0, 0
+81179F58 38A53C60 901D0634    # stw  r0, 0x634(r29) (next proc: the top page)
+81179F5C 38C63C90 38000003    # li   r0, 3
+81179F60 38800004 901D0664    # stw  r0, 0x664(r29) (sub-state)
+81179F64 38E00000 38600001    # li   r3, 1
+81179F68 4B276FDD 4800026C    # b    0x8117A1D4 (the function's end)
+81179F6C 7C7E1B78 7FA3EB78    # mr   r3, r29 (With Friends, from 0x81179F04)
+81179F70 38800009 38800019    # li   r4, 25 (With Friends > FIGHT!)
+81179F74 4BFFC801 38A00000    # li   r5, 0 (the decided animation first)
+81179F78 80DD0654 4B52B68D    # bl   0x806A5604 (the proc's exit)
+81179F7C 7C651B78 3C60805A    # lis  r3, 0x805A
+81179F80 389E0A94 38800013    # li   r4, 0x13
+81179F84 38600001 806301D0    # lwz  r3, 0x1D0(r3) (the sound manager)
+81179F88 38E00029 38A0FFFF    # li   r5, -1
+81179F8C 39000000 38C00000    # li   r6, 0
+81179F90 39200000 38E00000    # li   r7, 0
+81179F94 48021DE9 3900FFFF    # li   r8, -1
+81179F98 907D066C 4AEFA319    # bl   0x800742B0 (the sound)
+81179F9C 48000234 48000234    # b    0x8117A1D0 (li r3, 0; the end; guard)
+
+8117A104 3800001A 48000068    # li r0, 0x1A -> b 0x8117A16C
+8117A108 901D0634 901D0634    # (guard)
+8117A10C 48000018 48000018    # (guard)
+8117A110 3800001B 3800001B    # (guard)
+8117A114 901D0634 901D0634    # (guard)
+8117A118 4800000C 4800000C    # (guard)
+8117A11C 3800001C 3800001C    # (guard)
+8117A120 901D0634 901D0634    # (guard)
+8117A124 7FA3EB78 7FA3EB78    # (guard)
+8117A128 38800001 38800001    # (guard)
+8117A12C 4B52B92D 4B52B92D    # (guard)
+8117A130 38000003 38000003    # (guard)
+8117A134 38600002 38600002    # (guard)
+8117A138 901D0664 901D0664    # (guard)
+8117A13C 48000098 48000098    # (guard)
+8117A140 57C006B5 57C006B5    # (guard)
+8117A144 4182008C 4182008C    # (guard)
+8117A148 4AEB2ED1 7FA3EB78    # mr   r3, r29
+8117A14C 3CA0811A 38800000    # li   r4, 0
+8117A150 3CC0811A 4B52B909    # bl   0x806A5A58
+8117A154 80630004 38000000    # li   r0, 0
+8117A158 38A53C60 901D0634    # stw  r0, 0x634(r29)
+8117A15C 38C63C90 38000003    # li   r0, 3
+8117A160 38800004 901D0664    # stw  r0, 0x664(r29)
+8117A164 38E00000 38600001    # li   r3, 1
+8117A168 4B276DDD 4800006C    # b    0x8117A1D4
+8117A16C 7C7E1B78 7FA3EB78    # mr   r3, r29 (With Friends, from 0x8117A104)
+8117A170 38800009 38800019    # li   r4, 25
+8117A174 4BFFC601 38A00000    # li   r5, 0
+8117A178 80DD0654 4B52B48D    # bl   0x806A5604
+8117A17C 7C651B78 3C60805A    # lis  r3, 0x805A
+8117A180 389E0A94 38800013    # li   r4, 0x13
+8117A184 38600001 806301D0    # lwz  r3, 0x1D0(r3)
+8117A188 38E00029 38A0FFFF    # li   r5, -1
+8117A18C 39000000 38C00000    # li   r6, 0
+8117A190 39200000 38E00000    # li   r7, 0
+8117A194 48021BE9 3900FFFF    # li   r8, -1
+8117A198 907D066C 4AEFA119    # bl   0x800742B0
+8117A19C 48000034 48000034    # b    0x8117A1D0 (guard)
+
+# The ONLINE page's third button (Options, proc 28: muProcOptWifi, which runs WiiConnect24 jobs)
+# and With Anyone's Spectator (exit code 29) show only when nteGlobal says the service allows them
+# (isEnableButton 0x8014FEDC, flags 0x20/0x40 and 0x10). Without a connection it never does; here
+# the answer is always no, so neither button is drawn or can take the cursor whatever that data
+# holds. muProcWifi's init (0x811799B8):
+81179A04 38600020 38600020    # li r3, 0x20 (guard)
+81179A08 4AFD64D5 38600000    # bl isEnableButton -> li r3, 0
+81179A0C 28030001 28030001    # (guard)
+81179A10 4082000C 4082000C    # (guard)
+81179A14 38000001 38000001    # (guard)
+81179A18 48000018 48000018    # (guard)
+81179A1C 38600040 38600040    # li r3, 0x40 (guard)
+81179A20 4AFD64BD 38600000    # bl isEnableButton -> li r3, 0
+# muProcWifiAnybody's init (0x81191D44):
+81191D7C 38600010 38600010    # li r3, 0x10 (guard)
+81191D80 4AFBE15D 38600000    # bl isEnableButton -> li r3, 0
+81191D84 7C7F1B78 7C7F1B78    # mr r31, r3 (guard)
+
+# sqMenuMain::setNext's table (sora_scene, resident; one entry per main-menu exit code, which the
+# menu leaves at [0x805A0060]+0x284): every online code goes to the local Versus character select
+# that Group > Brawl (code 1) opens, through the block below. 24-27 are With Friends' modes
+# (sqNetFriendList), 29 Spectator (sqNetAnyWatch), 30 With Anyone's Basic Brawl (sqNetAnyOkiraku),
+# 31 its Team Battle (sqNetAnyTeamMelee): none of them is ever entered, so no online scene, no
+# network thread, no DWC. The code itself stays as the menu wrote it: Orca reads it (30 Casual, 31
+# Ranked, 24-27 Friends). 28 is a guard; 24-27 already point at the block's address (the friend
+# list's entry, which the block replaces). Project+ keeps Brawl's sora_scene, so its file has the
+# same groups.
+80701A04 806DC8C8 806DC8C8    # code 24 (guard: the block below)
+80701A08 806DC8C8 806DC8C8    # code 25 (guard)
+80701A0C 806DC8C8 806DC8C8    # code 26 (guard)
+80701A10 806DC8C8 806DC8C8    # code 27 (guard)
+80701A14 806DC940 806DC940    # code 28 (guard)
+80701A18 806DC8E0 806DC8C8    # code 29 (sqNetAnyWatch)
+80701A1C 806DC8F8 806DC8C8    # code 30 (sqNetAnyOkiraku)
+80701A20 806DC910 806DC8C8    # code 31 (sqNetAnyTeamMelee)
+
+# Back out of that character select to where the player was, as the game does when it comes back
+# from an online mode. sqVsMelee (sora_scene) leaves its character select for the menu in one place,
+# setNext's state 16, always with setNextSequence("sqMenuMain", 1) (0x806DCE3C). sqMenuMain turns
+# that argument into the menu's mode through its own switch (0x80701A4C: 0-22 stay, 23-26 become
+# 24-27, 27-29 become 29-31, 30 and 31 become 34 and 35), muMenuMain::start (0x806CC038) reads the
+# mode at [0x805A0060]+0x280, and the mode says where the menu opens: its page from a table
+# (0x806F9228, a byte per mode) and the cursor on that page's button for it. Mode 1 is Group with
+# Brawl selected; 29-31 With Anyone on Spectator, Casual (Basic Brawl) or Ranked (Team Battle);
+# 34 and 35 the ONLINE page (proc 3) on With Friends or With Anyone (muProcWifi's init, 0x81179C2C,
+# puts the cursor there for them); 24-27 were the With Friends page, which nothing opens any more
+# (A on With Friends leaves the menu at once, above). So the block that starts sqVsMelee for an
+# online code keeps that code in the sequence object, at +0x18 (sqVsMelee is 0x18 bytes in a
+# 0x20-byte block; +0x18 to +0x1F keep the heap's fill through boots, menus and whole matches, in
+# both games), and the back out takes it, once: an online code (24-31) goes back as its argument
+# (With Friends' 24-27 as 30, the ONLINE page on With Friends; 29-31 -> 27-29), anything else (0,
+# the heap's fill, a code already used) is 1 as before. Group > Brawl never sets it, so from there B
+# still opens Group. A match in between keeps it: the results come back through sqPrizeCheck, which
+# restarts sqVsMelee with 255 and leaves the object alone. Emulated code and memory only: both
+# players run it, a rollback re-runs it, a drop-in keyframe carries the object.
+#
+# sqMenuMain::setNext's entries for codes 24-31 (0x806DC8C8 to 0x806DC924: the friend list's,
+# Spectator's, Basic Brawl's and Team Battle's blocks, which the table above no longer reaches): the
+# block, then the back out's helper. r18 is the scene manager, r19 the sequence names (0x807017B0,
+# +48 "sqVsMelee"), r15 sqMenuMain, r30 its next state.
+806DC8C8 80B20284 7E439378    # mr     r3, r18
+806DC8CC 7E439378 38930030    # addi   r4, r19, 48 ("sqVsMelee", as Group > Brawl)
+806DC8D0 38930160 38A00000    # li     r5, 0 (its argument, as Group > Brawl)
+806DC8D4 4B950D6D 4B950D6D    # bl     setNextSequence (0x8002D640; guard)
+806DC8D8 93CF0008 80720014    # lwz    r3, 0x14(r18) (the next sequence: sqVsMelee)
+806DC8DC 480000F4 80120284    # lwz    r0, 0x284(r18) (the menu's exit code)
+806DC8E0 7E439378 90030018    # stw    r0, 0x18(r3) (kept for the back out)
+806DC8E4 38930170 93CF0008    # stw    r30, 0x8(r15)
+806DC8E8 38A00000 480000E8    # b      0x806DC9D0 (setNext's loop, as every entry)
+806DC8EC 4B950D55 80AF0018    # helper: lwz r5, 0x18(r15) (r15 is sqVsMelee there)
+806DC8F0 93CF0008 38000000    # li     r0, 0
+806DC8F4 480000DC 900F0018    # stw    r0, 0x18(r15) (used once)
+806DC8F8 7E439378 3805FFE8    # subi   r0, r5, 24
+806DC8FC 38930180 28000007    # cmplwi r0, 7
+806DC900 38A00000 41810018    # bgt    0x806DC918 (not an online code)
+806DC904 4B950D3D 38A5FFFE    # subi   r5, r5, 2
+806DC908 93CF0008 28000004    # cmplwi r0, 4
+806DC90C 480000C4 4C800020    # bgelr  (29-31: With Anyone, 27-29)
+806DC910 7E439378 38A0001E    # li     r5, 30 (24-27: the ONLINE page on With Friends)
+806DC914 38930190 4E800020    # blr
+806DC918 38A00000 38A00001    # li     r5, 1 (Group, as before)
+806DC91C 4B950D25 4E800020    # blr
+
+# sqVsMelee::setNext's state 16 (0x806DCE34): the argument comes from the helper.
+806DCE34 806F0014 806F0014    # lwz    r3, 0x14(r15) (guard)
+806DCE38 38910064 38910064    # addi   r4, r17, 100 ("sqMenuMain"; guard)
+806DCE3C 38A00001 4BFFFAB1    # li r5, 1 -> bl 0x806DC8EC (r5: the argument)
+806DCE40 4B950801 4B950801    # bl     setNextSequence (guard)
+
+# The online rules' lock on the way out (ORCA.md "Online rules"): while the match block's header
+# (UX/MatchBlock.h, 0x806F2380) says casual or ranked, sqVsMelee::setNext's state 5, which takes the
+# character select's result, sends anything but "go on" (its BACK button, held B) to state 4, the
+# character select again, the way the stage select's B comes back to it (state 7), instead of
+# state 16, the menu. No way out of the character select in a queue match; without a header
+# (friends, solo) the menu as before, and so on the queue's own character select before a match
+# (the header's FLAG_SOLO, UX/Queue.h), where B backing out ends the search. A toggled group
+# (GamePatches.h): r24 is 4 and r20 16 through
+# the whole function.
+when 806F2380 == 59474D31               # the block's magic, 'YGM1'
+when 806F2384 & 00FF0000 != 00000000    # its mode: casual or ranked
+when 806F238C & 01000000 == 00000000    # not the queue's own character select (FLAG_SOLO): B backs out
+806DCBFC 4182000C 4182000C    # beq    0x806DCC08 (go on: state 6, the stage select; guard)
+806DCC00 928F0008 930F0008    # stw    r20, 8(r15) (16) -> stw r24, 8(r15) (4)
+806DCC04 48000008 48000008    # b      0x806DCC0C (guard)
+end
+
+# --- Input: the game reads this frame's pads ------------------------------------------------------
+
+# "Controller Input Lag Fix" [Magus], the line `C202AD8C 00000002 7C630214 3863FBFC` of the
+# community "Global Brawl Netplay Settings" code in Dolphin's GameSettings/RSBE01.ini ("disables
+# ... controller input lag"), which Project+ also ships in its codeset (so PPLUS32.patches doesn't
+# carry it). The code at 0x8002AD88 copies one pad's 0x40-byte status out for the game (r4 the
+# port, r5 the destination, r0 = port * 0x40) from the array at r3 + 0x444; the Gecko code inserts
+# `subi r3, r3, 0x404` after its `add`, so it copies from the array at r3 + 0x40, which is a frame
+# newer: vanilla Brawl answers a press a frame sooner, as Project+ does (its first changed image is
+# the copy of press+3 instead of press+4). Here the same addresses come from the copy's own
+# displacements (0x444.. -> 0x40..), in place, with no code cave: nothing else reads r3 before
+# `li r3, 1; blr`. The stores between the loads are guard words, so the group is one run of 45 and
+# lands once, at boot, whole. Emulated code: both players run it (the file is in the lobby key), and
+# a rollback or a drop-in keyframe carries it in RAM.
+8002AD8C 7C630214 7C630214    # add   r3, r3, r0 (guard only)
+8002AD90 80030444 80030040    # lwz   r0, 0x444(r3) -> 0x40(r3)
+8002AD94 90050000 90050000    # stw   r0, 0x0(r5) (guard only)
+8002AD98 80030448 80030044    # lwz   r0, 0x448(r3) -> 0x44(r3)
+8002AD9C 90050004 90050004    # stw   r0, 0x4(r5) (guard only)
+8002ADA0 8003044C 80030048    # lwz   r0, 0x44C(r3) -> 0x48(r3)
+8002ADA4 90050008 90050008    # stw   r0, 0x8(r5) (guard only)
+8002ADA8 80030450 8003004C    # lwz   r0, 0x450(r3) -> 0x4C(r3)
+8002ADAC 9005000C 9005000C    # stw   r0, 0xC(r5) (guard only)
+8002ADB0 80030454 80030050    # lwz   r0, 0x454(r3) -> 0x50(r3)
+8002ADB4 90050010 90050010    # stw   r0, 0x10(r5) (guard only)
+8002ADB8 80030458 80030054    # lwz   r0, 0x458(r3) -> 0x54(r3)
+8002ADBC 90050014 90050014    # stw   r0, 0x14(r5) (guard only)
+8002ADC0 C003045C C0030058    # lfs   f0, 0x45C(r3) -> 0x58(r3)
+8002ADC4 D0050018 D0050018    # stfs  f0, 0x18(r5) (guard only)
+8002ADC8 C0030460 C003005C    # lfs   f0, 0x460(r3) -> 0x5C(r3)
+8002ADCC D005001C D005001C    # stfs  f0, 0x1C(r5) (guard only)
+8002ADD0 C0030464 C0030060    # lfs   f0, 0x464(r3) -> 0x60(r3)
+8002ADD4 D0050020 D0050020    # stfs  f0, 0x20(r5) (guard only)
+8002ADD8 C0030468 C0030064    # lfs   f0, 0x468(r3) -> 0x64(r3)
+8002ADDC D0050024 D0050024    # stfs  f0, 0x24(r5) (guard only)
+8002ADE0 C003046C C0030068    # lfs   f0, 0x46C(r3) -> 0x68(r3)
+8002ADE4 D0050028 D0050028    # stfs  f0, 0x28(r5) (guard only)
+8002ADE8 C0030470 C003006C    # lfs   f0, 0x470(r3) -> 0x6C(r3)
+8002ADEC D005002C D005002C    # stfs  f0, 0x2C(r5) (guard only)
+8002ADF0 88030474 88030070    # lbz   r0, 0x474(r3) -> 0x70(r3)
+8002ADF4 98050030 98050030    # stb   r0, 0x30(r5) (guard only)
+8002ADF8 88030475 88030071    # lbz   r0, 0x475(r3) -> 0x71(r3)
+8002ADFC 98050031 98050031    # stb   r0, 0x31(r5) (guard only)
+8002AE00 88030476 88030072    # lbz   r0, 0x476(r3) -> 0x72(r3)
+8002AE04 98050032 98050032    # stb   r0, 0x32(r5) (guard only)
+8002AE08 88030477 88030073    # lbz   r0, 0x477(r3) -> 0x73(r3)
+8002AE0C 98050033 98050033    # stb   r0, 0x33(r5) (guard only)
+8002AE10 88030478 88030074    # lbz   r0, 0x478(r3) -> 0x74(r3)
+8002AE14 98050034 98050034    # stb   r0, 0x34(r5) (guard only)
+8002AE18 88030479 88030075    # lbz   r0, 0x479(r3) -> 0x75(r3)
+8002AE1C 98050035 98050035    # stb   r0, 0x35(r5) (guard only)
+8002AE20 8803047A 88030076    # lbz   r0, 0x47A(r3) -> 0x76(r3)
+8002AE24 98050036 98050036    # stb   r0, 0x36(r5) (guard only)
+8002AE28 8803047B 88030077    # lbz   r0, 0x47B(r3) -> 0x77(r3)
+8002AE2C 98050037 98050037    # stb   r0, 0x37(r5) (guard only)
+8002AE30 8803047C 88030078    # lbz   r0, 0x47C(r3) -> 0x78(r3)
+8002AE34 98050038 98050038    # stb   r0, 0x38(r5) (guard only)
+8002AE38 80030480 8003007C    # lwz   r0, 0x480(r3) -> 0x7C(r3)
+8002AE3C 9005003C 9005003C    # stw   r0, 0x3C(r5) (guard only)
+
+# Project+'s "Move v-sync call for Brawl/PM" [hannesmann, Dan Salvato, Achilles], the same two words
+# (Source/Extras/Netplay.asm on Project+'s SD card). Brawl's frame function (0x80023AE4) waits for a
+# retrace before it draws: the beq at 0x80023B88 goes back to VIWaitForRetrace (0x801E892C) while no
+# XFB slot is free. Moved, it never waits there and waits once at the end instead, so each frame is
+# drawn and copied right after the game's logic, about 13 ms sooner (ORCA.md "Input latency"). Both
+# groups are in the main DOL, so they land together at the first boundary and stay.
+80023B84 2C000000 2C000000    # cmpwi r0, 0 (guard)
+80023B88 4182FF7C 60000000    # beq   0x80023B04 -> nop
+80023B8C 881F0074 881F0074    # lbz   r0, 0x74(r31) (guard)
+
+80024020 7C0803A6 7C0803A6    # mtlr  r0 (guard)
+80024024 38210020 38210020    # addi  r1, r1, 0x20 (guard)
+80024028 4E800020 481C4904    # blr -> b 0x801E892C (VIWaitForRetrace, a tail call)
+
+# --- Everything unlocked --------------------------------------------------------------------------
+
+# The prize-unlock check (0x8004F978) reads any bit outside its 102-prize table as set for bits
+# 0-11 of each word (the community code's choice).
+8004FAE4 7C03002E 38000FFF    # lwzx r0, r3, r0 -> li r0, 0xFFF (the prize-unlock check)
+8004E7D0 540307FE 38600001    # record +0x268 bit 0x01 -> always 1 (Solo: All-Star)
+8004E7F4 5403FFFE 38600001    # record +0x268 bit 0x02 -> always 1 (Stadium: Boss Battles)
+8004E818 5403F7FE 38600001    # record +0x268 bit 0x04 -> always 1 (community code)
+8004E83C 5403EFFE 38600001    # record +0x268 bit 0x08 -> always 1 (community code)
+
+# sqPrizeCheck (sora_scene, 0x806F5B64, state at +0x8): at boot it walks the prizes that are
+# unlocked and not yet announced (the list at 0x806F5FB8: four tables, the last ones derived, such
+# as co-op events from the roster) and, if any, shows them on scPrizeInfo before the menu. The
+# list is still built (it marks what it finds as announced, as the game does), but state 10 always
+# goes on to state 14, the menu, never to the announcement. The first table is skipped outright so
+# its entries can never fill the 16-entry list before the derived tables have run.
+806F603C 40820084 48000084    # bne- +0x84 -> b +0x84 (first table: skip the prize)
+806F5EB0 40820010 48000010    # bne- +0x10 -> b +0x10 (state 10: never scPrizeInfo)
+
+# gmGlobalRecord (0x9017B640) data, written every frame. The fighters: 3 bits each from bit 0 of
+# the record (unlocked, shown on the character select, seen there: no "NEW!"), for the 14 secret
+# fighters n = 0-13 of the table at 0x80407A40 (0x800AF350; n = 14 is a starter); the community code
+# sets bits 0-8 (Marth, Luigi, Ness), here all 42. Then 0x80 bytes of state 2 at +0x1528, as the
+# community code writes them.
+9017B640 * FFFFFFFF
+9017B644 * 000003FF
+9017CB68 * 02020202
+9017CB6C * 02020202
+9017CB70 * 02020202
+9017CB74 * 02020202
+9017CB78 * 02020202
+9017CB7C * 02020202
+9017CB80 * 02020202
+9017CB84 * 02020202
+9017CB88 * 02020202
+9017CB8C * 02020202
+9017CB90 * 02020202
+9017CB94 * 02020202
+9017CB98 * 02020202
+9017CB9C * 02020202
+9017CBA0 * 02020202
+9017CBA4 * 02020202
+9017CBA8 * 02020202
+9017CBAC * 02020202
+9017CBB0 * 02020202
+9017CBB4 * 02020202
+9017CBB8 * 02020202
+9017CBBC * 02020202
+9017CBC0 * 02020202
+9017CBC4 * 02020202
+9017CBC8 * 02020202
+9017CBCC * 02020202
+9017CBD0 * 02020202
+9017CBD4 * 02020202
+9017CBD8 * 02020202
+9017CBDC * 02020202
+9017CBE0 * 02020202
+9017CBE4 * 02020202
+# The record's unlock bits (+0x18, the word array the check reads; +0x1C on is InfoAppFlagData, 2
+# bits per prize, 3 = unlocked and announced): all set, so nothing is announced at boot and every
+# stage is there.
+9017B658 * FFFFFFFF
+9017B65C * FFFFFFFF
+9017B660 * FFFFFFFF
+9017B664 * FFFFFFFF
+9017B668 * FFFFFFFF
+9017B66C * FFFFFFFF
+9017B670 * FFFFFFFF
+9017B674 * FFFFFFFF
+# The prize states the check reads first (+0x24C, 102 prizes at 2 bits, bit 0 of each word first):
+# all unlocked and announced, and nothing past the 204th bit.
+9017B88C * FFFFFFFF
+9017B890 * FFFFFFFF
+9017B894 * FFFFFFFF
+9017B898 * FFFFFFFF
+9017B89C * FFFFFFFF
+9017B8A0 * FFFFFFFF
+9017B8A4 * 00000FFF
+
+# --- Rules: items off by default ------------------------------------------------------------------
+
+# gmGlobalRecord (0x9017B640) keeps the rules menu's item settings at +0x810, the record's menu data
+# (GameGlobal::getGlobalRecordMenuDatap, 0x8004E5CC): +0 the item frequency (one byte: 0 None, 1
+# Low, 2 Medium, 3 High) and +8 the item switch (64 bits, one per item). GameGlobal::init
+# (0x8004C63C, its stores at 0x8004C9CC-0x8004C9D8) sets Medium with every item on before the
+# first frame, so before any patch here can apply, and a session has no save to replace them: every
+# match had items. Rules > Item Switch (muProcItemSwitch, in the resident rules module at
+# 0x806A3A60: it reads these words at 0x806AA62C and writes them back at 0x806AA9B8) edits them in
+# place, and a match takes its items from there. Instead, once: the frequency None, so no item
+# appears. The switch is left as the game set it, so choosing a frequency there brings the usual
+# items back. The group is written only while all four words hold the game's defaults; its second
+# word (menu data +4, padding after the frequency byte: no load or store of record +0x811-0x817 in
+# the DOL or the boot, menu and match modules) becomes 'ORCA', so it never lands again and a player
+# who picks Medium with every item on keeps it (without the marker that choice went back to None
+# in the same frame). All of it is emulated memory: a friend who drops in from the host's keyframe
+# gets the host's settings and marker, and a re-run sees what the first run saw. Found with
+# ORCA_UX_PROBE watches on the record and on the Item Switch page (its frequency at +0x678) under
+# scripted visits; the community "Global Brawl Netplay Settings" code in Dolphin's
+# GameSettings/RSBE01.ini writes the same words (and the stage list and the stock and time rules,
+# not changed here).
+9017BE50 02000000 00000000    # item frequency: Medium -> None
+9017BE54 00000000 4F524341    # menu data +4 (unused): 'ORCA', the group has landed
+9017BE58 FFFFFFFF FFFFFFFF    # item switch: every item on (guard only, left as is)
+9017BE5C FFFFFFFF FFFFFFFF    # (guard only)
+
+# --- Options > Sound: the balance stays in the middle ---------------------------------------------
+
+# Options > Sound has one slider, the balance between music and sound effects: gmGlobalRecord menu
+# data +0x18 (0x9017BE68), a byte from 0 to 100. GameGlobal::init (0x8004C7E0) sets 50, where both
+# play in full, before the first frame, and a session has no save to change it. The page
+# (sora_menu_main; its input handler at 0x8117B2CC, the value it edits at +0x66C) moves the value
+# one step a frame while a direction is held and hands each step straight to the sound manager
+# (0x80076F30 on [0x805A01D0]): toward 100, the end labelled MUSIC, the music fades out; toward 0,
+# the effects. Leaving the page stores the value in the record. All of that is game memory, so in a
+# room it was the host's: a joiner plays on a copy of the host's machine, and a host who had pushed
+# the slider to an end silenced the friend's music or effects (two Orcas, 2026-10-07). The player's
+# own Music switch (ORCA.md "Music switch") changes only what their machine plays.
+#
+# Instead both of the slider's limits are 50, so it never moves, in every session: an Orca that
+# plays alone is still the host a friend can drop into, and a balance set alone would reach the
+# friend with the keyframe. The value never changes, so the sound manager is never called and
+# leaving the page stores what was there. Menu code only, run while the page is open: nothing per
+# frame, nothing in a match. Left's limit is `cmplwi r0, 100; bge` (stop at or over it); right's
+# was `cmpwi r0, 0; beq`, now `ble`, so a value under the limit only ever comes up to it (never
+# below 0 into the u16's top). The words checked in RAM on the Sound page, Brawl and Project+,
+# 2026-10-07. The game's only other calls to 0x80076F30 are its init, its reset to the defaults and
+# a save's load (0x8004C7F0, 0x8004E294, 0x8004ECB8), and Project+'s codeset makes none.
+# To clamp instead of lock (10 to 90, so some balance stays but no end mutes anyone): 2800005A for
+# left's limit and 2C00000A for right's, in both files (the Project+ lines are these + 0x1480).
+8117B43C A003066C A003066C    # lhz    r0, 0x66C(r3) (the slider's value; guard)
+8117B440 28000064 28000032    # cmplwi r0, 100 -> 50: left stops at 50
+8117B444 408000B4 408000B4    # bge    0x8117B4F8 (to the right check; guard)
+
+8117B500 A003066C A003066C    # lhz    r0, 0x66C(r3) (guard)
+8117B504 2C000000 2C000032    # cmpwi  r0, 0 -> 50: right stops at 50
+8117B508 418200B0 408100B0    # beq -> ble 0x8117B5B8 (the handler's end)
+
+# --- Fights: no random tripping -------------------------------------------------------------------
+
+# "No Tripping" [Phantom Wings], the line `0489E910 FFE0F090` of the community "Global Brawl Netplay
+# Settings" code in Dolphin's GameSettings/RSBE01.ini ("disables tripping"), the competitive and
+# netplay standard. A session runs no Gecko codes (Profile.cpp: MAIN_ENABLE_CHEATS off), so through
+# 0.3.39 Brawl in Orca tripped at random. Project+ has no tripping of its own, so PPLUS32.patches
+# doesn't carry it. The trip check (0x8089E820, in sora_melee, which stays loaded from boot) fetches
+# the trip rate param (0xDB3) into f31 and returns true when rate * (chance + f30) beats a random
+# number (0x8003FB64), and false without drawing one when that product is 0. The Gecko word makes
+# the rate f30, the call's own float argument, which is 0: with it the fight never draws there (a
+# harness run of the default inputs: g_mtRandDefault parts at the first check, scMelee frame 402)
+# and nobody trips. The same word, guarded by the param fetch around it; it lands once, at boot.
+# Emulated code: both players run it (the file is in the lobby key), and a rollback or a drop-in
+# keyframe carries it in RAM. Read in RAM on scMelee, 2026-10-11.
+8089E900 7FA3EB78 7FA3EB78    # mr     r3, r29 (the fighter; guard)
+8089E904 38800DB3 38800DB3    # li     r4, 0xDB3 (the trip rate param; guard)
+8089E908 38A00000 38A00000    # li     r5, 0 (guard)
+8089E90C 4BEF8361 4BEF8361    # bl     0x80796C6C (the param's float; guard)
+8089E910 FFE00890 FFE0F090    # fmr    f31, f1 -> fmr f31, f30: the rate is the argument, 0
+8089E914 2C1E0001 2C1E0001    # cmpwi  r30, 1 (the trip's kind; guard)

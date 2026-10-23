@@ -14,6 +14,7 @@
 
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
+#include "Common/Network.h"
 #include "Common/Thread.h"
 #include "Core/Core.h"
 
@@ -51,6 +52,9 @@ GeckoSockServer::~GeckoSockServer()
 
 void GeckoSockServer::GeckoConnectionWaiter()
 {
+  if (Common::OfflineReplay())
+    return;
+
   Common::SetCurrentThreadName("Gecko Connection Waiter");
 
   sf::TcpListener server;
