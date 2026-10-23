@@ -263,6 +263,10 @@ public:
   bool IsOptimizableGatherPipeWrite(u32 address) const;
 
   TranslateResult JitCache_TranslateAddress(u32 address);
+  // Orca (Core/Orca/JitWarm.cpp): where an instruction fetch from this effective address reads, when
+  // an instruction BAT maps it (or translation is off), found with no side effect; nullopt
+  // otherwise, where finding out would walk the page table and update the TLB.
+  std::optional<u32> InstructionBATTranslate(u32 address) const;
 
   std::optional<u32> GetTranslatedAddress(u32 address);
 

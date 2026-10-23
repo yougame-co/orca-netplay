@@ -1,0 +1,319 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yougame.co/schemas/orca-ruleset.json",
+  "title": "Orca ruleset: a competitive ruleset as data",
+  "description": "A ruleset file (format 1): the legal stages, the stage steps' timers, the clauses, the set's rules (stocks, time, time-outs, ledge-grab limits, tiebreaks), the queue's and the character order's timers and the character select's no-show timer, for one game. Orca compiles this schema in and checks every ruleset against it on load (Source/Core/Core/Orca/Engine/Schema.h, Ruleset.h); the site checks uploads with the same file (YouGame web/src/lib/orca-ruleset.schema.json, a byte copy). Both validators understand exactly the keywords used here (x-orca-keywords) and refuse a schema that uses any other, so the two can't drift; rules a schema can't state are in x-orca-rules, implemented in both and pinned by Tools/orca/mods/ruleset-vectors.json. String lengths are UTF-8 bytes. Every number is an integer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "id",
+    "block",
+    "name",
+    "stages",
+    "steps",
+    "dsr",
+    "clauses",
+    "set",
+    "queue",
+    "characterOrder",
+    "css"
+  ],
+  "properties": {
+    "format": {
+      "description": "The ruleset file format.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1
+    },
+    "id": {
+      "description": "The ruleset's name, as mod.json's \"rulesets\" lists it.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "x-orca-charset": "id"
+    },
+    "block": {
+      "description": "The match block's ruleset byte for this ruleset (the room header both machines compare). 1 and 2 are the two builtin rulesets'.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 255
+    },
+    "name": {
+      "description": "The ruleset's name for people.",
+      "$ref": "#/$defs/text"
+    },
+    "stages": {
+      "description": "The legal stages, in the order the steps' defaults use (starters first by convention). Bit i of a stage mask is stage i.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind", "role"],
+        "properties": {
+          "name": { "$ref": "#/$defs/text" },
+          "kind": {
+            "description": "The game's own id for the stage (Brawl and Project+: srStageKind), what the stage flows compare and pick.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "role": {
+            "description": "starter: game 1's strikes are on the starters; counterpick: later games only.",
+            "enum": ["starter", "counterpick"]
+          }
+        }
+      }
+    },
+    "steps": {
+      "description": "Stage steps (RankedSteps.h). Game 1 is 1-2-1 strikes on the starters; later games, the winner's step (strike or ban) and the loser's pick. Times are whole seconds, then a grace in frames shown as 0:00.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "game1Seconds",
+        "later",
+        "pickSeconds",
+        "graceFrames",
+        "casualSeconds",
+        "casualGraceFrames"
+      ],
+      "properties": {
+        "game1Seconds": {
+          "description": "Game 1's three steps: the first strike, the two strikes, the pick.",
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/seconds" }
+        },
+        "later": {
+          "description": "The winner's step in later games.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "count", "optional", "seconds"],
+          "properties": {
+            "kind": { "enum": ["strike", "ban"] },
+            "count": {
+              "description": "Stages struck or banned.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 15
+            },
+            "optional": {
+              "description": "The player may skip it (a ban only).",
+              "type": "boolean"
+            },
+            "seconds": { "$ref": "#/$defs/seconds" }
+          }
+        },
+        "pickSeconds": {
+          "description": "A later game's pick, and the Meta Knight clause's pick.",
+          "$ref": "#/$defs/seconds"
+        },
+        "graceFrames": { "$ref": "#/$defs/graceFrames" },
+        "casualSeconds": {
+          "description": "Casual games: both players name a stage at once.",
+          "$ref": "#/$defs/seconds"
+        },
+        "casualGraceFrames": { "$ref": "#/$defs/graceFrames" }
+      }
+    },
+    "dsr": {
+      "description": "Full DSR: the loser never picks a stage they won a game on.",
+      "type": "boolean"
+    },
+    "clauses": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "iceClimbers": {
+          "description": "A stage that is never legal when either player plays this character.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["character", "bannedStage"],
+          "properties": {
+            "character": { "$ref": "#/$defs/character" },
+            "bannedStage": {
+              "description": "An index into stages.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 15,
+              "x-orca-indexOf": "/stages"
+            }
+          }
+        },
+        "metaKnight": {
+          "description": "When exactly one player plays this character, the other picks any legal stage, with no strikes.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["character"],
+          "properties": { "character": { "$ref": "#/$defs/character" } }
+        }
+      }
+    },
+    "set": {
+      "description": "A ranked set (RankedSet.h, RankedPPlus.h), and the stocks and time every locked match plays.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wins", "stocks", "minutes", "timeOut", "voidAfterTies"],
+      "properties": {
+        "wins": {
+          "description": "Games to win the set (the overlay's dots show a best of 3 at most).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "stocks": { "$ref": "#/$defs/stocks" },
+        "minutes": { "$ref": "#/$defs/minutes" },
+        "timeOut": {
+          "description": "Who decides a timed-out game: judged (the ledge-grab limit, then stocks, then percent, as the clock ran out) or results (the game's own results screen, e.g. a codeset's overtime).",
+          "enum": ["judged", "results"]
+        },
+        "ledgeGrabLimit": {
+          "description": "judged only: a player over the limit loses a timed-out game, unless both are.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["limit", "tiebreakLimit", "characters"],
+          "properties": {
+            "limit": { "$ref": "#/$defs/ledgeLimit" },
+            "tiebreakLimit": { "$ref": "#/$defs/ledgeLimit" },
+            "characters": {
+              "description": "Characters with their own limits.",
+              "type": "array",
+              "maxItems": 4,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["character", "limit", "tiebreakLimit"],
+                "properties": {
+                  "character": { "$ref": "#/$defs/character" },
+                  "limit": { "$ref": "#/$defs/ledgeLimit" },
+                  "tiebreakLimit": { "$ref": "#/$defs/ledgeLimit" }
+                }
+              }
+            }
+          }
+        },
+        "tiebreak": {
+          "description": "A tie (a level time-out, or a sudden death) is replayed as a tiebreak game with these rules. Absent: the same game is replayed with the set's rules.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stocks", "minutes"],
+          "properties": {
+            "stocks": { "$ref": "#/$defs/stocks" },
+            "minutes": { "$ref": "#/$defs/minutes" }
+          }
+        },
+        "voidAfterTies": {
+          "description": "This many ties in a row void the set.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        }
+      }
+    },
+    "queue": {
+      "description": "The queue's character select (Policy/Queue.h): both players lock in with Start, then the match starts; at the timer, a casual room times out and a ranked one goes on with the picks. B held skips.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["readySeconds", "skipFrames"],
+      "properties": {
+        "readySeconds": { "$ref": "#/$defs/seconds" },
+        "skipFrames": {
+          "description": "Frames B is held to skip.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        }
+      }
+    },
+    "characterOrder": {
+      "description": "Ranked games 2 and later (Policy/CharOrder.h): one player picks at a time, each turn this long.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pickSeconds"],
+      "properties": { "pickSeconds": { "$ref": "#/$defs/seconds" } }
+    },
+    "css": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["readySeconds"],
+      "properties": {
+        "readySeconds": {
+          "description": "Ranked character select: a player still without a fighter this long after the other picked is a no-show.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        }
+      }
+    }
+  },
+  "$defs": {
+    "text": {
+      "description": "Printable UTF-8: no control characters, no invalid or surrogate sequences.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 48,
+      "x-orca-charset": "text"
+    },
+    "seconds": { "type": "integer", "minimum": 1, "maximum": 600 },
+    "graceFrames": { "type": "integer", "minimum": 0, "maximum": 600 },
+    "character": {
+      "description": "The game's character id (Brawl: gmCharacterKind).",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "ledgeLimit": {
+      "description": "Ledge grabs allowed (the count stops at 255).",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 254
+    },
+    "stocks": { "type": "integer", "minimum": 1, "maximum": 99 },
+    "minutes": { "type": "integer", "minimum": 1, "maximum": 99 }
+  },
+  "x-orca-limits": { "maxBytes": 16384, "maxDepth": 8 },
+  "x-orca-keywords": [
+    "$schema",
+    "$id",
+    "$defs",
+    "$ref",
+    "title",
+    "description",
+    "x-orca-limits",
+    "x-orca-keywords",
+    "x-orca-rules",
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "items",
+    "minItems",
+    "maxItems",
+    "minimum",
+    "maximum",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "enum",
+    "x-orca-charset",
+    "x-orca-indexOf"
+  ],
+  "x-orca-rules": [
+    "A ruleset file is one JSON value of at most x-orca-limits.maxBytes bytes and maxDepth levels, nothing after it but whitespace; duplicate keys are refused.",
+    "Schema keywords: only x-orca-keywords. Every object lists its properties and has additionalProperties false; every integer has a minimum and a maximum; every string has a minLength, a maxLength and an x-orca-charset; every array has a maxItems. A $ref is #/$defs/<name>.",
+    "maxLength and minLength count UTF-8 bytes (a JSON Schema validator counts code points, so it is never stricter).",
+    "x-orca-charset id: [a-z0-9-], not starting with '-' (the pattern beside it says the same for other tools). text: valid UTF-8 with no character below U+0020, no U+007F and no U+0080-U+009F.",
+    "x-orca-indexOf <pointer>: the integer is below the length of the array at that JSON pointer in the same document.",
+    "At least one stage is a starter.",
+    "set.ledgeGrabLimit is present exactly when set.timeOut is judged; its characters are distinct.",
+    "later.optional is true only for a ban.",
+    "Seconds become frames at 60 per second; a step's frames (seconds x 60 + grace) fit 16 bits, and so do css.readySeconds, queue.readySeconds and characterOrder.pickSeconds x 60.",
+    "The text is valid UTF-8 with no byte-order mark, and a \\u escape for a character above U+FFFF is a surrogate pair.",
+    "Every number is written as an exact integer of magnitude at most 2^53 - 1, in at most 32 bytes (30, 30.0, 3e1 and -0 are integers; 0.5 and 1e-400 are not)."
+  ]
+}

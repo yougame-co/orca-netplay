@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdio>
 
 #include "Common/Assert.h"
 #include "Common/CommonTypes.h"
@@ -12,6 +13,7 @@
 
 #include "VideoBackends/D3D/D3DState.h"
 #include "VideoBackends/D3DCommon/D3DCommon.h"
+#include "VideoBackends/D3DCommon/DeviceLost.h"
 #include "VideoCommon/VideoConfig.h"
 
 namespace DX11
@@ -35,6 +37,11 @@ DXTexture::~DXTexture()
 
 std::unique_ptr<DXTexture> DXTexture::Create(const TextureConfig& config, std::string_view name)
 {
+  // Orca: nothing new on a lost device while the run stops (D3DCommon/DeviceLost.h); the texture
+  // cache takes a texture it couldn't make as it always has.
+  if (D3DCommon::IsDeviceLost())
+    return nullptr;
+
   // Use typeless to create the texture when it's a render target, so we can alias it with an
   // integer format (for EFB).
   const DXGI_FORMAT tex_format =
@@ -53,8 +60,15 @@ std::unique_ptr<DXTexture> DXTexture::Create(const TextureConfig& config, std::s
   HRESULT hr = D3D::device->CreateTexture2D(&desc, nullptr, &d3d_texture);
   if (FAILED(hr))
   {
-    PanicAlertFmt("Failed to create {}x{}x{} D3D backing texture: {}", config.width, config.height,
-                  config.layers, DX11HRWrap(hr));
+    // Orca: where a lost device most often shows first (a 16x16 texture as a match starts).
+    char what[64];
+    std::snprintf(what, sizeof(what), "a %ux%ux%u texture", config.width, config.height,
+                  config.layers);
+    if (!D3DCommon::CheckDeviceLost(hr, what))
+    {
+      PanicAlertFmt("Failed to create {}x{}x{} D3D backing texture: {}", config.width,
+                    config.height, config.layers, DX11HRWrap(hr));
+    }
     return nullptr;
   }
 
@@ -122,8 +136,11 @@ bool DXTexture::CreateSRV()
   HRESULT hr = D3D::device->CreateShaderResourceView(m_texture.Get(), &desc, &m_srv);
   if (FAILED(hr))
   {
-    PanicAlertFmt("Failed to create {}x{}x{} D3D SRV: {}", m_config.width, m_config.height,
-                  m_config.layers, DX11HRWrap(hr));
+    if (!D3DCommon::CheckDeviceLost(hr, "a texture's view"))
+    {
+      PanicAlertFmt("Failed to create {}x{}x{} D3D SRV: {}", m_config.width, m_config.height,
+                    m_config.layers, DX11HRWrap(hr));
+    }
     return false;
   }
 
@@ -139,8 +156,11 @@ bool DXTexture::CreateUAV()
   HRESULT hr = D3D::device->CreateUnorderedAccessView(m_texture.Get(), &desc, &m_uav);
   if (FAILED(hr))
   {
-    PanicAlertFmt("Failed to create {}x{}x{} D3D UAV: {}", m_config.width, m_config.height,
-                  m_config.layers, DX11HRWrap(hr));
+    if (!D3DCommon::CheckDeviceLost(hr, "a texture's view"))
+    {
+      PanicAlertFmt("Failed to create {}x{}x{} D3D UAV: {}", m_config.width, m_config.height,
+                    m_config.layers, DX11HRWrap(hr));
+    }
     return false;
   }
 
@@ -209,6 +229,9 @@ DXStagingTexture::~DXStagingTexture()
 std::unique_ptr<DXStagingTexture> DXStagingTexture::Create(StagingTextureType type,
                                                            const TextureConfig& config)
 {
+  if (D3DCommon::IsDeviceLost())
+    return nullptr;
+
   D3D11_USAGE usage;
   UINT cpu_flags;
   UINT bind_flags = 0;
@@ -234,7 +257,9 @@ std::unique_ptr<DXStagingTexture> DXStagingTexture::Create(StagingTextureType ty
 
   ComPtr<ID3D11Texture2D> texture;
   HRESULT hr = D3D::device->CreateTexture2D(&desc, nullptr, &texture);
-  ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to create staging texture: {}", DX11HRWrap(hr));
+  // Orca: an assert ends a release build (0x80000003); a lost device stops the run instead.
+  ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a staging texture"),
+             "Failed to create staging texture: {}", DX11HRWrap(hr));
   if (FAILED(hr))
     return nullptr;
 
@@ -325,7 +350,8 @@ bool DXStagingTexture::Map()
 
   D3D11_MAPPED_SUBRESOURCE sr;
   HRESULT hr = D3D::context->Map(m_tex.Get(), 0, map_type, 0, &sr);
-  ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to map readback texture: {}", DX11HRWrap(hr));
+  ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a staging texture's map"),
+             "Failed to map readback texture: {}", DX11HRWrap(hr));
   if (FAILED(hr))
     return false;
 
@@ -446,8 +472,8 @@ DXFramebuffer::Create(DXTexture* color_attachment, DXTexture* depth_attachment,
         color_attachment->GetLayers());
     HRESULT hr =
         D3D::device->CreateRenderTargetView(color_attachment->GetD3DTexture(), &desc, &rtv);
-    ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to create render target view for framebuffer: {}",
-               DX11HRWrap(hr));
+    ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a framebuffer"),
+               "Failed to create render target view for framebuffer: {}", DX11HRWrap(hr));
     if (FAILED(hr))
       return nullptr;
 
@@ -459,7 +485,7 @@ DXFramebuffer::Create(DXTexture* color_attachment, DXTexture* depth_attachment,
       desc.Format = integer_format;
       hr = D3D::device->CreateRenderTargetView(color_attachment->GetD3DTexture(), &desc,
                                                &integer_rtv);
-      ASSERT_MSG(VIDEO, SUCCEEDED(hr),
+      ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a framebuffer"),
                  "Failed to create integer render target view for framebuffer: {}", DX11HRWrap(hr));
     }
   }
@@ -476,8 +502,8 @@ DXFramebuffer::Create(DXTexture* color_attachment, DXTexture* depth_attachment,
     HRESULT hr = D3D::device->CreateRenderTargetView(
         static_cast<DXTexture*>(additional_color_attachment)->GetD3DTexture(), &desc,
         &additional_rtv);
-    ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Create render target view for framebuffer: {}",
-               DX11HRWrap(hr));
+    ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a framebuffer"),
+               "Create render target view for framebuffer: {}", DX11HRWrap(hr));
     if (FAILED(hr))
       return nullptr;
     additional_rtvs.push_back(std::move(additional_rtv));
@@ -493,8 +519,8 @@ DXFramebuffer::Create(DXTexture* color_attachment, DXTexture* depth_attachment,
         depth_attachment->GetLayers(), 0);
     HRESULT hr =
         D3D::device->CreateDepthStencilView(depth_attachment->GetD3DTexture(), &desc, &dsv);
-    ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to create depth stencil view for framebuffer: {}",
-               DX11HRWrap(hr));
+    ASSERT_MSG(VIDEO, SUCCEEDED(hr) || D3DCommon::CheckDeviceLost(hr, "a framebuffer"),
+               "Failed to create depth stencil view for framebuffer: {}", DX11HRWrap(hr));
     if (FAILED(hr))
       return nullptr;
   }

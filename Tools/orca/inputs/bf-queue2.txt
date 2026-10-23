@@ -1,0 +1,27 @@
+# The queue's character select in a casual room (ORCA.md "The queue's character select"), Brawl:
+# port 1 joins and takes Mario; port 2's controller does nothing on game 1's character select: its
+# pick (Link) is put in for it from the frame ORCA_TEST_QUEUE_PICK names, as a matched joiner's is
+# from its plug frame. Then both press Start (ready) and Orca presses Start (the casual stage pick:
+# nobody names a stage, so both turns run out and the coin takes one of their random legal stages);
+# port 2 walks off; results; game 2's character select, both ready again.
+# Run with ORCA_TEST_QUEUE=casual:q2 ORCA_UX_TEST_NAMES=ada,bo and ORCA_TEST_QUEUE_PICK (the place
+# is where bf-mario-link-results.txt's port 2 puts Link down), e.g. the sync test:
+#   ORCA_SESSION=1 ORCA_TEST_QUEUE=casual:q2 ORCA_UX_TEST_NAMES=ada,bo \
+#   ORCA_TEST_QUEUE_PICK=<frame>:<char>:<costume>:<x>:<y> YG_INPUT=<this> YG_SYNCTEST=7 \
+#   YG_SYNCTEST_FROM=<the character select's frame> YG_EXIT_AFTER=<n> dolphin-emu-nogui ...
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain mash 30 99999 1 40 A
+@scSelctCharacter:1 53 56 1 A
+@scSelctCharacter:1 113 153 1 SY=255
+@scSelctCharacter:1 173 176 1 A
+@scSelctCharacter:1 mash 420 99999 1 30 START
+@scSelctCharacter:1 mash 440 99999 2 30 START
+@scMelee 250 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START
+@scSelctCharacter:2 mash 120 99999 1 30 START
+@scSelctCharacter:2 mash 140 99999 2 30 START

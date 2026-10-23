@@ -1,0 +1,28 @@
+# A casual Project+ game's stage pick (ORCA.md "Casual stage pick"): ORCA_PROFILE=PPLUS32,
+# ORCA_TEST_QUEUE=casual (the header's coin 0: port 1 names first), ORCA_UX_TEST_NAMES=ada,bo.
+# The stage select's cursor starts on Random; one short push up puts it on Battlefield, another on
+# Bowser's Castle (the 2024 Proposed preset's page 0).
+# Port 1 names Battlefield with A (the gate reads it as X: Project+'s strike mark, which the flow
+# takes and writes back clean); port 2 moves up onto Bowser's Castle and names it with A; the coin
+# takes one and the flow picks it (the selection set, A pressed). Port 2 walks off.
+@scBoot mash 30 99999 1 40 A
+# Orca boots Project+ to its main menu (PPLUS32.patches): A through VERSUS to its character select.
+@muMenuMain:1 mash 30 99999 1 40 A
+@scSelctCharacter:1 60 63 1 A
+@scSelctCharacter:1 70 73 2 A
+@scSelctCharacter:1 90 116 1 SY=255
+@scSelctCharacter:1 90 116 2 SY=255
+@scSelctCharacter:1 140 143 1 A
+@scSelctCharacter:1 150 153 2 A
+@scSelctCharacter:1 200 203 1 START
+@scSelStage:1 40 43 1 SY=255
+@scSelStage:1 40 43 2 SY=255
+@scSelStage:1 60 62 1 A
+@scSelStage:1 60 62 2 A
+@scSelStage:1 80 83 2 SY=255
+@scSelStage:1 100 102 2 A
+@scMelee 60 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START

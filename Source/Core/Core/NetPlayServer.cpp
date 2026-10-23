@@ -26,6 +26,7 @@
 #include "Common/FileUtil.h"
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
+#include "Common/Network.h"
 #include "Common/SFMLHelper.h"
 #include "Common/StringUtil.h"
 #include "Common/UPnP.h"
@@ -121,6 +122,9 @@ NetPlayServer::NetPlayServer(const u16 port, const bool forward_port, NetPlayUI*
                              const NetTraversalConfig& traversal_config)
     : m_dialog(dialog)
 {
+  if (Common::OfflineReplay())
+    return;
+
   //--use server time
   if (enet_initialize() != 0)
   {

@@ -1,0 +1,63 @@
+# Casual's later games on the character select (ORCA.md "A only in the grid", "The
+# queue's character select": A picks a character, Start locks it in), Brawl: game 1 as
+# bf-queue2-flow.txt, then game 2, both picking at once: B takes a token up, A puts it down, Start
+# locks in (LOCKED IN on the panel), A on the own token while locked in does nothing, B unlocks,
+# Start locks in again; both locked in, the stage select at once (no clock, no ready step). Then
+# game 2's casual stage pick.
+# Run with ORCA_TEST_QUEUE=casual:solo ORCA_UX_TEST_NAMES=ada,bo
+# ORCA_TEST_QUEUE_PICK=<the solo character select's frame + 300>:3:2:-7.5:14.23, e.g. the sync test
+# from the main menu on (YG_SYNCTEST=7 YG_SYNCTEST_FROM=1440).
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+# PLAY ONLINE, With Anyone, Casual.
+@muMenuMain:1 120 123 1 DOWN
+@muMenuMain:1 170 173 1 A
+@muMenuMain:1 220 223 1 RIGHT
+@muMenuMain:1 270 273 1 A
+@muMenuMain:1 320 323 1 A
+# The player's own character select: up into the grid, A on Mario, Start (ready: the page would
+# search now). Port 2 isn't plugged in yet.
+@scSelctCharacter:1 113 153 1 SY=255
+@scSelctCharacter:1 173 176 1 A
+@scSelctCharacter:1 230 233 1 START
+# The room's character select (port 2 from the pick's frame, about 300 frames in): both ready.
+@scSelctCharacter:1 mash 600 99999 1 30 START
+@scSelctCharacter:1 mash 620 99999 2 30 START
+# The casual stage pick: up to the top row, one step left onto Battlefield; port 1's A (port 2's is
+# masked on port 1's turn). Then port 2 goes down onto Yoshi's Island and names it.
+@scSelStage:1 40 59 1 SY=255
+@scSelStage:1 40 59 2 SY=255
+@scSelStage:1 62 64 1 SX=1
+@scSelStage:1 62 64 2 SX=1
+@scSelStage:1 75 77 1 A
+@scSelStage:1 140 145 2 SY=1
+@scSelStage:1 160 162 2 A
+# Port 2 walks off the left edge, three stocks.
+@scMelee 250 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START
+# Game 2, both at once: port 1 goes up over its token (Mario), B takes it up, right onto another
+# character, A, Start (locked in); A on its own token then does nothing (it would take it up); B
+# unlocks, Start locks in again. Port 2 up, B, A, Start: both locked in, the stage select at once.
+@scSelctCharacter:2 30 70 1 SY=255
+@scSelctCharacter:2 30 70 2 SY=255
+@scSelctCharacter:2 80 80 1 B
+@scSelctCharacter:2 90 100 1 SX=255
+@scSelctCharacter:2 110 112 1 A
+@scSelctCharacter:2 130 132 1 START
+@scSelctCharacter:2 150 152 1 A
+@scSelctCharacter:2 170 172 1 B
+@scSelctCharacter:2 190 192 1 START
+@scSelctCharacter:2 230 230 2 B
+@scSelctCharacter:2 250 252 2 A
+@scSelctCharacter:2 270 272 2 START
+@scSelStage:2 40 59 1 SY=255
+@scSelStage:2 40 59 2 SY=255
+@scSelStage:2 62 64 1 SX=1
+@scSelStage:2 62 64 2 SX=1
+@scSelStage:2 75 77 1 A
+@scSelStage:2 140 145 2 SY=1
+@scSelStage:2 160 162 2 A

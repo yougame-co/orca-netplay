@@ -47,6 +47,12 @@ public:
 
   bool ChangeSurface(void* native_handle);
   bool ResizeSwapChain();
+
+  // Orca: with no buffers after a refused resize, whether this frame asks for the resize again: the
+  // first frame after it, then every RESIZE_RETRY_FRAMES (a window resize asks at once anyway).
+  bool ResizeRetryDue() { return m_frames_without_buffers++ % RESIZE_RETRY_FRAMES == 0; }
+  static constexpr u32 RESIZE_RETRY_FRAMES = 30;
+
   void SetStereo(bool stereo);
   void SetHDR(bool hdr);
 
@@ -73,6 +79,14 @@ protected:
   bool m_allow_tearing_supported = false;
   bool m_has_fullscreen = false;
   bool m_fullscreen_request = false;
+
+  // Orca: the last resize's outcome, so the game's log notes each change once (ResizeSwapChain),
+  // frames since buffers were last there (ResizeRetryDue), and what the backend's
+  // CreateSwapChainBuffers last failed with (CreateSwapChain says it).
+  bool m_buffers_ok = true;
+  HRESULT m_resize_error = S_OK;
+  u32 m_frames_without_buffers = 0;
+  HRESULT m_buffers_error = S_OK;
 };
 
 }  // namespace D3DCommon

@@ -5,6 +5,7 @@
 
 #include "Common/CommonTypes.h"
 #include "Core/HW/DSPHLE/UCodes/AX.h"
+#include "Core/Orca/Music.h"
 
 namespace DSP::HLE
 {
@@ -45,6 +46,14 @@ protected:
   // interpolate nicely between old and new volume values.
   u16 m_last_main_volume = 0;
   u16 m_last_aux_volumes[3]{};
+
+  // Orca's Music switch (Orca/Music.h): the music voices' share of the main bus this frame. Host
+  // only, never saved; the mix written to RAM doesn't depend on it.
+  bool m_music_split = false;
+  int m_music_left[32 * 3]{};
+  int m_music_right[32 * 3]{};
+  // Followed with the switch on too, so turning it off during a loop silences that loop.
+  Orca::Music::StreamVoices m_stream_voices;
 
   // Convert a mixer_control bitfield to our internal representation for that
   // value. Required because that bitfield has a different meaning in some

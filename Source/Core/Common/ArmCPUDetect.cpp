@@ -3,6 +3,7 @@
 
 #include "Common/CPUDetect.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -234,6 +235,12 @@ void CPUInfo::Detect()
   bSHA1 = true;
   bSHA2 = true;
   bCRC32 = true;
+
+  // Orca: detect FEAT_AFP (FPCR.AH and FIZ). Apple M4 and later have it; M1 to M3 don't.
+  int afp = 0;
+  size_t afp_size = sizeof(afp);
+  if (sysctlbyname("hw.optional.arm.FEAT_AFP", &afp, &afp_size, nullptr, 0) == 0)
+    bAFP = afp != 0;
 #elif defined(_WIN32)
   // NOTE All this info is from cpu core 0 only.
 
@@ -329,6 +336,11 @@ void CPUInfo::Detect()
 
   model_name = ReplaceAll(model_name, ",", "_");
   cpu_id = ReplaceAll(cpu_id, ",", "_");
+
+  // Orca, tests only: ORCA_TEST_NO_AFP=1 makes an AFP CPU behave like an M1 to M3 (AH never set,
+  // no-AFP JIT paths). A session with it set is a test session and never meets a real one.
+  if (const char* no_afp = std::getenv("ORCA_TEST_NO_AFP"); no_afp && std::strcmp(no_afp, "1") == 0)
+    bAFP = false;
 }
 
 std::string CPUInfo::Summarize()

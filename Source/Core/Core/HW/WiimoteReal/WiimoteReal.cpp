@@ -11,6 +11,7 @@
 
 #include "Common/CommonTypes.h"
 #include "Common/Config/Config.h"
+#include "Common/Network.h"
 #include "Common/Swap.h"
 #include "Common/Thread.h"
 
@@ -29,6 +30,7 @@
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 #include "InputCommon/ControllerInterface/Wiimote/WiimoteController.h"
+#include "InputCommon/LocalInput.h"
 
 namespace WiimoteReal
 {
@@ -299,7 +301,8 @@ bool Wiimote::Read()
   // Drop the report if not connected.
   if (m_is_linked && result > 0)
   {
-    if (m_balance_board_dump_port > 0 && m_index == WIIMOTE_BALANCE_BOARD)
+    if (m_balance_board_dump_port > 0 && m_index == WIIMOTE_BALANCE_BOARD &&
+        !Common::OfflineReplay())
     {
       static sf::UdpSocket Socket;
       (void)Socket.send(rpt.data(), rpt.size(), sf::IpAddress::LocalHost,
@@ -318,7 +321,8 @@ bool Wiimote::Write(const TimedReport& timed_report)
 {
   auto const& rpt = timed_report.report;
 
-  if (m_balance_board_dump_port > 0 && m_index == WIIMOTE_BALANCE_BOARD)
+  if (m_balance_board_dump_port > 0 && m_index == WIIMOTE_BALANCE_BOARD &&
+      !Common::OfflineReplay())
   {
     static sf::UdpSocket Socket;
     (void)Socket.send((char*)rpt.data(), rpt.size(), sf::IpAddress::LocalHost,
@@ -559,6 +563,9 @@ static unsigned int CalculateWantedBB()
 
 void WiimoteScanner::StartThread()
 {
+  if (InputCommon::LocalInputDisabled())
+    return;
+
   if (m_scan_thread_running.IsSet())
     return;
   m_scan_thread_running.Set();
@@ -883,6 +890,9 @@ int Wiimote::GetIndex() const
 // config dialog calls this when some settings change
 void Initialize(::Wiimote::InitializeMode init_mode)
 {
+  if (InputCommon::LocalInputDisabled())
+    return;
+
   if (!s_real_wiimotes_initialized)
   {
     s_wiimote_scanner.StartThread();

@@ -1,0 +1,279 @@
+# Orca's game patches for Project+ v3.2 (launcher profile PPLUS32, on Super Smash Bros. Brawl NTSC-U
+# revision 2), forced on in every Project+ session (Source/Core/Core/Orca/UX/GamePatches.h):
+# `<address> <original> <value>`, hex. Applied only once the launcher has handed over to the game
+# (the profile's frame hook is live), and only as guarded groups: a group is written while every
+# one of its words is still the original, so nothing ever lands in Project+'s own codes or in
+# another module that later occupies the memory. Never a `*` line: Project+ owns the game's data
+# (the one data group below sets a default once, then leaves the words to the game).
+# This file is hashed into the lobby key.
+#
+# Groups: the boot's save prompt skipped; the main menu's Play Online, the game's own ONLINE page
+# with no connection and every way on from it to the local Versus character select, and B from
+# there back to the page it came from (ORCA.md "Online menu"; Orca's texture pack relabels With
+# Anyone CASUAL / RANKED, UX/MenuText.h drops "(Discontinued)"); the rules' items off by default;
+# Options > Sound's balance held in the middle.
+
+# muBootNandTask (Brawl's sora_menu_boot, loaded at 0x811A6000 on the boot scene; process
+# 0x811A6300, state at +0x78), which Project+ loads unchanged at the same address (the six original
+# words checked in Project+'s RAM on the save prompt, 2026-10-02). With no save in the session NAND
+# (always so with Orca.app), state 5 opens Project+'s "Create save file for Project+?" and, on Yes,
+# spends about 13 s writing a 14.6 MB Brawl save to the NAND before character select. In its place,
+# as RSBE01.patches does for Brawl: the game's own "continue without saving" (clear the save flags,
+# +0x48 &= 0xE0, and go to state 55, the end of the boot check). No dialog, no save written;
+# Project+ goes on to character select by itself. A session that seeds a save never reaches state 5.
+811A6430 80030068 88030048    # lbz   r0, 0x48(r3)
+811A6434 83E3005C 54000634    # rlwinm r0, r0, 0, 24, 26
+811A6438 2C000000 98030048    # stb   r0, 0x48(r3)
+811A643C 4182001C 38000037    # li    r0, 55
+811A6440 7C030378 90030078    # stw   r0, 0x78(r3)
+811A6444 4AF193ED 48001204    # b     0x811A7648 (the process's end)
+
+# Boot to the main menu, not the character select (booting should land on the
+# home menu, as Brawl's does). Project+'s codeset boots straight to its VERSUS character select:
+# "Boot Directly to CSS v5.4" (Source/Project+/BootToCSS.asm on the SD card, in NETBOOST.GCT, which
+# the codeset's expansion loader reads to 0x80550010) hooks sqBoot::setNext at 0x806DD5F8 and,
+# unless a pad holds L/R (Training), Start (the title) or Z (Replays) right then, starts sqVsMelee
+# in place of the game's sqPrizeCheck. The hook's branch and the nop after it are the code
+# handler's, written again every frame; the code they reach is NETBOOST.GCT's own words, which
+# nothing writes after the load. Its "no special input" case takes the Start case's path instead:
+# sqPrizeCheck with 0x14, which goes on to the title and the main menu as vanilla Brawl does (the
+# title is skipped below, the prizes by the codeset's own Netplay.asm).
+80559C20 41A0FF84 41A0FF84    # blt   the pad loop (guard)
+80559C24 38951B54 38951C94    # addi  r4, r21, 0x1B54 ("sqVsMelee") -> 0x1C94 ("sqPrizeCheck")
+80559C28 38A00000 38A00014    # li    r5, 0 -> 0x14 (as the Start case)
+80559C2C 48000038 48000038    # b     the hook's end (guard)
+
+# scTitle (sora_scene, which Project+ keeps), skipped as RSBE01.patches skips it for Brawl: the
+# opening movie and the "press Start" logo both become state 16, the title's exit with result 0,
+# which sqTitle takes to the main menu.
+806CA1F8 38000003 38000010    # li r0, 3 -> 16 (the opening movie)
+806CA204 3800000C 38000010    # li r0, 12 -> 16 (the "press Start" logo)
+
+# The main menu's Play Online (RSBE01.patches describes these groups for Brawl): the game's own
+# ONLINE page with no connection, and every way on from it to the local Versus character select.
+# Project+ replaces sora_menu_main with its own build of the module (/Project+/pf/module), loaded at
+# 0x81164C00, whose code sits at the same offsets as Brawl's: every address below is Brawl's
+# + 0x1480 (each original word read in Project+'s RAM on its main menu, 2026-10-02). Project+'s
+# button already says PLAY ONLINE and its pages ONLINE; without these groups A on it showed
+# "There is no save data. Unable to access Wiimmfi." (the connection window's save check).
+#
+# muProcTop's update: A on Play Online enters its page like every other button, never creating the
+# connection window. Two copies of the press check.
+81179ED8 A01D0042 A01D0042    # lhz    r0, 0x42(r29) (the cursor; guard)
+81179EDC 28000002 28000002    # cmplwi r0, 2 (guard)
+81179EE0 4082007C 4800007C    # bne +0x7C -> b +0x7C
+
+8117A0B0 A01D0042 A01D0042    # lhz    r0, 0x42(r29) (guard)
+8117A0B4 28000002 28000002    # cmplwi r0, 2 (guard)
+8117A0B8 4082007C 4800007C    # bne +0x7C -> b +0x7C
+
+# muProcWifi (the ONLINE page), two copies of its input handling, one group each, as
+# RSBE01.patches describes them for Brawl: A on With Friends leaves the menu for the local Versus
+# character select as With Friends > FIGHT! did (code 25: no With Friends page any more, whose
+# buttons all went to the same place), its code in the dead window code after B's path; B goes back
+# to the top page as the game does once its "Disconnect from Wiimmfi?" window returns, with no
+# window. The original words read in Project+'s RAM on its ONLINE page: the
+# same as Brawl's but for the calls into sora_scene.
+8117B384 3800001A 48000068    # li r0, 0x1A -> b 0x8117B3EC (With Friends: leave the menu)
+8117B388 901D0634 901D0634    # stw  r0, 0x634(r29) (guard)
+8117B38C 48000018 48000018    # (guard)
+8117B390 3800001B 3800001B    # li   r0, 0x1B (With Anyone; guard)
+8117B394 901D0634 901D0634    # (guard)
+8117B398 4800000C 4800000C    # (guard)
+8117B39C 3800001C 3800001C    # li   r0, 0x1C (Options; guard)
+8117B3A0 901D0634 901D0634    # (guard)
+8117B3A4 7FA3EB78 7FA3EB78    # mr   r3, r29 (into the page; guard)
+8117B3A8 38800001 38800001    # (guard)
+8117B3AC 4B52A6AD 4B52A6AD    # bl   0x806A5A58 (guard)
+8117B3B0 38000003 38000003    # (guard)
+8117B3B4 38600002 38600002    # (guard)
+8117B3B8 901D0664 901D0664    # (guard)
+8117B3BC 48000298 48000298    # (guard)
+8117B3C0 57C006B5 57C006B5    # rlwinm. r0, r30, 0, 26, 26 (B; guard)
+8117B3C4 4182028C 4182028C    # (guard)
+8117B3C8 4AEB1C51 7FA3EB78    # mr   r3, r29
+8117B3CC 3CA0811A 38800000    # li   r4, 0
+8117B3D0 3CC0811A 4B52A689    # bl   0x806A5A58 (the back animation)
+8117B3D4 80630004 38000000    # li   r0, 0
+8117B3D8 38A550EC 901D0634    # stw  r0, 0x634(r29) (next proc: the top page)
+8117B3DC 38C6511C 38000003    # li   r0, 3
+8117B3E0 38800004 901D0664    # stw  r0, 0x664(r29) (sub-state)
+8117B3E4 38E00000 38600001    # li   r3, 1
+8117B3E8 4B275B5D 4800026C    # b    0x8117B654 (the function's end)
+8117B3EC 7C7E1B78 7FA3EB78    # mr   r3, r29 (With Friends, from 0x8117B384)
+8117B3F0 38800009 38800019    # li   r4, 25 (With Friends > FIGHT!)
+8117B3F4 4BFFC801 38A00000    # li   r5, 0 (the decided animation first)
+8117B3F8 80DD0654 4B52A20D    # bl   0x806A5604 (the proc's exit)
+8117B3FC 7C651B78 3C60805A    # lis  r3, 0x805A
+8117B400 389E0A94 38800013    # li   r4, 0x13
+8117B404 38600001 806301D0    # lwz  r3, 0x1D0(r3) (the sound manager)
+8117B408 38E00029 38A0FFFF    # li   r5, -1
+8117B40C 39000000 38C00000    # li   r6, 0
+8117B410 39200000 38E00000    # li   r7, 0
+8117B414 48021DE9 3900FFFF    # li   r8, -1
+8117B418 907D066C 4AEF8E99    # bl   0x800742B0 (the sound)
+8117B41C 48000234 48000234    # b    0x8117B650 (li r3, 0; the end; guard)
+
+8117B584 3800001A 48000068    # li r0, 0x1A -> b 0x8117B5EC
+8117B588 901D0634 901D0634    # (guard)
+8117B58C 48000018 48000018    # (guard)
+8117B590 3800001B 3800001B    # (guard)
+8117B594 901D0634 901D0634    # (guard)
+8117B598 4800000C 4800000C    # (guard)
+8117B59C 3800001C 3800001C    # (guard)
+8117B5A0 901D0634 901D0634    # (guard)
+8117B5A4 7FA3EB78 7FA3EB78    # (guard)
+8117B5A8 38800001 38800001    # (guard)
+8117B5AC 4B52A4AD 4B52A4AD    # (guard)
+8117B5B0 38000003 38000003    # (guard)
+8117B5B4 38600002 38600002    # (guard)
+8117B5B8 901D0664 901D0664    # (guard)
+8117B5BC 48000098 48000098    # (guard)
+8117B5C0 57C006B5 57C006B5    # (guard)
+8117B5C4 4182008C 4182008C    # (guard)
+8117B5C8 4AEB1A51 7FA3EB78    # mr   r3, r29
+8117B5CC 3CA0811A 38800000    # li   r4, 0
+8117B5D0 3CC0811A 4B52A489    # bl   0x806A5A58
+8117B5D4 80630004 38000000    # li   r0, 0
+8117B5D8 38A550EC 901D0634    # stw  r0, 0x634(r29)
+8117B5DC 38C6511C 38000003    # li   r0, 3
+8117B5E0 38800004 901D0664    # stw  r0, 0x664(r29)
+8117B5E4 38E00000 38600001    # li   r3, 1
+8117B5E8 4B27595D 4800006C    # b    0x8117B654
+8117B5EC 7C7E1B78 7FA3EB78    # mr   r3, r29 (With Friends, from 0x8117B584)
+8117B5F0 38800009 38800019    # li   r4, 25
+8117B5F4 4BFFC601 38A00000    # li   r5, 0
+8117B5F8 80DD0654 4B52A00D    # bl   0x806A5604
+8117B5FC 7C651B78 3C60805A    # lis  r3, 0x805A
+8117B600 389E0A94 38800013    # li   r4, 0x13
+8117B604 38600001 806301D0    # lwz  r3, 0x1D0(r3)
+8117B608 38E00029 38A0FFFF    # li   r5, -1
+8117B60C 39000000 38C00000    # li   r6, 0
+8117B610 39200000 38E00000    # li   r7, 0
+8117B614 48021BE9 3900FFFF    # li   r8, -1
+8117B618 907D066C 4AEF8C99    # bl   0x800742B0
+8117B61C 48000034 48000034    # b    0x8117B650 (guard)
+
+# The ONLINE page's Options and With Anyone's Spectator never show (isEnableButton is always no).
+8117AE84 38600020 38600020    # li r3, 0x20 (guard)
+8117AE88 4AFD5055 38600000    # bl isEnableButton -> li r3, 0
+8117AE8C 28030001 28030001    # (guard)
+8117AE90 4082000C 4082000C    # (guard)
+8117AE94 38000001 38000001    # (guard)
+8117AE98 48000018 48000018    # (guard)
+8117AE9C 38600040 38600040    # li r3, 0x40 (guard)
+8117AEA0 4AFD503D 38600000    # bl isEnableButton -> li r3, 0
+811931FC 38600010 38600010    # li r3, 0x10 (guard)
+81193200 4AFBCCDD 38600000    # bl isEnableButton -> li r3, 0
+81193204 7C7F1B78 7C7F1B78    # mr r31, r3 (guard)
+
+# sqMenuMain::setNext's table in Brawl's sora_scene, which Project+ does not replace (the same
+# words as in Brawl): every online code (24-27, 29, 30, 31) goes to sqVsMelee, Project+'s local
+# VERSUS character select, through the block below. Code 28 is a guard; 24-27 already point at the
+# block's address.
+80701A04 806DC8C8 806DC8C8    # code 24 (guard: the block below)
+80701A08 806DC8C8 806DC8C8    # code 25 (guard)
+80701A0C 806DC8C8 806DC8C8    # code 26 (guard)
+80701A10 806DC8C8 806DC8C8    # code 27 (guard)
+80701A14 806DC940 806DC940    # code 28 (guard)
+80701A18 806DC8E0 806DC8C8    # code 29 (sqNetAnyWatch)
+80701A1C 806DC8F8 806DC8C8    # code 30 (sqNetAnyOkiraku)
+80701A20 806DC910 806DC8C8    # code 31 (sqNetAnyTeamMelee)
+
+# B out of that character select goes back to the page it came from (the ONLINE page on With
+# Friends, With Anyone on Casual or Ranked), not to VERSUS: RSBE01.patches describes these
+# groups for Brawl. Project+ keeps Brawl's sqMenuMain, sqVsMelee and their tables (the original
+# words read in Project+'s RAM on its character select and main menu, 2026-10-03), but its codeset
+# makes sqVsMelee::start always keep the character select as it was (0x806DCA90 is a `b`), so the
+# exit code is kept by the menu's block, not by that start. The menu's mode puts the cursor back on
+# the button in Project+'s own copy of the menu module too.
+806DC8C8 80B20284 7E439378    # mr     r3, r18
+806DC8CC 7E439378 38930030    # addi   r4, r19, 48 ("sqVsMelee", as VERSUS)
+806DC8D0 38930160 38A00000    # li     r5, 0 (its argument, as VERSUS)
+806DC8D4 4B950D6D 4B950D6D    # bl     setNextSequence (0x8002D640; guard)
+806DC8D8 93CF0008 80720014    # lwz    r3, 0x14(r18) (the next sequence: sqVsMelee)
+806DC8DC 480000F4 80120284    # lwz    r0, 0x284(r18) (the menu's exit code)
+806DC8E0 7E439378 90030018    # stw    r0, 0x18(r3) (kept for the back out)
+806DC8E4 38930170 93CF0008    # stw    r30, 0x8(r15)
+806DC8E8 38A00000 480000E8    # b      0x806DC9D0
+806DC8EC 4B950D55 80AF0018    # helper: lwz r5, 0x18(r15) (r15 is sqVsMelee there)
+806DC8F0 93CF0008 38000000    # li     r0, 0
+806DC8F4 480000DC 900F0018    # stw    r0, 0x18(r15) (used once)
+806DC8F8 7E439378 3805FFE8    # subi   r0, r5, 24
+806DC8FC 38930180 28000007    # cmplwi r0, 7
+806DC900 38A00000 41810018    # bgt    0x806DC918 (not an online code)
+806DC904 4B950D3D 38A5FFFE    # subi   r5, r5, 2
+806DC908 93CF0008 28000004    # cmplwi r0, 4
+806DC90C 480000C4 4C800020    # bgelr  (29-31: With Anyone, 27-29)
+806DC910 7E439378 38A0001E    # li     r5, 30 (24-27: the ONLINE page on With Friends)
+806DC914 38930190 4E800020    # blr
+806DC918 38A00000 38A00001    # li     r5, 1 (VERSUS, as before)
+806DC91C 4B950D25 4E800020    # blr
+
+# sqVsMelee::setNext's state 16, the back out (0x806DCE34): the argument comes from the helper.
+806DCE34 806F0014 806F0014    # lwz    r3, 0x14(r15) (guard)
+806DCE38 38910064 38910064    # addi   r4, r17, 100 ("sqMenuMain"; guard)
+806DCE3C 38A00001 4BFFFAB1    # li r5, 1 -> bl 0x806DC8EC (r5: the argument)
+806DCE40 4B950801 4B950801    # bl     setNextSequence (guard)
+
+# The online rules' lock on the way out (ORCA.md "Online rules"): while the match block's header
+# (UX/MatchBlock.h, 0x806F2380) says casual or ranked, sqVsMelee::setNext's state 5, which takes the
+# character select's result, sends anything but "go on" (its BACK button, held B) to state 4, the
+# character select again, the way the stage select's B comes back to it (state 7), instead of
+# state 16, the menu. No way out of the character select in a queue match; without a header
+# (friends, solo) the menu as before, and so on the queue's own character select before a match
+# (the header's FLAG_SOLO, UX/Queue.h), where B backing out ends the search. A toggled group
+# (GamePatches.h): r24 is 4 and r20 16 through
+# the whole function.
+when 806F2380 == 59474D31               # the block's magic, 'YGM1'
+when 806F2384 & 00FF0000 != 00000000    # its mode: casual or ranked
+when 806F238C & 01000000 == 00000000    # not the queue's own character select (FLAG_SOLO): B backs out
+806DCBFC 4182000C 4182000C    # beq    0x806DCC08 (go on: state 6, the stage select; guard)
+806DCC00 928F0008 930F0008    # stw    r20, 8(r15) (16) -> stw r24, 8(r15) (4)
+806DCC04 48000008 48000008    # b      0x806DCC0C (guard)
+end
+
+# Project+'s own "Move v-sync call for Brawl/PM" (its codes write these two words with plain stores
+# from frame 1 on), the same groups as RSBE01.patches: written here at the first live boundary
+# through the memory-patch path, which drops the JIT's copies, so every machine runs the move from
+# frame 1 whatever its JIT compiled during the boot, and the codes then write the same words. See
+# ORCA.md "Code the JIT doesn't see".
+80023B84 2C000000 2C000000    # cmpwi r0, 0 (guard)
+80023B88 4182FF7C 60000000    # beq   0x80023B04 -> nop
+80023B8C 881F0074 881F0074    # lbz   r0, 0x74(r31) (guard)
+
+80024020 7C0803A6 7C0803A6    # mtlr  r0 (guard)
+80024024 38210020 38210020    # addi  r1, r1, 0x20 (guard)
+80024028 4E800020 481C4904    # blr -> b 0x801E892C (VIWaitForRetrace, a tail call)
+
+# The rules menu's item default, as RSBE01.patches sets it for Brawl (which describes these four
+# words of Brawl's gmGlobalRecord menu data): Project+ keeps Brawl's record and its Item Switch page
+# reads and writes the same words. With no save in the session NAND every match had items at
+# Medium: Project+'s netplay codeset ("Default Settings Modifier") sets the stock rules but not the
+# items (its tournament variants, disabled, turn them off). Instead, once, while all four words
+# still hold the defaults: the frequency None, which Project+ itself takes as every item off in a
+# match ("Items spoofed off if item frequency None"). The switch is left as Project+ set it (its
+# GameGlobal::init hook clears the Mayhem and Passive Aggression bits, 0x00180000), so choosing a
+# frequency in the rules menu brings its usual items back. The second word becomes 'ORCA' so the
+# group never lands again: a player's own choice stays, Medium included. A data group, not code:
+# the record is not a module, and after the boot Project+ writes these words only when a player
+# leaves its Item Switch page (checked in Project+'s RAM and in its codeset's source on the SD card,
+# 2026-10-02).
+9017BE50 02000000 00000000    # item frequency: Medium -> None
+9017BE54 00000000 4F524341    # menu data +4 (unused): 'ORCA', the group has landed
+9017BE58 FFE7FFFF FFE7FFFF    # item switch: Project+'s default (guard only, left as is)
+9017BE5C FFFFFFFF FFFFFFFF    # (guard only)
+
+# Options > Sound's balance slider stays in the middle, as RSBE01.patches does for Brawl (which
+# describes the handler): Project+ keeps Brawl's record and its own sora_menu_main has the same
+# Sound page at the same offsets, so the words are Brawl's + 0x1480 (read in Project+'s RAM on the
+# Sound page, 2026-10-07; its codeset doesn't touch the page or the balance). In a room the host's
+# slider silenced the friend's music (two Project+ Orcas, 2026-10-07). Clamp instead of lock (10 to
+# 90): 2800005A and 2C00000A, as in Brawl's file.
+8117C8BC A003066C A003066C    # lhz    r0, 0x66C(r3) (the slider's value; guard)
+8117C8C0 28000064 28000032    # cmplwi r0, 100 -> 50: left stops at 50
+8117C8C4 408000B4 408000B4    # bge    0x8117C978 (to the right check; guard)
+
+8117C980 A003066C A003066C    # lhz    r0, 0x66C(r3) (guard)
+8117C984 2C000000 2C000032    # cmpwi  r0, 0 -> 50: right stops at 50
+8117C988 418200B0 408100B0    # beq -> ble 0x8117CA38 (the handler's end)

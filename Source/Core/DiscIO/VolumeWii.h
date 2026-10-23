@@ -60,6 +60,10 @@ public:
   VolumeWii(std::unique_ptr<BlobReader> reader);
   ~VolumeWii() override;
   bool Read(u64 offset, u64 length, u8* buffer, const Partition& partition) const override;
+  bool SetReadPatches(std::vector<ReadPatch> patches) override;
+  // Writes the patches of `partition` that fall in [offset, offset + length) into `buffer`.
+  static void ApplyReadPatches(const std::vector<ReadPatch>& patches, u64 offset, u64 length,
+                               u8* buffer, const Partition& partition);
   bool HasWiiHashes() const override;
   bool HasWiiEncryption() const override;
   std::vector<Partition> GetPartitions() const override;
@@ -125,7 +129,10 @@ private:
     u32 type = 0;
   };
 
+  bool ReadUnpatched(u64 offset, u64 length, u8* buffer, const Partition& partition) const;
+
   std::unique_ptr<BlobReader> m_reader;
+  std::vector<ReadPatch> m_read_patches;
   std::map<Partition, PartitionDetails> m_partitions;
   Partition m_game_partition;
   bool m_has_hashes;

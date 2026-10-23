@@ -3180,6 +3180,14 @@ void ARM64FloatEmitter::FMIN(u8 size, ARM64Reg Rd, ARM64Reg Rn, ARM64Reg Rm)
 {
   EmitThreeSame(0, 2 | size >> 6, 0b11110, Rd, Rn, Rm);
 }
+void ARM64FloatEmitter::FMAXNM(u8 size, ARM64Reg Rd, ARM64Reg Rn, ARM64Reg Rm)
+{
+  EmitThreeSame(0, size >> 6, 0b11000, Rd, Rn, Rm);
+}
+void ARM64FloatEmitter::FMINNM(u8 size, ARM64Reg Rd, ARM64Reg Rn, ARM64Reg Rm)
+{
+  EmitThreeSame(0, 2 | size >> 6, 0b11000, Rd, Rn, Rm);
+}
 void ARM64FloatEmitter::FCVTL(u8 size, ARM64Reg Rd, ARM64Reg Rn)
 {
   Emit2RegMisc(false, 0, size >> 6, 0x17, Rd, Rn);
@@ -3874,6 +3882,8 @@ void ARM64FloatEmitter::ORR_BIC(u8 size, ARM64Reg Rd, u8 imm, u8 shift, u8 op)
     ASSERT_MSG(DYNA_REC, shift == 0 || shift == 8, "size16 only supports shift of 0 or 8! {}",
                shift);
 
+    // 16-bit lanes are cmode 10x1 (0xx1 is the 32-bit form).
+    cmode |= 8;
     if (shift == 8)
       cmode |= 2;
   }

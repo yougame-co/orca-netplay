@@ -16,6 +16,7 @@
 #include "Common/FileUtil.h"
 #include "Common/IOFile.h"
 #include "Common/Logging/Log.h"
+#include "Common/Network.h"
 #include "Common/ScopeGuard.h"
 
 #include "Core/Config/MainSettings.h"
@@ -359,6 +360,9 @@ static bool SafeCopyFromEmu(Memory::MemoryManager& memory, u8* destination, u32 
 
 static GuestSocket socket_(int af, int type, int protocol)
 {
+  if (Common::OfflineReplay())
+    return INVALID_GUEST_SOCKET;
+
   const auto guest_socket = GetAvailableGuestSocket();
   if (guest_socket == INVALID_GUEST_SOCKET)
     return INVALID_GUEST_SOCKET;
@@ -2405,7 +2409,7 @@ void DoState(PointerWrap& p)
 
     for (u32 i = FIRST_VALID_FD; i < std::size(s_sockets); ++i)
     {
-      if (!created_sockets.IsFdSet(GuestSocket(i)))
+      if (Common::OfflineReplay() || !created_sockets.IsFdSet(GuestSocket(i)))
         continue;
 
       s_sockets[i] = socket(AF_INET, SOCK_STREAM, 0);
