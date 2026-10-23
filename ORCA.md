@@ -2831,6 +2831,12 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.76
+
+- The game's log times each step of starting a game, so slow starts can be found and fixed.
+- Test tools: scripted button presses keep pace in online matches, and test copies of the app can
+  drive the game with the on-screen controller while its window isn't focused. Players see no change.
+
 ### 0.3.74
 
 - Games no longer stop when a match starts on older Windows graphics (for example Intel HD

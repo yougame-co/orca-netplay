@@ -41,6 +41,7 @@
 #include "Core/Orca/Activity.h"
 #include "Core/Orca/BootLogs.h"
 #include "Core/Orca/BootMemory.h"
+#include "Core/Orca/BootPhase.h"
 #include "Core/Orca/BootThrottle.h"
 #include "Core/Orca/Branding.h"
 #include "Core/Orca/Bridge.h"
@@ -77,6 +78,8 @@
 static std::unique_ptr<Platform> s_platform;
 // True in embed mode (Embed.h): drawn inside the YouGame app's window, controlled over stdin.
 static bool s_embedded = false;
+// Arm presentation timing only when the guest game's frame hook is live (not a loader splash).
+static std::atomic<bool> s_boot_guest_ready{false};
 static bool s_single_line_panics = false;
 // Embed::ClaimStdout redirects stdout to stderr; diagnostics for the app use its private stream.
 static std::FILE* s_panic_output = nullptr;
@@ -129,8 +132,8 @@ static void PrintPanicLine(const char* text) noexcept
 // On the CPU thread, so std::fprintf: a throw from there can't unwind (Orca/CrashNote.h).
 static void EndBootLogs()
 {
-  Orca::BootThrottle::Finish(Rollback::RingPort::Active() ||
-                             (Rollback::Harness::Active() && !Rollback::Diag::KeepThrottle()));
+  s_boot_guest_ready.store(true, std::memory_order_relaxed);
+  Orca::BootThrottle::FinishAtFirstFrame();
   if (!s_embedded)
     return;
   const std::string ended = Orca::BootLogs::EndAtFirstFrame();
@@ -468,6 +471,7 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
     }
   }
   optparse::Values& options = CommandLineParse::ParseArguments(parser.get(), argc, argv);
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::Main);
   std::vector<std::string> args = parser->args();
 
   // Register before reading the boot file, so an embedded alert never becomes a message box hidden
@@ -636,6 +640,7 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
   UICommon::SetUserDirectory(user_directory);
   UICommon::CreateDirectories();
   UICommon::Init();
+  Orca::BootPhase::LogPending();
   // When embedded, turn on the netplay and rollback logs at INFO so a player's bug report shows
   // what the room and match did. The app saves stderr to the game's log. A more verbose Logger.ini
   // wins.
@@ -737,6 +742,15 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
       fmt::print(stderr, "Orca: YOUGAME_STDIO=1 without --embed: the app's bridge is off\n");
   }
 
+  // Remove this diagnostic listener after the first game presentation: no per-frame timer work.
+  Common::EventHook boot_phase_frame_hook;
+  boot_phase_frame_hook = GetVideoEvents().after_present_event.Register(
+      [&boot_phase_frame_hook, session = Orca::SessionActive()](PresentInfo&) {
+        if (session && !s_boot_guest_ready.load(std::memory_order_relaxed))
+          return;
+        Orca::BootPhase::Mark(Orca::BootPhase::Phase::FirstFrame);
+        boot_phase_frame_hook.reset();
+      });
   // Tell the app "ready" once the first frame is on screen.
   Common::EventHook first_frame_hook;
   if (embed.enabled)
@@ -812,6 +826,7 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
 
 int main(const int raw_argc, char* raw_argv[])
 {
+  Orca::BootPhase::Start();
   // Windows: a C++ exception names itself on stderr as it is thrown, so a run it ends says why.
   Orca::CrashNote::InstallThrowReporter();
   // And so does a fault (an access violation, a failed assert): its module, offset and the
@@ -854,6 +869,7 @@ int main(const int raw_argc, char* raw_argv[])
   if (s_embedded)
   {
     s_panic_output = Embed::ClaimStdout();
+    Orca::BootPhase::SetOutput(s_panic_output);
     Orca::Status::SetOutput(s_panic_output);
     // Also send every error to the app as "error <sentence>".
     Orca::Status::SetErrorListener([](std::string_view, std::string_view sentence) {
@@ -883,6 +899,7 @@ int main(const int raw_argc, char* raw_argv[])
 #ifdef _WIN32
 int wmain(int, wchar_t*[], wchar_t*[])
 {
+  Orca::BootPhase::Start();
   std::vector<std::string> args = Common::CommandLineToUtf8Argv(GetCommandLineW());
   const int argc = static_cast<int>(args.size());
   std::vector<char*> argv(args.size());

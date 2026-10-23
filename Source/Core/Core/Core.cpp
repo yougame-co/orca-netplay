@@ -67,6 +67,7 @@
 #include "Core/NetPlayProto.h"
 #include "Core/Orca/BootAudit.h"
 #include "Core/Orca/BootMemory.h"
+#include "Core/Orca/BootPhase.h"
 #include "Core/Orca/Branding.h"
 #include "Core/Orca/Profile.h"
 #include "Core/PatchEngine.h"
@@ -392,6 +393,7 @@ static void CpuThread(Core::System& system, const std::optional<std::string>& sa
   }
 
   // Enter CPU run loop. When we leave it - we are done.
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::Launcher);
   system.GetCPU().Run();
 
 #ifdef USE_MEMORYWATCHER
@@ -575,6 +577,7 @@ static void EmuThreadBoot(Core::System& system, std::unique_ptr<BootParameters> 
   Common::ScopeGuard movie_guard([&system] { system.GetMovie().Shutdown(); });
 
   AudioCommon::InitSoundStream(system);
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::Audio);
   Common::ScopeGuard audio_guard([&system] { AudioCommon::ShutdownSoundStream(system); });
 
   HW::Init(system,
@@ -679,6 +682,7 @@ static void EmuThreadBoot(Core::System& system, std::unique_ptr<BootParameters> 
 static void EmuThread(Core::System& system, std::unique_ptr<BootParameters> boot,
                       WindowSystemInfo wsi)
 {
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::EmuThread);
   NotifyStateChanged(State::Starting);
   Common::ScopeGuard flag_guard{[] {
     {

@@ -12,6 +12,8 @@ struct WindowSystemInfo;
 
 namespace UICommon
 {
+// Report the agent input mode once, after logging is initialized.
+void ReportInputMode();
 void Init();
 void Shutdown();
 

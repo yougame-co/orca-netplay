@@ -6,6 +6,7 @@
 #include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
+#include "Core/Orca/BootPhase.h"
 #include "Core/Orca/Sandbox.h"
 #include "Core/Orca/Status.h"
 #include "Core/Orca/UX/OverlayKey.h"
@@ -167,6 +168,7 @@ bool PlatformWin32::CreateAdoptedWindow()
   }
   fprintf(stderr, "Orca: adopted into the app's window\n");
   m_adopted = true;
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::Window);
   // SetParent does not change window styles; make the adopted window a child here too.
   const LONG_PTR style = GetWindowLongPtr(m_hwnd, GWL_STYLE);
   SetWindowLongPtr(m_hwnd, GWL_STYLE,

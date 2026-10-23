@@ -52,6 +52,7 @@
 #include "Core/System.h"
 #include "InputCommon/ControlReference/ControlReference.h"
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
+#include "InputCommon/LocalInput.h"
 #include "VideoCommon/VideoState.h"
 
 namespace Rollback
@@ -633,7 +634,8 @@ void OnFrameBoundary(const Core::CPUThreadGuard& guard)
       }
       const bool live = ControlReference::GetInputGate();
       if (const auto from_app = Orca::Events::LocalPad(!IsResimulating()))
-        return Orca::Net::EncodePad(Orca::UX::FilterLocalPad(*from_app, first_run, live));
+        return Orca::Net::EncodePad(Orca::UX::FilterLocalPad(
+            *from_app, first_run, live || InputCommon::VirtualPadOnly()));
       g_controller_interface.SetCurrentInputChannel(ciface::InputChannel::SerialInterface);
       g_controller_interface.UpdateInput();
       const GCPadStatus pad = Pad::GetStatus(0);

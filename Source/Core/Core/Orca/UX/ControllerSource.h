@@ -23,7 +23,7 @@
 namespace Orca::UX
 {
 // The pad for this frame, or nullopt to fall back to Pad::GetStatus(0). CPU thread only.
-// Neutral while the window is unfocused. `for_frame` marks the per-frame read that feeds the
+// Neutral while unfocused unless ORCA_VIRTUAL_PAD_ONLY=1. `for_frame` marks the read feeding the
 // input-age stats.
 std::optional<GCPadStatus> LocalPad(bool for_frame = false);
 

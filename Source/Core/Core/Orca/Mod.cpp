@@ -24,6 +24,7 @@
 #include "Common/IOFile.h"
 #include "Common/Logging/Log.h"
 #include "Common/StringUtil.h"
+#include "Core/Orca/BootPhase.h"
 #include "Core/Orca/Bundle.h"
 #include "Core/Orca/Disc.h"
 #include "Core/Orca/Profile.h"
@@ -1791,6 +1792,7 @@ bool PrepareModBoot(Profile* profile, const std::string* executable_path,
       return false;
     }
   }
+  BootPhase::Mark(BootPhase::Phase::Disc);
   if (m.sd_image)
   {
     // A flat bundle's card, used as it is: its size and chunked SHA-256 were checked as the bundle
@@ -1815,6 +1817,9 @@ bool PrepareModBoot(Profile* profile, const std::string* executable_path,
     profile->sd_image_hash = image->hash;
     mod.sd_image_hash = image->hash;
   }
+  // A tree image is hashed in full even when the image itself was reused.
+  if (!mod.flat && (m.sd_bytes || !m.launcher.empty()))
+    BootPhase::Mark(BootPhase::Phase::HashFull);
   return true;
 }
 }  // namespace Orca

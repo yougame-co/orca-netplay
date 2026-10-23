@@ -29,6 +29,7 @@
 #include "Common/Logging/Log.h"
 #include "Common/Logging/LogManager.h"
 #include "Common/StringUtil.h"
+#include "Core/Orca/BootPhase.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Sandbox.h"
 #include "Core/Orca/Status.h"
@@ -523,6 +524,8 @@ static std::optional<FlatBundle> LoadFlatBundleImpl(const std::string& dir_in,
     bundle.sd_image_hash = hash;
   }
 
+  if (manifest->sd_image || !manifest->launcher.empty())
+    BootPhase::Mark(BootPhase::Phase::HashFull);
   bundle.tree.hash = FlatTreeHash(files, manifest->jitwarm);
   bundle.tree.files = std::move(files);
   bundle.manifest = std::move(*manifest);

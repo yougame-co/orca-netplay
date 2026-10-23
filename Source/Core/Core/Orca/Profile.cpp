@@ -41,6 +41,7 @@
 #include "Core/HW/Sram.h"
 #include "Core/HW/Wiimote.h"
 #include "Core/Orca/BootAudit.h"
+#include "Core/Orca/BootPhase.h"
 #include "Core/Orca/Bundle.h"
 #include "Core/Orca/Disc.h"
 #include "Core/Orca/Session/Session.h"
@@ -978,6 +979,7 @@ bool PrepareLauncherBoot(Profile* profile, const std::string& executable_path,
     return false;
   }
 
+  BootPhase::Mark(BootPhase::Phase::Disc);
   std::vector<BootAudit::FileToVerify> files{{
       executable_path, profile->launcher_hash,
       fmt::format("Orca: {} is not the loader profile {} names", executable_path, profile->game_id)}};
@@ -999,6 +1001,8 @@ bool PrepareLauncherBoot(Profile* profile, const std::string& executable_path,
     *error = profile->boot_audit->Error();
     return false;
   }
+  BootPhase::Mark(profile->boot_audit->CacheHit() ? BootPhase::Phase::HashCached :
+                                                 BootPhase::Phase::HashFull);
   return true;
 }
 

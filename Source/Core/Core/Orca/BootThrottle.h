@@ -9,4 +9,6 @@ namespace Orca::BootThrottle
 // boot). A match or harness that has taken over pacing keeps its own throttle state.
 void Begin();
 void Finish(bool pacing_owned_elsewhere);
+// Called by the headless first-frame listener, before an online match creates its ring.
+void FinishAtFirstFrame();
 }  // namespace Orca::BootThrottle

@@ -3623,7 +3623,7 @@ void ConfirmResults(Match& match)
   // game-start of the set and needs no order between them.
   for (const int start : starts)
   {
-    NOTICE_LOG_FMT(ROLLBACK, "Matchmaking: a ranked game began (the fight from frame {})", start);
+    NOTICE_LOG_FMT(ROLLBACK, "Matchmaking: a game began (the fight from frame {})", start);
     Orca::Online::ReportGameStart(start);
   }
   // On screen, a leave from here on loses the set (UX/SetEnd.h); a set that ended a game reached it

@@ -7,6 +7,10 @@
 
 #include "Core/Core.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/Session/Online.h"
+#include "Core/Rollback/Diag.h"
+#include "Core/Rollback/Harness.h"
+#include "Core/Rollback/SessionPort.h"
 
 namespace Orca::BootThrottle
 {
@@ -26,5 +30,10 @@ void Finish(bool pacing_owned_elsewhere)
 {
   if (std::exchange(s_owned, false) && !pacing_owned_elsewhere)
     Core::SetIsThrottlerTempDisabled(false);
+}
+void FinishAtFirstFrame()
+{
+  Finish(Rollback::RingPort::Active() ||
+         (Rollback::Harness::Active() && !Online::Enabled() && !Rollback::Diag::KeepThrottle()));
 }
 }  // namespace Orca::BootThrottle

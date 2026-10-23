@@ -40,6 +40,7 @@
 #include "Core/NetPlayProto.h"
 #include "Core/Orca/BootAudit.h"
 #include "Core/Orca/BootMemory.h"
+#include "Core/Orca/BootPhase.h"
 #include "Core/Orca/Branding.h"
 #include "Core/Orca/Bundle.h"
 #include "Core/Orca/Profile.h"
@@ -85,6 +86,8 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
 
   if (!StartUp.SetPathsAndGameMetadata(system, *boot))
     return false;
+  if (std::holds_alternative<BootParameters::Disc>(boot->parameters))
+    Orca::BootPhase::Mark(Orca::BootPhase::Phase::Disc);
 
   // Movie settings
   auto& movie = system.GetMovie();
@@ -299,6 +302,7 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
     NOTICE_LOG_FMT(BOOT, "{}", Orca::DescribeGraphics());
   }
   Orca::SetActiveProfile(orca_profile);
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::Config);
   Orca::UX::SelectModule(Orca::ActiveProfile());
 
   system.Initialize();

@@ -22,6 +22,7 @@
 #endif
 
 #include "Common/Logging/Log.h"
+#include "Core/Orca/BootPhase.h"
 #include "Core/Orca/Bridge.h"
 
 namespace Embed
@@ -192,6 +193,8 @@ void Result::Decide(std::string_view reason)
   if (!m_enabled || m_decided)
     return;
   m_decided = true;
+  if (reason.empty())
+    Orca::BootPhase::Mark(Orca::BootPhase::Phase::Window);
   m_line = reason.empty() ? "orca embed ok" : "orca embed failed " + std::string(reason);
 }
 

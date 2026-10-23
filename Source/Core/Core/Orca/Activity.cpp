@@ -23,6 +23,7 @@
 #include "Core/Orca/Games/Brawl/OnlineMenu.h"
 #include "Core/Rollback/Harness.h"
 #include "InputCommon/ControlReference/ControlReference.h"
+#include "InputCommon/LocalInput.h"
 
 namespace Orca::Activity
 {
@@ -348,10 +349,9 @@ void OnBoundary(bool first_run)
 {
   s_direct.clear();
   s_edges.clear();
-  // What the game gets: nothing from the player's controllers while the window doesn't have the
-  // input (UX::LocalPad), so the app's stream isn't read then either.
+  // Follow UX::LocalPad: the app's stream needs focus except in virtual-pad-only agent copies.
   const bool gate = first_run && ControlReference::GetInputGate();
-  if (gate)
+  if (first_run && (gate || InputCommon::VirtualPadOnly()))
   {
     double age_ms = 0;
     if (const std::shared_ptr<const UX::Snapshot> snapshot = UX::LatestSnapshot(&age_ms))

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <clocale>
 #include <cmath>
+#include <cstdio>
 #include <locale>
 #include <memory>
 #ifdef _WIN32
@@ -127,6 +128,18 @@ static void RefreshConfig()
   Common::SetAbortOnPanicAlert(Config::Get(Config::MAIN_ABORT_ON_PANIC_ALERT));
 }
 
+void ReportInputMode()
+{
+  static bool reported = false;
+  if (InputCommon::VirtualPadOnly() && !reported)
+  {
+    reported = true;
+    std::fputs("orca input virtual-pad-only\n", stdout);
+    std::fflush(stdout);
+    NOTICE_LOG_FMT(COMMON, "orca input virtual-pad-only");
+  }
+}
+
 void Init()
 {
   Core::RestoreWiiSettings(Core::RestoreReason::CrashRecovery);
@@ -142,7 +155,8 @@ void Init()
   g_Config.Init();
   Discord::Init();
   Common::Log::LogManager::Init();
-  if (InputCommon::LocalInputDisabled())
+  ReportInputMode();
+  if (InputCommon::LocalInputDisabled() && !InputCommon::VirtualPadOnly())
     NOTICE_LOG_FMT(COMMON, "local input off (ORCA_NO_LOCAL_INPUT)");
   if (Common::OfflineReplay())
     NOTICE_LOG_FMT(COMMON, "replay offline (file source): network off");

@@ -23,6 +23,7 @@
 #include "Core/DolphinAnalytics.h"
 #include "Core/HW/SystemTimers.h"
 #include "Core/HW/VideoInterface.h"
+#include "Core/Orca/BootPhase.h"
 #include "Core/Orca/Profile.h"
 #include "Core/System.h"
 
@@ -367,7 +368,10 @@ bool VideoBackendBase::InitializeShared(std::unique_ptr<AbstractGfx> gfx,
                     OSD::Duration::NORMAL);
   }
 
+  // Backend device/swap chain and renderer classes are ready; isolate the cache loading below.
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::Video);
   g_shader_cache->InitializeShaderCache();
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::Shaders);
   system.GetCustomResourceManager().Initialize();
 
   ScreenshotRequests().SetRenderer(g_frame_dumper.get());

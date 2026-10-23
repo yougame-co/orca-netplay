@@ -1216,7 +1216,7 @@ void OnFrameBoundary(const Core::CPUThreadGuard& guard)
     return;
   auto& system = guard.GetSystem();
   // Run unthrottled unless a session paces the run.
-  if (!RingPort::Active() && !Diag::KeepThrottle())
+  if (!Orca::Online::Enabled() && !RingPort::Active() && !Diag::KeepThrottle())
     Core::SetIsThrottlerTempDisabled(true);
   if (s_diag && s_synctest_k > 0 && s_frame >= s_synctest_from - 1)
     CoreTiming::g_rollback_event_trace = &s_frame_events;

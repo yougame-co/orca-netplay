@@ -27,6 +27,7 @@
 #include "Core/Orca/Session/PadCodec.h"
 #include "Core/Orca/UX/Controllers.h"
 #include "InputCommon/ControlReference/ControlReference.h"
+#include "InputCommon/LocalInput.h"
 
 namespace Orca::UX
 {
@@ -689,8 +690,8 @@ std::optional<GCPadStatus> LocalPad(bool for_frame)
   }
   if (!choice)
     return std::nullopt;
-  // Same focus rule as the keyboard: no input while the window is unfocused.
-  if (!ControlReference::GetInputGate())
+  // Agent copies can drive the app's virtual pad without focusing the window.
+  if (!ControlReference::GetInputGate() && !InputCommon::VirtualPadOnly())
     return NeutralPad();
   return choice->pad;
 }

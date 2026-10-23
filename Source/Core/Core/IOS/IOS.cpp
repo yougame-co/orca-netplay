@@ -56,6 +56,7 @@
 #include "Core/IOS/VersionInfo.h"
 #include "Core/IOS/WFS/WFSI.h"
 #include "Core/IOS/WFS/WFSSRV.h"
+#include "Core/Orca/BootPhase.h"
 #include "Core/Orca/Profile.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/System.h"
@@ -1024,7 +1025,11 @@ void Init(Core::System& system)
 
   s_event_finish_ios_boot = core_timing.RegisterEvent(
       "IOSFinishIOSBoot",
-      [](Core::System& system_, u64 ios_title_id, s64) { FinishIOSBoot(system_, ios_title_id); });
+      [](Core::System& system_, u64 ios_title_id, s64) {
+        FinishIOSBoot(system_, ios_title_id);
+        // Only guest-requested, scheduled reloads, not the synchronous initial IOS setup.
+        Orca::BootPhase::Mark(Orca::BootPhase::Phase::IOSReload);
+      });
 
   DIDevice::s_finish_executing_di_command =
       core_timing.RegisterEvent("FinishDICommand", DIDevice::FinishDICommandCallback);
