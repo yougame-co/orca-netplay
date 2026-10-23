@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "Core/PowerPC/JitInterface.h"
+#include "Core/Rollback/Rollback.h"
 
 #include <string>
 #include <unordered_set>
@@ -40,7 +41,8 @@ void JitInterface::SetJit(std::unique_ptr<JitBase> jit)
 
 void JitInterface::DoState(PointerWrap& p)
 {
-  if (m_jit && p.IsReadMode())
+  // A rollback load invalidates only the code pages whose RAM it changed (Core/Rollback).
+  if (m_jit && p.IsReadMode() && !Rollback::InSnapshotDoState())
     m_jit->ClearCache();
 }
 

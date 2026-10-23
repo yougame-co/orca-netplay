@@ -18,6 +18,8 @@ enum class MessageType
 {
   NetPlayPing,
   NetPlayBuffer,
+  // Orca: status line for a player joining a match; each one replaces the last.
+  OrcaJoin,
 
   // This entry must be kept last so that persistent typed messages are
   // displayed before other messages
@@ -49,6 +51,18 @@ void AddTypedMessage(MessageType type, std::string message, u32 ms = Duration::S
 // Draw the current messages on the screen. Only call once per frame.
 void DrawMessages();
 void ClearMessages();
+// Orca: removes the message of this type from the screen.
+void DiscardTypedMessage(MessageType type);
+
+// Orca: an extra ImGui layer (the online overlay) drawn after the messages on every presented
+// frame. Pass an empty function to clear it. `release` frees what the layer made with g_gfx: the
+// backend calls it on the video thread as it shuts down, while its device is still alive.
+void SetHostOverlay(std::function<void()> draw, std::function<void()> release = {});
+void DrawHostOverlay();
+void ReleaseHostOverlay();
+// Orca: y position in pixels where this frame's messages end, or 0 with none, so the host
+// overlay can stay clear of them.
+float MessagesBottom();
 
 void SetObscuredPixelsLeft(int width);
 void SetObscuredPixelsTop(int height);

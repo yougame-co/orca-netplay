@@ -6,6 +6,7 @@
 #include "Common/UPnP.h"
 
 #include "Common/Logging/Log.h"
+#include "Common/Network.h"
 
 #include <array>
 #include <cstdlib>
@@ -165,6 +166,9 @@ static void UnmapPortThread()
 
 void Common::UPnP::TryPortmapping(u16 port)
 {
+  if (Common::OfflineReplay())
+    return;
+
   if (s_thread.joinable())
     s_thread.join();
   s_thread = std::thread(&MapPortThread, port);
@@ -172,6 +176,9 @@ void Common::UPnP::TryPortmapping(u16 port)
 
 void Common::UPnP::StopPortmapping()
 {
+  if (Common::OfflineReplay())
+    return;
+
   if (s_thread.joinable())
     s_thread.join();
   s_thread = std::thread(&UnmapPortThread);

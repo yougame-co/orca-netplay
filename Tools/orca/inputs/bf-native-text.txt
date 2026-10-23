@@ -1,0 +1,68 @@
+# Orca's words in the game's own text boxes (ORCA.md "Native text"), Brawl: a ranked queue2 set as
+# bf-css-lockin.txt has it (the player's own character select, Samus steered in for port 2, both
+# lock in; game 2's character order with A, B and Start), with bf-sss-cursors.txt's stage selects
+# (the two cursors' proposals and agreement). Port 2 walks off each game.
+# Run with ORCA_TEST_QUEUE=ranked:solo ORCA_UX_TEST_NAMES=ada,bo YG_RESULTS=1 ORCA_TEST_SET_RULES=1,8
+# ORCA_TEST_QUEUE_PICK=2106:3:2:-7.5:14.23:1532 (the solo character select's frame + 300), e.g. the
+# sync test from the main menu on (YG_SYNCTEST=7 YG_SYNCTEST_FROM=1440).
+@scStrap mash 30 99999 1 40 A
+@scBoot mash 30 99999 1 40 A
+@scTitle mash 30 99999 1 40 A
+@muMenuMain:1 120 123 1 DOWN
+@muMenuMain:1 170 173 1 A
+@muMenuMain:1 220 223 1 RIGHT
+@muMenuMain:1 270 273 1 A
+@muMenuMain:1 320 323 1 DOWN
+@muMenuMain:1 370 373 1 A
+@scSelctCharacter:1 113 153 1 SY=255
+@scSelctCharacter:1 173 176 1 A
+@scSelctCharacter:1 230 233 1 START
+@scSelctCharacter:1 mash 600 99999 1 30 START
+@scSelctCharacter:1 mash 620 99999 2 30 START
+# Game 1's stage select (bf-sss-cursors.txt): proposals, a strike each, the Melee page, agreed.
+@scSelStage:1 40 60 1 SY=255
+@scSelStage:1 40 48 2 SX=255 SY=255
+@scSelStage:1 49 49 2 SY=255
+@scSelStage:1 64 66 2 A
+@scSelStage:1 70 72 1 X
+@scSelStage:1 80 83 2 SX=0 SY=255
+@scSelStage:1 84 94 2 SX=0
+@scSelStage:1 100 102 2 X
+@scSelStage:1 80 92 1 SX=255 SY=0
+@scSelStage:1 93 101 1 SY=0
+@scSelStage:1 110 112 1 A
+@scSelStage:1 140 141 1 SX=255 SY=255
+@scSelStage:1 142 146 1 SY=255
+@scSelStage:1 155 157 1 A
+@scSelStage:1 160 167 2 SX=255 SY=0
+@scSelStage:1 168 173 2 SX=255
+@scSelStage:1 185 187 2 A
+# Each game: port 2 walks off the left edge (1 stock).
+@scMelee 250 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START
+@scMelee 250 99999 2 SX=1
+# Game 2: the character order with A, B and Start (bf-css-lockin.txt).
+@scSelctCharacter:2 30 70 1 SY=255
+@scSelctCharacter:2 80 90 1 SX=255
+@scSelctCharacter:2 100 102 1 A
+@scSelctCharacter:2 120 120 1 B
+@scSelctCharacter:2 140 142 1 A
+@scSelctCharacter:2 170 230 1 B
+@scSelctCharacter:2 250 252 1 A
+@scSelctCharacter:2 270 272 1 START
+@scSelctCharacter:2 290 292 1 B
+@scSelctCharacter:2 300 302 1 A
+@scSelctCharacter:2 310 343 2 SY=255
+@scSelctCharacter:2 360 500 2 B
+@scSelctCharacter:2 520 522 2 A
+@scSelctCharacter:2 540 542 2 START
+# Game 2's stage select: the loser proposes Battlefield, the winner skips its ban and agrees.
+@scSelStage:2 40 46 2 SX=0 SY=255
+@scSelStage:2 47 60 2 SY=255
+@scSelStage:2 70 72 2 A
+@scSelStage:2 80 82 1 Y
+@scSelStage:2 90 110 1 SY=255
+@scSelStage:2 120 122 1 A

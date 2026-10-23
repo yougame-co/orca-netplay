@@ -27,6 +27,23 @@ std::set<std::string>
 GetTextureDirectoriesForFirstMatchingGameId(const std::string& root_directory,
                                             const std::vector<std::string>& game_ids);
 
+// A replacement texture file for HiresTexture::Update to register.
+struct HiresTextureFile
+{
+  std::string id;  // texture name, without "_arb"
+  std::string path;
+  bool has_arbitrary_mipmaps = false;
+  bool orca_pack = false;  // from Orca's own pack (Data/Sys/Orca/Textures)
+};
+
+// Orca: lists the replacement files in the player's packs (<user>/Load/Textures) and in Orca's
+// pack (passed only during a session), one per texture name. Orca's pack wins every name it has,
+// so a player pack can't bring back a texture Orca replaces. Otherwise, as in Dolphin, the first
+// directory and file with a given name win. Mip level files (<name>_mip<N>) are skipped.
+std::vector<HiresTextureFile>
+CollectHiresTextureFiles(const std::vector<std::string>& player_directories,
+                         const std::vector<std::string>& orca_directories);
+
 class HiresTexture
 {
 public:

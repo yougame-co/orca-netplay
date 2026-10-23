@@ -1,0 +1,4 @@
+[
+  {"pattern":"Orca room:.*game-start", "action":"drop", "role":0, "delay":3, "seconds":83},
+  {"pattern":"Orca room:.*game-start", "action":"drop", "role":1, "delay":83, "seconds":96}
+]

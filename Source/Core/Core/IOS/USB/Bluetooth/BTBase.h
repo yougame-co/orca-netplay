@@ -22,6 +22,12 @@ static void DoStateForMessage(EmulationKernel& ios, PointerWrap& p, std::unique_
     IOCtlVRequest request{ios.GetSystem(), request_address};
     message = std::make_unique<T>(ios, request);
   }
+  else if (p.IsReadMode())
+  {
+    // No request was pending when the state was saved: one queued since must not survive the
+    // load, or the next event is written into a buffer the game has already had back.
+    message.reset();
+  }
 }
 
 void BackUpBTInfoSection(const SysConf* sysconf);

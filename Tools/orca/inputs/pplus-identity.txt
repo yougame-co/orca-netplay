@@ -1,0 +1,19 @@
+# Project+ v3.2 for Tools/orca/dropin-identity.py --pplus: each Orca joins port 1 of its own game's
+# character select at once (its YouGame tag, whose controls the test then sets), the friend drops
+# in, and only then do both pick: P2 joins port 2 30 s into character select, both take the
+# character two rows up from their panel as pplus-1v1.txt, P1 starts, a stage, fuzzed play.
+# Rules count frames from entry into each scene (@scene).
+@scBoot mash 30 99999 1 40 A
+# Orca boots Project+ to its main menu (PPLUS32.patches): A through VERSUS to its character select.
+@muMenuMain:1 mash 30 99999 1 40 A
+@scSelctCharacter 60 63 1 A
+@scSelctCharacter 1800 1803 2 A
+@scSelctCharacter 1830 1856 1 SY=255
+@scSelctCharacter 1830 1856 2 SY=255
+@scSelctCharacter 1880 1883 1 A
+@scSelctCharacter 1890 1893 2 A
+@scSelctCharacter mash 1950 99999 1 60 START
+@scSelStage 40 44 1 SY=255
+@scSelStage 60 63 1 A
+@scMelee fuzz 300 99999 1 11
+@scMelee fuzz 300 99999 2 22

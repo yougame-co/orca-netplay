@@ -1,0 +1,33 @@
+# The stage select's two cursors (ORCA.md "Two cursors"), a ranked Project+ game
+# 1 (ORCA_PROFILE=PPLUS32, ORCA_TEST_QUEUE=ranked: the header's coin 0, port 1 strikes first,
+# ORCA_UX_TEST_NAMES=ada,bo), e.g. the sync test (YG_SYNCTEST=7 YG_SYNCTEST_FROM=170). Each cursor
+# starts under the two rows (port 1 at -6, -18.5; port 2 at 6, -18.5), 1.625 a frame at full tilt.
+# Both cursors move at once: port 1 onto Temple of Time and strikes it with X; port 2 onto Luigi's
+# Mansion and strikes it (its first of two); port 2 moves onto Battlefield and proposes it with A;
+# port 1 moves onto Battlefield and proposes it too: agreed, port 2's second strike and port 1's
+# pick skipped, the match on Battlefield. Port 2 walks off.
+@scBoot mash 30 99999 1 40 A
+@muMenuMain:1 mash 30 99999 1 40 A
+@scSelctCharacter:1 60 63 1 A
+@scSelctCharacter:1 70 73 2 A
+@scSelctCharacter:1 90 116 1 SY=255
+@scSelctCharacter:1 90 116 2 SY=255
+@scSelctCharacter:1 140 143 1 A
+@scSelctCharacter:1 150 153 2 A
+@scSelctCharacter:1 200 203 1 START
+# Port 1: 4 frames up-left, 2 left (-15.75, -12.0: Temple of Time), X. Port 2: 4 frames up-right,
+# 3 right (17.4, -12.0: Luigi's Mansion), X.
+@scSelStage:1 40 43 1 SX=0 SY=255
+@scSelStage:1 44 45 1 SX=0
+@scSelStage:1 55 57 1 X
+@scSelStage:1 40 43 2 SX=255 SY=255
+@scSelStage:1 44 46 2 SX=255
+@scSelStage:1 65 67 2 X
+# Port 2: 10 frames left (1.1, -12.0: Battlefield), A. Port 1: 10 frames right (0.5, -12.0), A.
+@scSelStage:1 75 84 2 SX=0
+@scSelStage:1 95 97 2 A
+@scSelStage:1 75 84 1 SX=255
+@scSelStage:1 105 107 1 A
+@scMelee 60 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
