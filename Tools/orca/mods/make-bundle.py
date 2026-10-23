@@ -2,7 +2,7 @@
 """Turn one of Orca's legacy profiles into a mod bundle (YouGame docs/ORCA_MODS.md, Phase 1).
 
   make-bundle.py RSBE01 <out> [--tree]
-  make-bundle.py PPLUS32 <out> --pplus-user <Project+ release's user/ folder> [--tree]
+  make-bundle.py PPLUS32|PPLUS321 <out> --pplus-user <Project+ release's user/ folder> [--tree]
   make-bundle.py --tree <folder>        (tree.json for an existing bundle folder)
   make-bundle.py RSBE01 <out> --flat --serial <n> [--listing <slug>] [--key <private key>]
   make-bundle.py PPLUS32 <out> --flat --serial <n> (--pplus-user <user/> | --pplus-run <folder>)
@@ -44,8 +44,9 @@ REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 MAX_PATH_BYTES = 100
 DEVICES = {"con", "prn", "aux", "nul"}
 # What each legacy profile becomes.
-BUILTIN = {"RSBE01": "brawl-rev2", "PPLUS32": "brawl-rev2-pplus"}
-RULESETS = {"RSBE01": ["brawl"], "PPLUS32": ["pplus-2024"]}
+PPLUS_PROFILES = ("PPLUS32", "PPLUS321")
+BUILTIN = {"RSBE01": "brawl-rev2", **dict.fromkeys(PPLUS_PROFILES, "brawl-rev2-pplus")}
+RULESETS = {"RSBE01": ["brawl"], **{p: ["pplus-2024"] for p in PPLUS_PROFILES}}
 OFFERS = ["results", "locks", "queue2"]
 # Project+'s official SD image: the card size the bundle pins.
 PPLUS_SD_BYTES = 2_097_152_000
@@ -53,8 +54,12 @@ PPLUS_LAUNCHER = "Project+ Netplay Launcher.dol"
 # SHA-256 of Project+ v3.2's Netplay Launcher and of its sd.raw (PPLUS32.ini names their XXH3-128).
 PPLUS_LAUNCHER_SHA256 = "74a0decf1595725928c8830bddc17207669323883112640b0e25e9f2da95c0da"
 PPLUS_SD_SHA256 = "cfe5d86976092df50dfdcb21c627d19ba305aa5c9175827a18ca816fc1402d2d"
+PPLUS_SD_SHA256_BY_PROFILE = {
+    "PPLUS32": PPLUS_SD_SHA256,
+    "PPLUS321": "c0bb317ac40e50ab5fb30b0af42cfa292226088c7c8c016b330417dcf5c7043a",
+}
 # The listing each profile's flat bundle is for.
-LISTING = {"RSBE01": "open-brawl", "PPLUS32": "project-rollback"}
+LISTING = {"RSBE01": "open-brawl", **dict.fromkeys(PPLUS_PROFILES, "project-rollback")}
 
 sys.path.insert(0, HERE)
 import sdhash  # noqa: E402
@@ -126,7 +131,9 @@ def read_profile(path):
     """Data/Sys/Orca/<profile>.ini: {"Profile": [(key, value)], "Forced": [(key, value)]}."""
     sections = {"Profile": [], "Forced": []}
     section = None
-    for raw in open(path, encoding="utf-8"):
+    with open(path, encoding="utf-8") as profile_file:
+        lines = profile_file.readlines()
+    for raw in lines:
         line = raw.rstrip("\r\n")
         at = line.find("#")
         if at == 0 or (at > 0 and line[at - 1] in " \t"):
@@ -183,7 +190,7 @@ def main():
         return
     if os.path.exists(out):
         sys.exit(f"{out} exists; give a new folder")
-    if os.path.commonpath([out, REPO]) == REPO and args.profile == "PPLUS32":
+    if os.path.commonpath([out, REPO]) == REPO and args.profile in PPLUS_PROFILES:
         sys.exit("Project+'s files are not ours to commit: write its bundle outside the repository")
     orca = os.path.join(args.sys, "Orca")
     ini = read_profile(os.path.join(orca, args.profile + ".ini"))
@@ -318,7 +325,7 @@ def make_flat(args):
     out = os.path.abspath(args.out)
     if os.path.exists(out):
         sys.exit(f"{out} exists; give a new folder")
-    if os.path.commonpath([out, REPO]) == REPO and args.profile == "PPLUS32":
+    if os.path.commonpath([out, REPO]) == REPO and args.profile in PPLUS_PROFILES:
         sys.exit("Project+'s files are not ours to commit: write its bundle outside the repository")
     orca = os.path.join(args.sys, "Orca")
     ini = read_profile(os.path.join(orca, args.profile + ".ini"))
@@ -360,10 +367,11 @@ def make_flat(args):
             size = os.path.getsize(image)
             if size != PPLUS_SD_BYTES:
                 sys.exit(f"{image} is not {PPLUS_SD_BYTES} bytes")
-            if sdhash.sha256_file(image) != PPLUS_SD_SHA256:
+            if sdhash.sha256_file(image) != PPLUS_SD_SHA256_BY_PROFILE[args.profile]:
+                release = "Project+ v3.2" if args.profile == "PPLUS32" else "Project+ v3.2.1b"
                 if not args.any_card:
-                    sys.exit(f"{image} is not Project+ v3.2's sd.raw (--any-card takes it anyway)")
-                print(f"note: {image} is not Project+ v3.2's sd.raw")
+                    sys.exit(f"{image} is not {release}'s sd.raw (--any-card takes it anyway)")
+                print(f"note: {image} is not {release}'s sd.raw")
             mod["sdImage"] = {"file": p["SDImage"], "bytes": size,
                               "sha256": sdhash.chunked_sha256(image, size)}
             sources[p["SDImage"]] = image

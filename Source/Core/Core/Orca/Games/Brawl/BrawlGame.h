@@ -19,7 +19,8 @@ struct Profile;
 namespace Orca::UX::BrawlGame
 {
 // Mod.h's builtin names, and the legacy-only fourth game: another launcher build that boots Brawl
-// rev 2 (not Project+'s PPLUS32), which gets the menus, name tags and results but no ruleset.
+// rev 2 (not Project+'s PPLUS32 or PPLUS321), which gets the menus, name tags and results but no
+// ruleset.
 // brawl-rev2-results is its mod-mode counterpart (a Brawl-engine mod without Project+'s code).
 inline constexpr std::string_view BRAWL_REV2 = "brawl-rev2";
 inline constexpr std::string_view BRAWL_REV2_PPLUS = "brawl-rev2-pplus";

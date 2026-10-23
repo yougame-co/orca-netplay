@@ -7,7 +7,8 @@
 # that RAM no longer holds (code rewritten without an icbi). Exit 0 when the hash logs match.
 #
 #   jit-history.py <nogui> <disc> [--pplus "<dir>/Project+ Netplay Launcher.dol"] [--input <script>]
-#                  [--frames 6000] [--clear 388,2000] [--census 600,3000] [--out <dir>] [--x86]
+#                  [--profile PPLUS32|PPLUS321] [--frames 6000] [--clear 388,2000]
+#                  [--census 600,3000] [--out <dir>] [--x86]
 #
 # Census lines count every such word and name those below 0x80800000 (the DOL and the codes), which
 # still run; the rest (the heap, MEM2) are usually modules the game unloaded, never run again: the
@@ -19,6 +20,8 @@ p = argparse.ArgumentParser()
 p.add_argument("nogui")
 p.add_argument("disc")
 p.add_argument("--pplus")
+p.add_argument("--profile", choices=("PPLUS32", "PPLUS321"), default="PPLUS32",
+               help="launcher profile for --pplus (default: PPLUS32)")
 p.add_argument("--input")
 p.add_argument("--frames", type=int, default=6000)
 p.add_argument("--clear", default="388,2000")
@@ -41,7 +44,7 @@ def run(name, extra):
                YG_EXIT_AFTER=str(a.frames), YG_HASHLOG=os.path.join(out, name + ".hashlog"),
                YG_JITCODE_LOG=os.path.join(out, name + ".jit"), YG_JITCODE_CENSUS=census, **extra)
     if a.pplus:
-        env["ORCA_PROFILE"] = "PPLUS32"
+        env["ORCA_PROFILE"] = a.profile
     if a.x86:
         env["ROSETTA_ADVERTISE_AVX"] = "1"
     cmd = [os.path.abspath(a.nogui), "-p", "headless", "-v", "Null", "-u", user,

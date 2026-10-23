@@ -15,10 +15,14 @@ namespace Orca::UX::BrawlGame
 namespace
 {
 // Super Smash Bros. Brawl (NTSC-U), the revision whose executable the modules' addresses are for,
-// and Project+'s launcher profile (Data/Sys/Orca/PPLUS32.ini).
+// and Project+'s launcher profiles (Data/Sys/Orca/PPLUS32.ini and PPLUS321.ini).
 constexpr std::string_view BRAWL_DISC = "RSBE01";
 constexpr u16 BRAWL_REVISION = 2;
-constexpr std::string_view PPLUS_PROFILE = "PPLUS32";
+
+bool IsPPlusProfile(std::string_view id)
+{
+  return id == "PPLUS32" || id == "PPLUS321";
+}
 
 Orca::Engine::Manifest Game(std::string_view id, Orca::Engine::Ruleset ruleset, int compat)
 {
@@ -63,7 +67,7 @@ Orca::Engine::Manifest Identify(const Orca::Profile* profile)
       game = Game(BRAWL_REV2, Orca::Engine::Ruleset::Brawl, BRAWL_REV2_COMPAT);
     else if (profile->IsLauncher() && profile->disc == BRAWL_DISC)
     {
-      game = profile->game_id == PPLUS_PROFILE ?
+      game = IsPPlusProfile(profile->game_id) ?
                  Game(BRAWL_REV2_PPLUS, Orca::Engine::Ruleset::PPlus, BRAWL_REV2_PPLUS_COMPAT) :
                  Game(BRAWL_REV2_LAUNCHER, Orca::Engine::Ruleset::None, BRAWL_REV2_LAUNCHER_COMPAT);
     }

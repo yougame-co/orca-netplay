@@ -68,6 +68,7 @@ add_dolphin_test(BroadcastRingTest
   Orca/BroadcastSinkTest.cpp
 )
 add_dolphin_test(OrcaLaunchTest Orca/LaunchTest.cpp)
+add_dolphin_test(OrcaPPlus321Test Orca/PPlus321Test.cpp)
 add_dolphin_test(OrcaLocalStoreTest Orca/LocalStoreTest.cpp)
 add_dolphin_test(OrcaModTest Orca/ModTest.cpp)
 # ModTest includes xxh3.h; core links xxhash PRIVATE, so the test needs it directly (MSVC has no

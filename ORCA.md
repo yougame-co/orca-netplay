@@ -2831,6 +2831,11 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.77
+
+- Project+ 3.2.1b: YG Dolphin plays the new Project+ release (profile PPLUS321) next to 3.2.
+  Players on 3.2 and 3.2.1b are matched only with players on the same version.
+
 ### 0.3.76
 
 - The game's log times each step of starting a game, so slow starts can be found and fixed.
