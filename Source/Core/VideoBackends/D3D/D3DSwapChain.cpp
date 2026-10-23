@@ -3,7 +3,7 @@
 
 #include "VideoBackends/D3D/D3DSwapChain.h"
 
-#include "Common/Assert.h"
+#include "Common/Logging/Log.h"
 
 #include "VideoBackends/D3D/DXTexture.h"
 
@@ -31,9 +31,14 @@ bool SwapChain::CreateSwapChainBuffers()
 {
   ComPtr<ID3D11Texture2D> texture;
   HRESULT hr = m_swap_chain->GetBuffer(0, IID_PPV_ARGS(&texture));
-  ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to get swap chain buffer: {}", DX11HRWrap(hr));
+  // Orca: no ASSERT (it ends a release build). After a failed resize the swap chain has no buffers;
+  // the callers handle false (D3DCommon::SwapChain::ResizeSwapChain, CreateSwapChain).
   if (FAILED(hr))
+  {
+    WARN_LOG_FMT(VIDEO, "Failed to get swap chain buffer: {}", DX11HRWrap(hr));
+    m_buffers_error = hr;
     return false;
+  }
 
   m_texture = DXTexture::CreateAdopted(std::move(texture));
   if (!m_texture)

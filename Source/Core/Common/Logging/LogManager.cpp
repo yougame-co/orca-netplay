@@ -143,6 +143,7 @@ LogManager::LogManager()
   m_log[LogType::PIXELENGINE] = {"PE", "Pixel Engine"};
   m_log[LogType::PROCESSORINTERFACE] = {"PI", "Processor Interface"};
   m_log[LogType::POWERPC] = {"PowerPC", "PowerPC IBM CPU"};
+  m_log[LogType::ROLLBACK] = {"ROLLBACK", "Rollback"};
   m_log[LogType::SERIALINTERFACE] = {"SI", "Serial Interface"};
   m_log[LogType::SERIALINTERFACE_AMBB] = {"SI_AMBB", "AMBB Interface"};
   m_log[LogType::SERIALINTERFACE_CARD] = {"SI_CARD", "CARD Interface"};

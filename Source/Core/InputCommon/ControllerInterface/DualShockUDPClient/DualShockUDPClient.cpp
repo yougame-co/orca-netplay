@@ -16,6 +16,7 @@
 #include "Common/Flag.h"
 #include "Common/Logging/Log.h"
 #include "Common/MathUtil.h"
+#include "Common/Network.h"
 #include "Common/Random.h"
 #include "Common/ScopeGuard.h"
 #include "Common/StringUtil.h"
@@ -364,6 +365,9 @@ void InputBackend::HotplugThreadFunc()
 
 void InputBackend::StartHotplugThread()
 {
+  if (Common::OfflineReplay())
+    return;
+
   // Mark the thread as running.
   if (!m_hotplug_thread_running.TestAndSet())
   {
@@ -419,6 +423,9 @@ void InputBackend::Restart()
 
 void InputBackend::ConfigChanged()
 {
+  if (Common::OfflineReplay())
+    return;
+
   const bool servers_enabled = Config::Get(Settings::SERVERS_ENABLED);
   const std::string servers_setting = Config::Get(Settings::SERVERS);
 
@@ -621,6 +628,9 @@ std::string Device::GetSource() const
 
 Core::DeviceRemoval Device::UpdateInput()
 {
+  if (Common::OfflineReplay())
+    return Core::DeviceRemoval::Keep;
+
   // Regularly tell the UDP server to feed us controller data
   const auto now = SteadyClock::now();
   if (now >= m_next_reregister)

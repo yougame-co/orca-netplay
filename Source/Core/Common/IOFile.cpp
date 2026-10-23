@@ -8,6 +8,7 @@
 
 #ifdef _WIN32
 #include <io.h>
+#include <share.h>
 
 #include "Common/CommonFuncs.h"
 #include "Common/StringUtil.h"
@@ -75,6 +76,11 @@ bool IOFile::Open(const std::string& filename, const char openmode[],
   else if (sh == SharedAccess::Read)
   {
     m_file = _tfsopen(UTF8ToTStr(filename).c_str(), UTF8ToTStr(openmode).c_str(), SH_DENYWR);
+    m_good = m_file != nullptr;
+  }
+  else if (sh == SharedAccess::ReadWrite)
+  {
+    m_file = _tfsopen(UTF8ToTStr(filename).c_str(), UTF8ToTStr(openmode).c_str(), SH_DENYNO);
     m_good = m_file != nullptr;
   }
 #else

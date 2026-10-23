@@ -3,6 +3,7 @@
 
 #include "UICommon/CommandLineParse.h"
 
+#include <iterator>
 #include <list>
 #include <optional>
 #include <sstream>
@@ -50,7 +51,8 @@ public:
       std::getline(buffer, system_str, '.');
       std::getline(buffer, section, '.');
       std::getline(buffer, key, '=');
-      std::getline(buffer, value, '=');
+      // The value runs to the end of the argument: a path may hold '=' (Dolphin.Core.DefaultISO).
+      value.assign(std::istreambuf_iterator<char>(buffer), std::istreambuf_iterator<char>());
       std::optional<Config::System> system = Config::GetSystemFromName(system_str);
       if (system)
       {

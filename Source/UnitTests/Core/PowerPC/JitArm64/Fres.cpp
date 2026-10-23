@@ -6,6 +6,7 @@
 
 #include "Common/Arm64Emitter.h"
 #include "Common/CommonTypes.h"
+#include "Common/FPURoundMode.h"
 #include "Common/FloatUtils.h"
 #include "Common/ScopeGuard.h"
 #include "Core/Core.h"
@@ -66,6 +67,32 @@ TEST(JitArm64, Fres)
 
     const u64 expected = std::bit_cast<u64>(Common::ApproximateReciprocal(dvalue));
     const u64 actual = test.fres(ivalue);
+
+    if (expected != actual)
+      fmt::print("{:016x} -> {:016x} == {:016x}\n", ivalue, actual, expected);
+
+    EXPECT_EQ(expected, actual);
+  }
+}
+
+// Orca: the same in the guest's non-IEEE mode (FPCR.FZ, plus FPCR.AH on CPUs with FEAT_AFP; also
+// run with ORCA_TEST_NO_AFP=1). FZ without AH reads denormal inputs as zero; AH makes the default
+// NaN negative.
+TEST(JitArm64, FresNonIEEE)
+{
+  Core::DeclareAsCPUThread();
+  Common::ScopeGuard cpu_thread_guard([] { Core::UndeclareAsCPUThread(); });
+
+  TestFres test(Core::System::GetInstance());
+
+  for (const u64 ivalue : double_test_values)
+  {
+    const double dvalue = std::bit_cast<double>(ivalue);
+
+    const u64 expected = std::bit_cast<u64>(Common::ApproximateReciprocal(dvalue));
+    Common::FPU::SetSIMDMode(Common::FPU::ROUND_NEAR, true);
+    const u64 actual = test.fres(ivalue);
+    Common::FPU::LoadDefaultSIMDState();
 
     if (expected != actual)
       fmt::print("{:016x} -> {:016x} == {:016x}\n", ivalue, actual, expected);

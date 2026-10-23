@@ -1,6 +1,8 @@
 add_library(videod3d
   D3DBase.cpp
   D3DBase.h
+  D3DDiagnostics.cpp
+  D3DDiagnostics.h
   D3DBoundingBox.cpp
   D3DBoundingBox.h
   D3DMain.cpp

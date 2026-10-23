@@ -34,7 +34,14 @@ bool SwapChain::CreateSwapChainBuffers()
   {
     ComPtr<ID3D12Resource> resource;
     HRESULT hr = m_swap_chain->GetBuffer(i, IID_PPV_ARGS(&resource));
-    ASSERT_MSG(VIDEO, SUCCEEDED(hr), "Failed to get swap chain buffer {}: {}", i, DX12HRWrap(hr));
+    // Orca: no ASSERT (it ends a release build). After a failed resize the swap chain has no
+    // buffers; the callers handle false (D3DCommon::SwapChain::ResizeSwapChain, CreateSwapChain).
+    if (FAILED(hr))
+    {
+      WARN_LOG_FMT(VIDEO, "Failed to get swap chain buffer {}: {}", i, DX12HRWrap(hr));
+      m_buffers_error = hr;
+      return false;
+    }
 
     BufferResources buffer;
     buffer.texture = DXTexture::CreateAdopted(resource.Get());

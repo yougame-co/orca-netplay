@@ -1,0 +1,22 @@
+# The queue's character select in a casual room (ORCA.md "The queue's character select"), Project+
+# (ORCA_PROFILE=PPLUS32): port 1 joins and takes the character two rows up from its panel; port 2's
+# controller does nothing on game 1's character select: its pick is put in for it from the frame
+# ORCA_TEST_QUEUE_PICK names. Both ready with Start; Orca presses Start (the casual stage pick: both
+# turns run out, the coin takes one of their random legal stages); port 2 walks off; results; game
+# 2's character select, both ready again. Run with
+# ORCA_TEST_QUEUE=casual:q2 ORCA_UX_TEST_NAMES=ada,bo ORCA_TEST_QUEUE_PICK=... (bf-queue2.txt).
+@scBoot mash 30 99999 1 40 A
+# Orca boots Project+ to its main menu (PPLUS32.patches): A through VERSUS to its character select.
+@muMenuMain:1 mash 30 99999 1 40 A
+@scSelctCharacter:1 60 63 1 A
+@scSelctCharacter:1 90 116 1 SY=255
+@scSelctCharacter:1 140 143 1 A
+@scSelctCharacter:1 mash 400 99999 1 30 START
+@scSelctCharacter:1 mash 420 99999 2 30 START
+@scMelee 250 99999 2 SX=1
+@scVsResult mash 240 99999 1 40 A
+@scVsResult mash 260 99999 2 40 A
+@scVsResult mash 600 99999 1 40 START
+@scVsResult mash 620 99999 2 40 START
+@scSelctCharacter:2 mash 120 99999 1 30 START
+@scSelctCharacter:2 mash 140 99999 2 30 START
