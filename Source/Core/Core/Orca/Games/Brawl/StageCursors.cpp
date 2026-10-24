@@ -59,6 +59,12 @@ constexpr std::array<Tile, 7> kBrawlTiles{{
     {6, 0, R(7.75f, 13.25f, 13.75f, 19.25f)},  // Delfino Plaza, slot 2
 }};
 
+constexpr std::array<Tile, 8> kBrawlRankedTiles{{
+    kBrawlTiles[0], kBrawlTiles[1], kBrawlTiles[2], kBrawlTiles[3],
+    kBrawlTiles[4], kBrawlTiles[5], kBrawlTiles[6],
+    {7, 0, R(24.25f, 7.25f, 29.75f, 13.25f)},  // Frigate Orpheon, slot 10
+}};
+
 // ---- Project+ v3.2, 2024 Proposed preset, page 0 (probed the same way) ----
 // Cursor range is x -31..31, y -23.5..20.5. Nine tiles in two rows under the preview: positions
 // 0-3 on top (GHZ, BC, FH, DL), 4-8 below (ToT, SV, BF, PS2, LM). Hovered item = position + 2.
@@ -196,6 +202,17 @@ const Layout& BrawlLayout()
   return l;
 }
 
+const Layout& BrawlRankedLayout()
+{
+  static const Layout l = [] {
+    Layout ranked = MakeBrawl();
+    ranked.game = GAME_BRAWL_RANKED;
+    ranked.tiles = kBrawlRankedTiles;
+    return ranked;
+  }();
+  return l;
+}
+
 const Layout& PPlusLayout()
 {
   static const Layout l = MakePPlus();
@@ -206,6 +223,8 @@ const Layout* LayoutFor(u8 game)
 {
   if (game == GAME_BRAWL)
     return &BrawlLayout();
+  if (game == GAME_BRAWL_RANKED)
+    return &BrawlRankedLayout();
   if (game == GAME_PPLUS)
     return &PPlusLayout();
   return nullptr;

@@ -63,6 +63,7 @@ u8 ButtonsOf(u16 pad_buttons);
 // MatchBlock's ruleset ids.
 constexpr u8 GAME_BRAWL = 1;
 constexpr u8 GAME_PPLUS = 2;
+constexpr u8 GAME_BRAWL_RANKED = 3;  // same geometry; Supernova 2026 adds Frigate
 
 // Rect, Tile, Point and Layout (a layout's geometry, what the cursors move over): Engine/Display.h,
 // which the overlay draws from.
@@ -72,6 +73,7 @@ using Orca::Engine::Cursors::Rect;
 using Orca::Engine::Cursors::Tile;
 
 const Layout& BrawlLayout();
+const Layout& BrawlRankedLayout();
 const Layout& PPlusLayout();
 const Layout* LayoutFor(u8 game);
 

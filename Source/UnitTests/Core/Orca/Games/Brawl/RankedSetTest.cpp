@@ -236,16 +236,16 @@ TEST(OrcaRankedSet, VoidGamesAreNotRecorded)
 
 TEST(OrcaRankedSet, BrawlTimeOutLedgeLimitThenStocksThenPercent)
 {
-  // Port 1 grabs the ledge 36 times (over 35): port 2 wins although port 1 had more stocks.
-  std::vector<RankedSet::Live> live = Grabs(0, 36);
+  // Port 1 grabs the ledge 31 times (over 30): port 2 wins although port 1 had more stocks.
+  std::vector<RankedSet::Live> live = Grabs(0, 31);
   live.push_back(LiveAt(true, 3, 2, 10, 20));
   SetState s = Play({}, Ruleset::Brawl, 1000, Result(0, 1, 3, 2), live);
-  EXPECT_EQ(s.records[0].ledge, (std::array<u8, 2>{36, 0}));
+  EXPECT_EQ(s.records[0].ledge, (std::array<u8, 2>{31, 0}));
   EXPECT_EQ(s.records[0].winner, 1);
   EXPECT_EQ(s.records[0].how, How::Ledge);
   EXPECT_TRUE(s.records[0].timeout);
-  // 35 is within the limit: stocks decide.
-  live = Grabs(0, 35);
+  // 30 is within the limit: stocks decide.
+  live = Grabs(0, 30);
   live.push_back(LiveAt(true, 3, 2, 10, 20));
   s = Play({}, Ruleset::Brawl, 1000, Result(0, 1, 3, 2), live);
   EXPECT_EQ(s.records[0].winner, 0);
@@ -256,6 +256,11 @@ TEST(OrcaRankedSet, BrawlTimeOutLedgeLimitThenStocksThenPercent)
   s = Play({}, Ruleset::Brawl, 1000, Result(0, 1, 3, 2, static_cast<u8>(Rulesets::Brawl2025().meta_knight)), live);
   EXPECT_EQ(s.records[0].how, How::Ledge);
   EXPECT_EQ(s.records[0].winner, 1);
+  live = Grabs(0, 20);
+  live.push_back(LiveAt(true, 3, 2, 10, 20));
+  s = Play({}, Ruleset::Brawl, 1000, Result(0, 1, 3, 2, 0x18), live);
+  EXPECT_EQ(s.records[0].how, How::Stocks);
+  EXPECT_EQ(s.records[0].winner, 0);
   // Both over: the limit is ignored.
   live = Grabs(0, 40);
   for (const auto& l : Grabs(1, 40))
@@ -304,8 +309,14 @@ TEST(OrcaRankedSet, BrawlTieMeansATiebreakGame)
   EXPECT_EQ(m.Read8(0x9017F364), 1);
   EXPECT_EQ(m.Read8(0x9017F368), 3);
   EXPECT_EQ(RankedSet::WriteSetRules(m, s, Rulesets::Brawl2025()), 0);
-  // The tiebreak game's ledge limit is 11.
-  live = Grabs(1, 12);
+  // Exactly 10 grabs are within the tiebreak limit; 11 are over it.
+  live = Grabs(1, 10);
+  live.push_back(LiveAt(true, 1, 1, 50, 60));
+  const SetState within = Play(s, Ruleset::Brawl, 5000, Result(0, 1, 1, 1), live);
+  EXPECT_TRUE(within.records[1].tiebreak);
+  EXPECT_EQ(within.records[1].how, How::Percent);
+  EXPECT_EQ(within.records[1].winner, 0);
+  live = Grabs(1, 11);
   live.push_back(LiveAt(true, 1, 1, 50, 60));
   SetState t = Play(s, Ruleset::Brawl, 5000, Result(0, 1, 1, 1), live);
   EXPECT_TRUE(t.records[1].tiebreak);
@@ -815,5 +826,19 @@ TEST(OrcaRankedSet, AGameBeginsOnlyOnFinalFramesAfterThePlugFrame)
       t.Store(f, f < 215 ? select : fight_from(215), 0);
     t.Confirm(219, -1, &starts);
     EXPECT_EQ(starts, std::vector<int>{215});
+  }
+}
+
+TEST(OrcaRankedSet, MetaKnightTiebreakLimitIsSixAndSevenLoses)
+{
+  SetState tie;
+  tie.tiebreak = true;
+  for (const int grabs : {6, 7})
+  {
+    auto live = Grabs(0, grabs);
+    live.push_back(LiveAt(true, 1, 1, 10, 20));
+    const SetState result = Play(tie, Ruleset::Brawl, 1000, Result(0, 1, 1, 1, 0x18), live);
+    EXPECT_EQ(result.records[0].winner, grabs == 6 ? 0 : 1);
+    EXPECT_EQ(result.records[0].how, grabs == 6 ? How::Percent : How::Ledge);
   }
 }

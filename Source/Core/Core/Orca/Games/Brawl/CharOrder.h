@@ -89,7 +89,7 @@ constexpr u32 MAGIC = 0x00;  // u32 "YGM1"
 constexpr u32 MAGIC_VALUE = 0x59474D31;
 constexpr u32 VERSION = 0x04;  // u8 1
 constexpr u32 MODE = 0x05;     // u8: 2 ranked
-constexpr u32 RULESET = 0x06;  // u8: 1 Brawl (Supernova 2025), 2 Project+ (2024)
+constexpr u32 RULESET = 0x06;  // u8: 1 Brawl (Supernova), 2 Project+ (2024)
 // Ranked set (SetBlock.h, +0x210).
 constexpr u32 SET_WINS = 0x211;         // u8[2]: games won by ports 1 and 2
 constexpr u32 SET_DONE = 0x213;         // u8: 0 while the set is open

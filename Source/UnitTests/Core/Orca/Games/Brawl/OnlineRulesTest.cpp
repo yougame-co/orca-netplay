@@ -1490,3 +1490,15 @@ TEST(OrcaOnlineRules, TheCodeMenuLockIsAPureFunctionOfMemory)
   EXPECT_EQ(ApplyLocks(a, 700), ApplyLocks(b, 700));
   EXPECT_EQ(a.bytes, b.bytes);
 }
+
+TEST(OrcaOnlineRules, RankedBrawlKeepsFinalDestinationAndAddsFrigate)
+{
+  for (const u8 character : {u8{0}, u8{CHARACTER_ICE_CLIMBERS}})
+  {
+    FakeMemory m = Locked(Mode::Ranked, Ruleset::Brawl);
+    SetPick(m, 0, HUMAN, character);
+    ApplyLocks(m, NextFrame());
+    EXPECT_EQ(m.Read32(MENU_DATA + 0x24), 0x04005807u);
+    EXPECT_EQ(m.Read32(MENU_DATA + 0x20), BRAWL_LEGAL_MELEE_PAGE);
+  }
+}

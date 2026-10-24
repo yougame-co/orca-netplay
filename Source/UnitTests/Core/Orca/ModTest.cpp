@@ -1950,9 +1950,9 @@ TEST(OrcaMod, GoldenLegacyCompatibilityKey)
   const std::string revision = Common::GetScmRevGitStr();
   ASSERT_TRUE(parts.starts_with("orca|" + revision + "|"));
   parts.replace(5, revision.size(), "fixture-engine-revision");
-  // UX 31 plus Brawl revision 1 (multi-friend token return). Normalize only that suffix
+  // UX 32 plus Brawl revision 1 (multi-friend token return). Normalize only that suffix
   // to keep both earlier serialization goldens pinned.
-  ASSERT_TRUE(parts.ends_with("|ux=31.1"));
+  ASSERT_TRUE(parts.ends_with("|ux=32.1"));
   std::string previous = parts;
   previous.replace(previous.size() - 8, 8, "|ux=30");
   EXPECT_EQ(fmt::format("orca2:{:016x}", XXH3_64bits(previous.data(), previous.size())),

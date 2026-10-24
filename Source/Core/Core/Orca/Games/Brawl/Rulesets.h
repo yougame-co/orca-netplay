@@ -14,12 +14,14 @@
 // (BrawlModule::ProfileRuleset is None: no locks, no queue or ranked caps), failing closed.
 namespace Orca::UX::Rulesets
 {
-// Brawl, Supernova 2025 (MatchBlock ruleset 1).
+// Brawl casual: the existing Supernova 2025 stages and Ice Climbers clause.
 const Ranked::Ruleset& Brawl2025();
+// Brawl ranked: Supernova 2026 (MatchBlock ruleset 1).
+const Ranked::Ruleset& Brawl2026();
 // Project+ 2024 (MatchBlock ruleset 2).
 const Ranked::Ruleset& PPlus2024();
 // The builtin ruleset with MatchBlock ruleset byte `block`, or nullptr (0, or unknown).
 const Ranked::Ruleset* ByBlock(u8 block);
-// Whether both builtin rulesets loaded.
+// Whether all builtin rulesets loaded.
 bool Loaded();
 }  // namespace Orca::UX::Rulesets

@@ -169,6 +169,7 @@ bool CssBMayUnpick(const GuestMemory& memory, int port);
 // Brawl's Random Stage Switch masks for the legal stages: the Brawl page (record menu data +0x24)
 // and the Melee page (+0x20).
 constexpr u32 BRAWL_LEGAL_BRAWL_PAGE = 0x04005007;  // BF, FD, Delfino, YI, Lylat, Smashville
+constexpr u32 BRAWL_RANKED_BRAWL_PAGE = 0x04005807;  // 2026 adds Frigate (stage select id 11)
 constexpr u32 BRAWL_LEGAL_MELEE_PAGE = 0x00020000;  // Pokemon Stadium
 constexpr u32 BRAWL_FINAL_DESTINATION_BIT = 0x00000002;
 

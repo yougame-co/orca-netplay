@@ -942,6 +942,7 @@ set(ORCA_EMBED_DIR "${CMAKE_CURRENT_BINARY_DIR}/OrcaEmbed")
 foreach(orca_embed_src
     "${CMAKE_SOURCE_DIR}/Tools/orca/mods/ruleset.schema.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/Orca/Games/Brawl/Rulesets/brawl-supernova-2025.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Orca/Games/Brawl/Rulesets/brawl-supernova-2026.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/Orca/Games/Brawl/Rulesets/pplus-2024.json")
   get_filename_component(orca_embed_name "${orca_embed_src}" NAME)
   file(READ "${orca_embed_src}" orca_embed_hex HEX)

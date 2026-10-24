@@ -9,11 +9,10 @@
 # Game 1: both cursors move at once (port 1 up onto Battlefield, port 2 up and right onto
 # Smashville); port 2 proposes Smashville with A; port 1 strikes Battlefield with X; port 2 moves
 # onto Yoshi's Island and strikes it while port 1 moves onto the page button and turns the page
-# with A; port 1 proposes Pokemon Stadium on the Melee page; port 2 moves there and proposes it too:
-# agreed, the rest of the strikes and the pick skipped, the match on Pokemon Stadium. Port 2 walks
-# off.
+# with A (ignored off turn); port 2 turns it on its turn. Both A's on Pokemon Stadium name
+# nothing (a counterpick). Port 2 turns back, port 1 proposes Smashville: agreed. Port 2 walks off.
 # Game 2 (port 1 won): the character order as bf-ranked-bo3.txt has it; then the
-# loser (port 2) proposes Battlefield, the winner (port 1) skips its ban with Y and proposes
+# loser (port 2) proposes Battlefield, the winner (port 1) skips its bans with Y and proposes
 # Battlefield too: agreed.
 @scStrap mash 30 99999 1 40 A
 @scBoot mash 30 99999 1 40 A
@@ -41,14 +40,23 @@
 @scSelStage:1 80 92 1 SX=255 SY=0
 @scSelStage:1 93 101 1 SY=0
 @scSelStage:1 110 112 1 A
+# Current page ownership: port 2 is still striking and must turn both pages.
+@scSelStage:1 110 119 2 SX=255 SY=0
+@scSelStage:1 120 124 2 SY=0
+@scSelStage:1 130 132 2 A
 # The Melee page: port 1 2 frames up-right, 5 up (22.4, -6.75: Pokemon Stadium), A. Port 2 8 frames
 # down-right, 6 right (22.0, -6.75), A: agreed.
 @scSelStage:1 140 141 1 SX=255 SY=255
 @scSelStage:1 142 146 1 SY=255
 @scSelStage:1 155 157 1 A
-@scSelStage:1 160 167 2 SX=255 SY=0
-@scSelStage:1 168 173 2 SX=255
+@scSelStage:1 160 165 2 SY=255
+@scSelStage:1 166 168 2 SX=255
 @scSelStage:1 185 187 2 A
+# Both counterpick proposals are refused. Port 2 turns back; port 1 names Smashville.
+@scSelStage:1 200 205 2 SY=0
+@scSelStage:1 212 214 2 A
+@scSelStage:1 240 241 1 SY=255
+@scSelStage:1 260 262 1 A
 # Each game: port 2 walks off the left edge (1 stock).
 @scMelee 250 99999 2 SX=1
 @scVsResult mash 240 99999 1 40 A

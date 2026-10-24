@@ -282,7 +282,7 @@ TEST_F(OrcaBrawlStages, GameOneStrikesOnTheStageSelect)
   Hold(m, second, 0);
   Boundary(m);
   // A counterpick can't be struck in game 1.
-  Aim(m, second, FinalDestination);
+  Aim(m, second, DelfinoPlaza);
   Push(m, second, X);
   EXPECT_EQ(ReadState(m)->progress.struck, (1 << Battlefield) | (1 << Smashville));
   Aim(m, second, LylatCruise);
@@ -297,11 +297,11 @@ TEST_F(OrcaBrawlStages, GameOneStrikesOnTheStageSelect)
   m.Write32(TASK + 0x228, TileFor(Battlefield).page);
   Boundary(m);
   EXPECT_EQ(IconFrame(m, TileFor(Battlefield).slot), 0u);
-  // The game takes Pokemon Stadium for the picker.
+  // The game takes Final Destination for the picker.
   m.Write32(TASK + 0x224, 2);
-  m.Write32(TASK + 0x258, 0x2E);
+  m.Write32(TASK + 0x258, 0x02);
   Boundary(m);
-  EXPECT_EQ(ReadState(m)->progress.picked, PokemonStadium);
+  EXPECT_EQ(ReadState(m)->progress.picked, FinalDestination);
 }
 
 TEST_F(OrcaBrawlStages, ThePickersAPicks)
@@ -321,16 +321,17 @@ TEST_F(OrcaBrawlStages, ThePickersAPicks)
   Push(m, second, A);
   EXPECT_EQ(ReadState(m)->progress.prefs[second], YoshisIsland);
   EXPECT_EQ(ReadState(m)->progress.picked, -1);
-  Aim(m, first, PokemonStadium);
+  Aim(m, first, FinalDestination);
   Push(m, first, A);
-  EXPECT_EQ(ReadState(m)->progress.picked, PokemonStadium);
-  // The game's cursor goes to the page button first (Pokemon Stadium is on the Melee page), for the
-  // picker's port.
+  EXPECT_EQ(ReadState(m)->progress.picked, FinalDestination);
+  // Final Destination is a starter on the Brawl page, so no page turn is needed.
   m.Write32(TASK + 0x228, 0);
   Boundary(m);
   EXPECT_EQ(m.Read32(TASK + 0x278), static_cast<u32>(first));
-  EXPECT_FLOAT_EQ(CursorX(m), 23.0f);
-  EXPECT_FLOAT_EQ(CursorY(m), -18.11f);
+  const auto* tile = StageCursors::TileOf(StageCursors::BrawlLayout(), FinalDestination, 0);
+  ASSERT_NE(tile, nullptr);
+  EXPECT_FLOAT_EQ(CursorX(m), StageCursors::MidX(tile->rect));
+  EXPECT_FLOAT_EQ(CursorY(m), StageCursors::MidY(tile->rect));
 }
 
 TEST_F(OrcaBrawlStages, TheTimerCountsTheScreensFrames)
@@ -395,7 +396,7 @@ TEST_F(OrcaBrawlStages, AgreementSkipsTheStepsButNeverTakesAStruckStage)
   Push(m, 0, A);
   EXPECT_EQ(ReadState(m)->progress.prefs[0], -1);
   // No proposal on a counterpick in game 1 (not in play), nor on another tile than a stage's.
-  Aim(m, 0, FinalDestination);
+  Aim(m, 0, DelfinoPlaza);
   Push(m, 0, A);
   EXPECT_EQ(ReadState(m)->progress.prefs[0], -1);
   // Port 1 proposes Yoshi's Island, then takes it back with B; then Lylat, and port 2 agrees.
@@ -431,13 +432,16 @@ TEST_F(OrcaBrawlStages, LaterGamesAgreementIgnoresDsrNotTheBan)
   s.phase = Phase::Recorded;
   WriteState(m, s);
   Boundary(m);
-  // Port 1 proposes Smashville during port 2's ban; port 2 bans Delfino, then agrees.
+  // Port 1 proposes Smashville during port 2's bans; port 2 bans Delfino and PS1, then agrees.
   Aim(m, 0, Smashville);
   Push(m, 0, A);
   EXPECT_EQ(ReadState(m)->progress.prefs[0], Smashville);
   Aim(m, 1, DelfinoPlaza);
   Push(m, 1, X);
   EXPECT_EQ(ReadState(m)->progress.struck, 1 << DelfinoPlaza);
+  Aim(m, 1, PokemonStadium);
+  Push(m, 1, X);
+  EXPECT_EQ(ReadState(m)->progress.struck, (1 << DelfinoPlaza) | (1 << PokemonStadium));
   // Port 1's pick step now: its A on Smashville (DSR) can't pick it, but proposes it still.
   Aim(m, 0, Smashville);
   Push(m, 0, A);
@@ -505,7 +509,7 @@ TEST_F(OrcaBrawlStages, APageTurnGoesThroughThePageButton)
   // Pokemon Stadium is on this page: port 2's cursor reads it there.
   Aim(m, 1, PokemonStadium);
   Push(m, 1, A);
-  EXPECT_EQ(ReadState(m)->progress.prefs[1], PokemonStadium);
+  EXPECT_EQ(ReadState(m)->progress.prefs[1], -1);  // a counterpick in game 1
 }
 
 // The page is both players' view: only the player whose step it is turns it. The repro: the other
@@ -573,15 +577,15 @@ TEST_F(OrcaBrawlStages, ResultsMakeTheSetAndLaterGamesBanThenPick)
   std::vector<Orca::Events::PortInfo> ports{{0, "ada", false, {}}, {1, "bo", true, {}}};
   EXPECT_EQ(CursorView(m, ports).turn, 1);
   {
-    // The overlay's turn cue: bo may ban 1 (optional), 30 s; ada waits.
+    // The overlay's turn cue: bo may ban 2 (optional), 30 s; ada waits.
     const StageCursors::View v = CursorView(m, ports);
     EXPECT_EQ(v.kind, static_cast<u8>(RS::StepKind::Ban));
-    EXPECT_EQ(v.left, 1);
+    EXPECT_EQ(v.left, 2);
     EXPECT_TRUE(v.optional);
     EXPECT_FALSE(v.both);
     EXPECT_FALSE(v.mk_clause);
     EXPECT_EQ(v.seconds, 30);
-    EXPECT_EQ(StageCursors::TurnText(v, 1).title, "BO MAY BAN 1");
+    EXPECT_EQ(StageCursors::TurnText(v, 1).title, "BO MAY BAN 2");
     EXPECT_EQ(StageCursors::TurnText(v, 0).title, "WAITING FOR BO");
   }
   Push(m, 0, Y);  // not port 1's to skip
@@ -648,10 +652,10 @@ TEST_F(OrcaBrawlStages, AStageTakenDuringStrikesTakesTheDefaults)
   m.Write32(TASK + 0x224, 2);
   m.Write32(TASK + 0x258, 0x01);  // Battlefield
   Boundary(m);
-  // Strikes by default: Battlefield, then Pokemon Stadium and Lylat, then the pick's default, the
-  // first of the last two (Smashville).
-  EXPECT_EQ(ReadState(m)->progress.picked, Smashville);
-  EXPECT_EQ(m.Read32(TASK + 0x258), 0x21u);
+  // Stable indices: Battlefield, then Lylat and Smashville are struck; the first remaining
+  // starter is Yoshi's Island (Final Destination is the other one).
+  EXPECT_EQ(ReadState(m)->progress.picked, YoshisIsland);
+  EXPECT_EQ(m.Read32(TASK + 0x258), 0x0Du);
 }
 
 TEST_F(OrcaBrawlStages, TheMatchBlocksHeaderTurnsTheFlowOn)
@@ -1421,4 +1425,47 @@ TEST(OrcaStageCursors, EdgesAreSeenOnceAndTilesAreTheLayouts)
   EXPECT_EQ(StageCursors::Hovered(brawl, 0, (brawl.page_button.x0 + brawl.page_button.x1) / 2,
                                   (brawl.page_button.y0 + brawl.page_button.y1) / 2),
             StageCursors::PAGE_BUTTON);
+}
+
+TEST_F(OrcaBrawlStages, FrigateIsARankedCounterpickAtTheProbedTile)
+{
+  FakeMemory m = Game("scSelStage");
+  State state;
+  state.set.game = 2;
+  state.set.last_winner = 1;
+  state.phase = Phase::Recorded;
+  WriteState(m, state);
+  Boundary(m);
+  Push(m, 1, Y);
+  auto cursors = StageCursors::Read(m);
+  ASSERT_TRUE(cursors);
+  cursors->cursors[0].x = 27 * 16;
+  cursors->cursors[0].y = 168;  // 10.5 units
+  StageCursors::Write(m, *cursors);
+  Push(m, 0, A);
+  EXPECT_EQ(ReadState(m)->progress.picked, FrigateOrpheon);
+  EXPECT_EQ(StageForStageId(0x0C), FrigateOrpheon);
+  m.Write32(TASK + 0x224, 2);
+  m.Write32(TASK + 0x258, 0x01);
+  Boundary(m);
+  EXPECT_EQ(m.Read32(TASK + 0x258), 0x0Cu);
+}
+
+TEST_F(OrcaBrawlStages, ALaterPickOnTheMeleePageGoesThroughThePageButton)
+{
+  FakeMemory m = Game("scSelStage");
+  State state;
+  state.set.game = 2;
+  state.set.last_winner = 1;
+  state.phase = Phase::Recorded;
+  WriteState(m, state);
+  Boundary(m);
+  Push(m, 1, Y);
+  Aim(m, 0, PokemonStadium);
+  Push(m, 0, A);
+  EXPECT_EQ(ReadState(m)->progress.picked, PokemonStadium);
+  m.Write32(TASK + 0x228, 0);
+  Boundary(m);
+  EXPECT_FLOAT_EQ(CursorX(m), 23.0f);
+  EXPECT_FLOAT_EQ(CursorY(m), -18.11f);
 }

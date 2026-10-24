@@ -25,7 +25,7 @@ class CPUThreadGuard;
 // writes nothing new. See ORCA.md, "Ranked sets".
 //
 // The numbers are the ruleset's (Games/Brawl/Rulesets.h, data): a ruleset whose time-outs are judged
-// (Brawl Supernova 2025) sends them to the ledge-grab limit, then stocks, then percent, and a level
+// (Brawl Supernova 2026) sends them to the ledge-grab limit, then stocks, then percent, and a level
 // game or a sudden death is a tie, replayed as its tiebreak game (1 stock, 3:00); one whose results
 // screen decides (Project+ 2024: its own codeset settles time-outs) keeps the screen's winner. Its
 // ties in a row (5) void the set. The set ends at its wins (2), or is void after

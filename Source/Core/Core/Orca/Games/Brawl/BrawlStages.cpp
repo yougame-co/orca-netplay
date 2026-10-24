@@ -192,7 +192,7 @@ constexpr u32 GREY = 0x00000000;  // 0.0f
 // Page 0 holds Brawl's 31 stages and page 1 Melee's 10, in MuStageTblAccess order. The cursor
 // spans x -30..30 and y -19.5..19.5 (up is +y); icons are about 6.2 wide. Each point is inside its
 // icon, found by sweeping the cursor over the screen.
-constexpr std::array<Tile, kStages> kTiles{{
+constexpr std::array<Tile, kRankedStages> kTiles{{
     {0, 0, -1.5f, 15.74f},   // Battlefield (stage select id 0x00)
     {1, 9, 22.0f, -8.7f},    // Pokemon Stadium (0x28), bottom right of the Melee page
     {0, 13, 11.2f, 4.46f},   // Lylat Cruise (0x0E)
@@ -200,6 +200,7 @@ constexpr std::array<Tile, kStages> kTiles{{
     {0, 11, -1.6f, 4.46f},   // Yoshi's Island (0x0C)
     {0, 1, 4.7f, 15.74f},    // Final Destination (0x01)
     {0, 2, 11.3f, 15.74f},   // Delfino Plaza (0x02)
+    {0, 10, 27.0f, 10.5f},   // Frigate Orpheon (0x0B)
 }};
 // The page-switch button, bottom right on both pages.
 constexpr float PAGE_BUTTON_X = 23.0f;
@@ -253,9 +254,9 @@ std::optional<std::array<s8, 2>> ReadCharacters(const GuestMemory& m)
   return out;
 }
 
-int StageAt(u32 page, s32 slot)
+int StageAt(u32 page, s32 slot, bool casual)
 {
-  for (int stage = 0; stage < kStages; ++stage)
+  for (int stage = 0; stage < (casual ? kStages : kRankedStages); ++stage)
   {
     if (kTiles[stage].page == page && kTiles[stage].slot == slot)
       return stage;
@@ -263,7 +264,7 @@ int StageAt(u32 page, s32 slot)
   return -1;
 }
 
-int HoveredStage(const GuestMemory& m, const View& v)
+int HoveredStage(const GuestMemory& m, const View& v, bool casual)
 {
   // +0x248 keeps the last slot after the cursor leaves the icons, so check the hovered item too.
   if (!v.present || v.hovered_item == 0 || v.hovered_item == ITEM_PAGE ||
@@ -271,7 +272,7 @@ int HoveredStage(const GuestMemory& m, const View& v)
   {
     return -1;
   }
-  return StageAt(m.Read32(v.task + TASK_PAGE), v.selected);
+  return StageAt(m.Read32(v.task + TASK_PAGE), v.selected, casual);
 }
 
 // Page and hovered item packed into one byte (0xFF = nothing).
@@ -284,7 +285,7 @@ u8 HoverKey(const GuestMemory& m, const View& v)
 
 const RS::Ruleset& Rules()
 {
-  return Rulesets::Brawl2025();
+  return Rulesets::Brawl2026();
 }
 
 // `casual` plans the two preferred-stage turns instead of the ranked steps.
@@ -293,7 +294,7 @@ RS::Plan PlanOf(const State& s, const RS::SetView& set, bool casual)
   RS::SetView v = set;
   v.coin = s.coin == 0xFF ? 0 : (s.coin & 1);
   v.characters = {s.characters[0], s.characters[1]};
-  return casual ? RS::PlanCasual(Rules(), v, s.seed) : RS::PlanGame(Rules(), v);
+  return casual ? RS::PlanCasual(Rulesets::Brawl2025(), v, s.seed) : RS::PlanGame(Rules(), v);
 }
 
 // The port whose turn it is, or the last step's port once done (it drives the game's cursor while
@@ -356,7 +357,8 @@ constexpr u8 TURN_FRAMES = 90;  // give up after this many frames
 // once, either's). Presses are edges, so a resimulated frame sees none twice.
 void CursorPresses(const RS::Plan& plan, State* s, StageCursors::State* c, u32 page)
 {
-  const StageCursors::Layout& layout = StageCursors::BrawlLayout();
+  const StageCursors::Layout& layout =
+      plan.casual ? StageCursors::BrawlLayout() : StageCursors::BrawlRankedLayout();
   for (int port = 0; port < 2; ++port)
   {
     const u8 pressed = StageCursors::TakePresses(c, port);
@@ -399,7 +401,8 @@ void CursorPresses(const RS::Plan& plan, State* s, StageCursors::State* c, u32 p
 void SelectFrame(GuestMemory& m, const View& v, State* s, bool casual)
 {
   const RS::SetView set = casual ? s->set : SetOf(m, *s);
-  const StageCursors::Layout& layout = StageCursors::BrawlLayout();
+  const StageCursors::Layout& layout =
+      casual ? StageCursors::BrawlLayout() : StageCursors::BrawlRankedLayout();
   std::optional<StageCursors::State> cursors = StageCursors::Read(m);
   // The frame counter resets on every visit, so a lower clock means a new stage select.
   if (s->phase != Phase::Select || v.clock < s->clock)
@@ -428,7 +431,7 @@ void SelectFrame(GuestMemory& m, const View& v, State* s, bool casual)
     cursors = StageCursors::Start(layout);
   StageCursors::State& c = *cursors;
   const RS::Plan plan = PlanOf(*s, set, casual);
-  const int hovered = HoveredStage(m, v);
+  const int hovered = HoveredStage(m, v, casual);
   const u8 key = HoverKey(m, v);
   const u32 state = m.Read32(v.task + TASK_STATE);
   const u32 page = m.Read32(v.task + TASK_PAGE);
@@ -536,7 +539,7 @@ void SelectFrame(GuestMemory& m, const View& v, State* s, bool casual)
   const u32 count = std::min<u32>(m.Valid(table) ? m.Read8(table) : 0, 40);
   for (u32 slot = 0; slot < count; ++slot)
   {
-    const int stage = StageAt(page, static_cast<s32>(slot));
+    const int stage = StageAt(page, static_cast<s32>(slot), casual);
     if (stage >= 0 && (allowed & Bit(stage)))
       continue;
     const auto icon = Pointer(m, v.task + TASK_ICONS + 4 * slot);
@@ -594,9 +597,9 @@ namespace Orca::UX::BrawlStages
 namespace
 {
 
-constexpr std::array<const char*, kStages> kStageNames{
+constexpr std::array<const char*, kRankedStages> kStageNames{
     "Battlefield",    "Pokemon Stadium",   "Lylat Cruise",  "Smashville",
-    "Yoshi's Island", "Final Destination", "Delfino Plaza",
+    "Yoshi's Island", "Final Destination", "Delfino Plaza", "Frigate Orpheon",
 };
 
 // A preference as the overlay names it: a stage, "Random", or empty for none.
@@ -604,7 +607,7 @@ std::string PrefName(s8 pref)
 {
   if (pref == RS::PREF_RANDOM)
     return "Random";
-  return pref >= 0 && pref < kStages ? kStageNames[pref] : "";
+  return pref >= 0 && pref < kRankedStages ? kStageNames[pref] : "";
 }
 
 // Whether the local player's own cursor is on the Random button (UI only).
@@ -956,7 +959,7 @@ StageCursors::View CursorView(const GuestMemory& m,
   const bool casual = !RankedBrawlMatch(m) && CasualBrawlMatch(m);
   const RS::Plan plan = PlanOf(*s, casual ? s->set : SetOf(m, *s), casual);
   view.on = true;
-  view.game = StageCursors::GAME_BRAWL;
+  view.game = casual ? StageCursors::GAME_BRAWL : StageCursors::GAME_BRAWL_RANKED;
   view.page = m.Read32(v.task + TASK_PAGE);
   view.picked = s->progress.picked;
   view.mk_clause = plan.mk_clause;

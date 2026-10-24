@@ -21,8 +21,9 @@ namespace Orca::UX
 // two builds that would diverge never meet in a room. A change to one game's module only bumps that
 // game's own revision instead (Engine/Module.h Manifest::compat, Games/Brawl/BrawlGame.h), which
 // the key adds as `ux=<n>.<game>` (Session/Online.h UxKeyPart).
+// 32 selects Supernova 2026 stages and ledge limits for Brawl ranked.
 // 31 keeps player-selected tag controls (including C-stick) instead of rewriting worn defaults.
-constexpr int kCompatVersion = 31;
+constexpr int kCompatVersion = 32;
 
 // The disc the game boots from. The overlay reads the game's own fonts from it. Call before Init.
 void SetGameDisc(std::string path);

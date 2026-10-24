@@ -44,7 +44,7 @@ enum class Mode : u8
 enum class Ruleset : u8
 {
   None = 0,
-  Brawl = 1,  // Supernova 2025
+  Brawl = 1,  // Supernova
   PPlus = 2,  // Project+ 2024
 };
 

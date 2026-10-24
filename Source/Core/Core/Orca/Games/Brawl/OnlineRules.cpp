@@ -238,7 +238,9 @@ void ForceStages(Writer& w, const Header& h, const std::string& scene)
       return;
     const std::array<PlayerPick, 4> ports = Picks(w.m);
     const bool ice = AnyIceClimbers(ports);
-    w.U32(MENU_STAGES_BRAWL, BRAWL_LEGAL_BRAWL_PAGE & ~(ice ? BRAWL_FINAL_DESTINATION_BIT : 0));
+    const u32 stages = h.mode == Mode::Ranked ? BRAWL_RANKED_BRAWL_PAGE :
+                          BRAWL_LEGAL_BRAWL_PAGE & ~(ice ? BRAWL_FINAL_DESTINATION_BIT : 0);
+    w.U32(MENU_STAGES_BRAWL, stages);
     w.U32(MENU_STAGES_MELEE, BRAWL_LEGAL_MELEE_PAGE);
     return;
   }
@@ -715,7 +717,9 @@ int ApplyLocks(GuestMemory& m, int frame)
     return 0;
   // A locked header names a builtin ruleset (ReadHeader); none only in a build whose ruleset files
   // don't load (OrcaRulesets.BuiltinsAreTheOldTables), which then applies no locks.
-  const Ranked::Ruleset* rules = Rulesets::ByBlock(static_cast<u8>(h.ruleset));
+  const Ranked::Ruleset* rules = h.ruleset == Ruleset::Brawl && h.mode == Mode::Casual ?
+                                     &Rulesets::Brawl2025() :
+                                     Rulesets::ByBlock(static_cast<u8>(h.ruleset));
   if (!rules)
     return 0;
   Writer w{m};

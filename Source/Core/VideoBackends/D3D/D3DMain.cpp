@@ -78,9 +78,12 @@ void VideoBackend::InitBackendInfo(const WindowSystemInfo& wsi)
 
 void VideoBackend::FillBackendInfo()
 {
-  // Session boots query device-dependent caps once, using the real device in Initialize.
-  // Desktop configuration dialogs still need the temporary-device probes.
-  const bool query_device = D3D::device || !Orca::SessionActive();
+  // Probe device-dependent caps with temporary devices, as before 0.3.80: in the app, deferring
+  // them to the real device made every warm Play reach the game's first frame ~1 s later
+  // (2026-10-24). ORCA_TEST_D3D_PROBE=deferred (agent A/B runs only) keeps the 0.3.80 path,
+  // where session boots query them once from the real device in Initialize.
+  const bool query_device = D3D::device || !Orca::SessionActive() ||
+                            Orca::GetEnv("ORCA_TEST_D3D_PROBE") != "deferred";
 
   g_backend_info.api_type = APIType::D3D;
   g_backend_info.MaxTextureSize = D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION;

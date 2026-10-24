@@ -31,12 +31,20 @@
 @scSelStage:1 80 92 1 SX=255 SY=0
 @scSelStage:1 93 101 1 SY=0
 @scSelStage:1 110 112 1 A
+# Port 2 owns the page while striking under the current input rules.
+@scSelStage:1 110 119 2 SX=255 SY=0
+@scSelStage:1 120 124 2 SY=0
+@scSelStage:1 130 132 2 A
 @scSelStage:1 140 141 1 SX=255 SY=255
 @scSelStage:1 142 146 1 SY=255
 @scSelStage:1 155 157 1 A
-@scSelStage:1 160 167 2 SX=255 SY=0
-@scSelStage:1 168 173 2 SX=255
+@scSelStage:1 160 165 2 SY=255
+@scSelStage:1 166 168 2 SX=255
 @scSelStage:1 185 187 2 A
+@scSelStage:1 200 205 2 SY=0
+@scSelStage:1 212 214 2 A
+@scSelStage:1 240 241 1 SY=255
+@scSelStage:1 260 262 1 A
 # Each game: port 2 walks off the left edge (1 stock).
 @scMelee 250 99999 2 SX=1
 @scVsResult mash 240 99999 1 40 A
