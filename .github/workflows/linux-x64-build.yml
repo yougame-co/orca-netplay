@@ -1,0 +1,107 @@
+# YG Dolphin linux-x64 build (linux-lead). MANUAL ONLY: workflow_dispatch, never on push or pull_request,
+# never a required check, so it cannot block a merge. YouGame's "no CI" rule (Luis 2026-09-16) is about
+# the YouGame repo (cost, blocked merges); this one builds the engine's Linux zip so a staging swap never
+# has to drop Linux when the Legion test handheld is asleep (10-24).
+#
+# No secrets: the zip embeds only the PUBLIC flat-bundle key (the staging key is public; the packaging script
+# refuses it outside a staging build). Signing stays with orca-lead's local tools (orca-add-build).
+# No game files: the frame-for-frame check needs a Brawl disc image, which never goes to GitHub. It runs
+# afterwards on a Linux machine that has the disc (the Legion, or WSL2 on the PC), together with the in-app check.
+name: linux-x64 build (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Engine commit to build (full sha)"
+        required: true
+      version:
+        description: "YG Dolphin version, X.Y.Z"
+        required: true
+      flavor:
+        description: "Bundle-key flavor (prod is added when Linux launches on prod)"
+        required: true
+        default: staging
+        type: choice
+        options: [staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-x64-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04 # glibc 2.35, the same base as the Legion's build container
+    timeout-minutes: 150
+    steps:
+      - name: Check the inputs (they reach shell steps only after this)
+        env:
+          COMMIT: ${{ inputs.commit }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "commit must be a full 40-hex sha"; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must be X.Y.Z"; exit 1; }
+
+      - name: Check out the release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 1
+          submodules: false
+
+      - name: Submodules (as linux-release.sh does, all but Qt and FFmpeg-bin)
+        run: |
+          for m in $(git config -f .gitmodules --get-regexp '\.path$' | awk '{print $2}'); do
+            case "$m" in Externals/Qt|Externals/FFmpeg-bin) continue ;; esac
+            git submodule update --init --recursive --depth 1 -- "$m" || git submodule update --init --recursive -- "$m"
+          done
+          test -z "$(git status --porcelain)" || { echo "tree not clean"; git status --short | head; exit 1; }
+          grep -q 'ENABLE_VULKAN=ON' Tools/orca-package-linux.sh
+
+      - name: Packages (the Legion build container's list)
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ninja-build pkg-config zip binutils ccache \
+            gcc-12 g++-12 libx11-dev libxi-dev libxext-dev libxrandr-dev libegl-dev libgl-dev \
+            libpulse-dev libasound2-dev libudev-dev libvulkan-dev
+          cmake --version | head -1
+
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-x64-${{ inputs.commit }}
+          restore-keys: ccache-linux-x64-
+
+      - name: Build and package (Tools/orca-package-linux.sh, staging flavor)
+        env:
+          CC: gcc-12
+          CXX: g++-12
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          CCACHE_DIR: ~/.cache/ccache
+          ORCA_VERSION: ${{ inputs.version }}
+          ORCA_SOURCE_URL: https://github.com/yougame-co/orca-netplay
+          ORCA_STAGING_BUILD: "1"
+          ORCA_BUNDLE_PUBLIC_KEY: 8422b8b28b82aff024427d77e6c72a38d9ea75bcb6533fe706c61006f742c0ab
+        run: |
+          export CCACHE_DIR="$HOME/.cache/ccache"
+          Tools/orca-package-linux.sh "$RUNNER_TEMP/build" "$RUNNER_TEMP/out"
+          ccache -s | head -8 || true
+          Z="$RUNNER_TEMP/out/yg-dolphin-${ORCA_VERSION}-linux-x64.zip"
+          test -f "$Z"
+          sha256sum "$Z" | tee "$RUNNER_TEMP/out/SHA256SUMS"
+          stat -c '%s bytes' "$Z"
+
+      - name: Upload the zip and its sha256
+        uses: actions/upload-artifact@v4
+        with:
+          name: yg-dolphin-${{ inputs.version }}-linux-x64-${{ inputs.flavor }}
+          path: |
+            ${{ runner.temp }}/out/yg-dolphin-${{ inputs.version }}-linux-x64.zip
+            ${{ runner.temp }}/out/SHA256SUMS
+          retention-days: 14
+          if-no-files-found: error
