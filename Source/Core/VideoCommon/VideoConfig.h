@@ -131,6 +131,8 @@ struct BackendInfo
 
   std::vector<std::string> Adapters;  // for D3D
   std::vector<u32> AAModes;
+  // False only while AA capability queries are deferred until device creation.
+  bool bAAModesReady = true;
 
   // TODO: merge AdapterName and Adapters array
   std::string AdapterName;  // for OpenGL

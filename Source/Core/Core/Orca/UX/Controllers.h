@@ -40,6 +40,7 @@ struct AdapterPort
 struct StandardPad
 {
   int index = 0;
+  std::optional<int> seat;  // explicit local ordinal in multi-seat mode
   std::array<float, 4> axes{};      // -1..1: left X, left Y (down +), right X, right Y (down +)
   std::array<float, 17> buttons{};  // 0..1
   std::array<bool, 17> pressed{};
@@ -99,4 +100,9 @@ struct LocalChoice
 // own input mapping instead of a stuck neutral pad. `age_ms` is measured on this machine's steady
 // clock, so staleness never compares two processes' wall clocks.
 std::optional<LocalChoice> ChooseLocalPad(const Snapshot& snapshot, double age_ms);
+constexpr int MAX_LOCAL = 2;
+// One seat uses the legacy chooser. Multiple seats use explicit assignments only; an empty
+// choice means connected neutral input, never fallback to another device or Dolphin's pad.
+std::array<std::optional<LocalChoice>, MAX_LOCAL> ChooseLocalPads(const Snapshot& snapshot,
+                                                               double age_ms, int n);
 }  // namespace Orca::UX

@@ -224,6 +224,7 @@ bool WantsDeterminism()
 // BootManager.cpp
 bool Init(Core::System& system, std::unique_ptr<BootParameters> boot, const WindowSystemInfo& wsi)
 {
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::CoreInit);
   std::lock_guard lock(s_core_mutex);
 
   if (s_emu_thread.joinable())
@@ -246,6 +247,7 @@ bool Init(Core::System& system, std::unique_ptr<BootParameters> boot, const Wind
 
   // Manually reactivate the video backend in case a GameINI overrides the video backend setting.
   VideoBackendBase::PopulateBackendInfo(wsi);
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::VideoInfo);
 
   // Issue any API calls which must occur on the main thread for the graphics backend.
   WindowSystemInfo prepared_wsi(wsi);

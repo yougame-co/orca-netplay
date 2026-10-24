@@ -76,9 +76,10 @@ LinkStats GetLinkStats();
 // controller stream). Called on the CPU thread once per frame boundary and must not block; nullopt
 // means use Dolphin's pad. The session records the result, so re-runs replay it. `for_frame` is
 // true only for a first run's own read, which is the one the source times (InputAge).
-using LocalPadSource = std::function<std::optional<GCPadStatus>(bool for_frame)>;
+using LocalPadSource = std::function<std::optional<GCPadStatus>(int ordinal, bool for_frame)>;
 void SetLocalPadSource(LocalPadSource source);
 std::optional<GCPadStatus> LocalPad(bool for_frame = false);
+std::optional<GCPadStatus> LocalPad(int ordinal, bool for_frame);
 
 // Age of the local controller's input when frames read it, as running totals. Only devices whose
 // reports carry an arrival time (a GameCube adapter via the app's helper) count. Readers take

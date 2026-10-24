@@ -29,6 +29,8 @@ def roster(code, cfg, kind="welcome"):
             "players": [{"id": "me", "name": "Me"}, {"id": "peer", "name": "Friend"}],
             "participants": [{"id": "me", "connectionId": "me", "slot": local, "name": "Me"},
                              {"id": "peer", "connectionId": "peer", "slot": remote, "name": "Friend"}]}
+    if "lobby" in cfg:
+        result["room"]["lobby"] = cfg["lobby"]
     if "recovery" in cfg:
         result["room"]["recovery"] = cfg["recovery"]
     if cfg.get("doubles"):
@@ -39,6 +41,11 @@ def roster(code, cfg, kind="welcome"):
             result["players"].append({"id": f"peer{slot}", "name": f"Friend{slot}"})
             result["participants"].append({"id": f"peer{slot}", "connectionId": f"peer{slot}",
                                             "slot": slot, "name": f"Friend{slot}"})
+    for connection, slots in cfg.get("co_seats", {}).items():
+        for ordinal, slot in enumerate(slots, 1):
+            result["participants"].append({"id": f"{connection}:co:{slot}",
+                "connectionId": connection, "slot": slot, "localIndex": ordinal,
+                "name": f"{connection} local {ordinal + 1}"})
     return result
 
 
@@ -84,6 +91,7 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 cfg = rooms[code]
                 cfg["tickets"] += 1
+                cfg["ticket_lobbies"].append(body.get("lobby"))
                 ticket_number = cfg["tickets"]
                 delay = cfg.get("ticket_delay", 0) if cfg["tickets"] > 1 else 0
                 ticket_failed = cfg.get("ticket_fail_count", 0) > 0 and ticket_number > 1
@@ -99,6 +107,7 @@ class Handler(BaseHTTPRequestHandler):
                             "ticket": f"loopback-fixture-{ticket_number}", "direct": cfg.get("direct", False),
                             "ice": [{"urls": "stun:127.0.0.1:9"}],
                             **({"tourney": cfg["tourney"]} if "tourney" in cfg else {}),
+                            **({"lobby": cfg["ticket_lobby"]} if "ticket_lobby" in cfg else {}),
                             **({"watch": f"/watch/{code}"} if watching else {})})
             except (BrokenPipeError, ConnectionResetError):
                 pass
@@ -107,7 +116,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/configure/"):
             with lock:
                 rooms[code] = dict(body, tickets=0, connects=0, probes=0, closes=0,
-                                   messages=[], sockets=[], close_codes=[], ticket_uses=[])
+                                   messages=[], sockets=[], close_codes=[], ticket_uses=[], ticket_lobbies=[])
             self.reply({})
         elif self.path.startswith("/action/"):
             with lock:
@@ -141,7 +150,7 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 cfg = rooms[code]
                 self.reply({k: cfg[k] for k in ("tickets", "connects", "probes", "closes",
-                                              "messages", "close_codes", "ticket_uses")})
+                                              "messages", "close_codes", "ticket_uses", "ticket_lobbies")})
             return
         with lock:
             cfg = rooms[code]

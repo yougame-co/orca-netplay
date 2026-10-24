@@ -1,6 +1,7 @@
 // Copyright 2026 YouGame
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -181,6 +182,26 @@ TEST(OrcaRoom, PacketRoundTrips)
   bare.spared = std::array<int, SPARED_FRAMES>{};
   ASSERT_TRUE(DecodePacket(EncodePacket(bare), &got));
   ExpectSame(bare, got);
+}
+
+TEST(OrcaRoom, LegacyPacketGoldens)
+{
+  // Captured with the unmodified 0.3.77 encoder (55238506e8).
+  EXPECT_EQ(EncodePacket(Packet{}), R"golden({"a":[-1,-1,-1,-1],"c":0,"f":0,"k":"p","p":"","s":0})golden");
+  EXPECT_EQ(EncodePacket(Sample()), R"golden({"a":[130,-1,-1,-1],"c":121,"f":120,"h":"fedcba9876543210","j":5,"k":"p","l":64,"n":3,"p":"00ff807f0001a00f01ff807f0001a10f02ff807f0001a20f","r":42,"s":1,"sp":[1,2,2,3],"v":-17,"x":60})golden");
+  Packet host = Frames(0, 20, 2);
+  host.sequence = 7;
+  host.roster = std::array<SeatPlan, MAX_SEATS>{SeatPlan{0, NEVER, 0},
+      SeatPlan{30, NEVER, 20}, SeatPlan{}, SeatPlan{10, 19, 0}};
+  host.start_gate = {20, 30};
+  host.departed[3] = {10, 19, 17, Frames(3, 17, 2).pads};
+  host.history_ack = 12;
+  host.values_ack = 3;
+  host.history_seat = 1;
+  host.history_first = 0;
+  host.history = {Pads{}};
+  host.leaving = true;
+  EXPECT_EQ(EncodePacket(host), R"golden({"a":[-1,-1,-1,-1],"c":22,"ds":[[3,10,19,17,"11000000000000001200000000000000"]],"f":20,"ha":12,"hf":0,"hp":[[1,"0000000000000000000000000000000000000000000000000000000000000000"]],"ht":1,"k":"p","lv":true,"p":"14000000000000001500000000000000","q":7,"ro":[[0,-1,0],[30,-1,20],[-1,-1,-1],[10,19,0]],"s":0,"sg":[20,30],"va":3})golden");
 }
 
 // The host's port values travel in the room's "nm" and "kf" messages: names, the frame each
@@ -6622,4 +6643,758 @@ TEST_F(OrcaRoomRuntime, SceneGameOneStartStillPrecedesTheForfeitingLeave)
   }
   EXPECT_EQ(began, 1);
   EXPECT_EQ(left, 1);
+}
+
+TEST(OrcaRoom, CoSeatPacketRoundTrips)
+{
+  Packet sent = Sample();
+  sent.co = {{3, Frames(3, 10, 3).pads}, {0, Frames(0, 20, 3).pads},
+             {2, std::vector<Pad>(3, UNPLUGGED_PAD)}};
+  sent.roster = std::array<SeatPlan, MAX_SEATS>{};
+  sent.groups = std::array<int, MAX_SEATS>{1, 1, 1, 1};
+  Packet got;
+  ASSERT_TRUE(DecodePacket(EncodePacket(sent), &got));
+  ExpectSame(sent, got);
+  EXPECT_EQ(got.co, sent.co);
+  EXPECT_EQ(got.groups, sent.groups);
+  EXPECT_EQ(got.roster, sent.roster);
+  sent.groups = std::array<int, MAX_SEATS>{0, 1, -1, 3};
+  EXPECT_EQ(EncodePacket(sent).find("\"rg\""), std::string::npos);
+}
+
+TEST(OrcaRoom, DirectTrimKeepsEveryCoSeatAligned)
+{
+  for (const int count : {1, 3})
+  {
+    Packet sent = Frames(0, 100, MAX_PADS_IN_PACKET);
+    for (int seat = 1; seat <= count; ++seat)
+      sent.co.emplace_back(seat, Frames(seat, 100 + seat, MAX_PADS_IN_PACKET).pads);
+    ASSERT_GT(EncodePacket(sent).size(), DirectLink::MAX_PAYLOAD);
+    const std::string payload = EncodeDirectPacket(sent);
+    EXPECT_LE(payload.size(), DirectLink::MAX_PAYLOAD);
+    Packet got;
+    ASSERT_TRUE(DecodePacket(payload, &got));
+    EXPECT_EQ(got.first_frame, sent.first_frame);
+    ASSERT_GT(got.pads.size(), 1u);
+    ASSERT_LT(got.pads.size(), sent.pads.size());
+    EXPECT_EQ(got.pads, (std::vector<Pad>(sent.pads.begin(),
+                                        sent.pads.begin() + got.pads.size())));
+    ASSERT_EQ(got.co.size(), sent.co.size());
+    for (size_t i = 0; i < got.co.size(); ++i)
+    {
+      EXPECT_EQ(got.co[i].first, sent.co[i].first);
+      EXPECT_EQ(got.co[i].second, (std::vector<Pad>(sent.co[i].second.begin(),
+          sent.co[i].second.begin() + got.pads.size())));
+    }
+  }
+}
+
+TEST(OrcaRoom, MalformedCoSeatPacketsAreRefused)
+{
+  const std::string pad = "0000000000000000";
+  for (const std::string& co : std::vector<std::string>{
+      "null", "{}", "[1]", "[[2]]", "[[2,0]]", "[[1,\"" + pad + "\"]]",
+      "[[-1,\"" + pad + "\"]]", "[[4,\"" + pad + "\"]]",
+      "[[2.5,\"" + pad + "\"]]", "[[2,\"0000\"]]",
+      "[[2,\"000000000000000z\"]]", "[[2,\"\"]]",
+      "[[2,\"" + pad + pad + "\"]]",
+      "[[2,\"" + pad + "\"],[2,\"" + pad + "\"]]",
+      "[[0,\"" + pad + "\"],[2,\"" + pad + "\"],[3,\"" + pad +
+          "\"],[0,\"" + pad + "\"]]"})
+  {
+    Packet got = Sample();
+    const auto before = EncodePacket(got);
+    EXPECT_FALSE(DecodePacket(fmt::format(
+        R"({{"k":"p","s":1,"f":0,"c":1,"p":"{}","a":[-1,-1,-1,-1],"co":{}}})",
+        pad, co), &got)) << co;
+    EXPECT_EQ(EncodePacket(got), before);
+  }
+  Packet empty;
+  empty.seat = 1;
+  empty.co = {{2, {}}};
+  Packet got;
+  ASSERT_TRUE(DecodePacket(EncodePacket(empty), &got));
+  EXPECT_EQ(got.co, empty.co);
+}
+
+TEST(OrcaRoom, RosterGroupsAreBounded)
+{
+  for (const char* groups : {"null", "{}", "[0,1,2]", "[0,1,2,3,0]",
+                                   "[0,1,2,4]", "[0,1,2,-2]", "[0,1,2,1.5]",
+                                   "[0,1,2,\"1\"]"})
+  {
+    Packet got;
+    EXPECT_FALSE(DecodePacket(fmt::format(
+        R"({{"k":"p","s":0,"f":0,"c":0,"p":"","a":[-1,-1,-1,-1],"ro":[[-1,-1,-1],[-1,-1,-1],[-1,-1,-1],[-1,-1,-1]],"rg":{}}})",
+        groups), &got)) << groups;
+  }
+  Packet got;
+  EXPECT_FALSE(DecodePacket(
+      R"({"k":"p","s":0,"f":0,"c":0,"p":"","a":[-1,-1,-1,-1],"rg":[0,0,-1,-1]})", &got));
+}
+
+namespace
+{
+Packet CoFrames(int first, int count)
+{
+  Packet packet = Frames(0, first, count);
+  packet.co = {{2, Frames(2, first + 20, count).pads},
+               {3, Frames(3, first + 40, count).pads}};
+  return packet;
+}
+}  // namespace
+
+TEST(OrcaRoom, CoalesceKeepsEverySeatsEarlierFrames)
+{
+  for (const auto& [first, count] : {std::pair{104, 4}, {108, 4}, {106, 60}})
+  {
+    const Packet old = CoFrames(100, 8);
+    const Packet next = CoFrames(first, count);
+    std::optional<Packet> pending = old;
+    CoalescePacket(&pending, next);
+    ASSERT_TRUE(pending);
+    const int from = std::max(100, first + count - MAX_PADS_IN_PACKET);
+    const auto expected = CoFrames(from, first + count - from);
+    EXPECT_EQ(pending->first_frame, expected.first_frame);
+    EXPECT_EQ(pending->pads, expected.pads);
+    EXPECT_EQ(pending->co, expected.co);
+    Packet got;
+    ASSERT_TRUE(DecodePacket(EncodePacket(*pending), &got));
+    EXPECT_EQ(got.co, expected.co);
+  }
+}
+
+TEST(OrcaRoom, CoalesceSeatChangesStayAligned)
+{
+  Packet old = CoFrames(100, 8);
+  old.co.erase(old.co.begin() + 1);
+  Packet next = CoFrames(104, 4);
+  next.co.erase(next.co.begin());
+  std::optional<Packet> pending = old;
+  CoalescePacket(&pending, next);
+  ASSERT_TRUE(pending);
+  EXPECT_EQ(pending->first_frame, 100);
+  std::map<int, std::vector<Pad>> expected;
+  expected[2] = Frames(2, 120, 4).pads;
+  expected[2].insert(expected[2].end(), 4, UNPLUGGED_PAD);
+  expected[3] = std::vector<Pad>(4, UNPLUGGED_PAD);
+  const auto tail = Frames(3, 144, 4).pads;
+  expected[3].insert(expected[3].end(), tail.begin(), tail.end());
+  const std::map<int, std::vector<Pad>> got(pending->co.begin(), pending->co.end());
+  EXPECT_EQ(got, expected);
+  Packet decoded;
+  EXPECT_TRUE(DecodePacket(EncodePacket(*pending), &decoded));
+}
+
+TEST(OrcaRoom, CoalesceBroadcastAndAddressedKeepEverySeat)
+{
+  for (bool addressed_first : {false, true})
+  {
+    std::optional<Packet> broadcast;
+    std::map<int, std::optional<Packet>> addressed;
+    const auto old = CoFrames(100, 8), next = CoFrames(104, 8);
+    if (addressed_first)
+    {
+      CoalesceToSeats(&broadcast, &addressed, {{1, old}, {2, old}});
+      CoalesceBroadcast(&broadcast, &addressed, next);
+    }
+    else
+    {
+      CoalesceBroadcast(&broadcast, &addressed, old);
+      CoalesceToSeats(&broadcast, &addressed, {{1, next}, {2, next}});
+    }
+    for (int seat : {1, 2})
+    {
+      ASSERT_TRUE(addressed.at(seat));
+      EXPECT_EQ(addressed.at(seat)->first_frame, 100);
+      EXPECT_EQ(addressed.at(seat)->pads, CoFrames(100, 12).pads);
+      EXPECT_EQ(addressed.at(seat)->co, CoFrames(100, 12).co);
+    }
+  }
+}
+
+namespace
+{
+std::string CoRoster(const char* type, bool joining, bool mine, bool theirs,
+                     bool include_peer = true, bool reverse = false)
+{
+  picojson::value value;
+  picojson::parse(value, RosterMessage(type, joining, include_peer));
+  auto& participants = value.get<picojson::object>()["participants"].get<picojson::array>();
+  if (mine)
+    participants.emplace_back(picojson::object{{"connectionId", picojson::value("me")},
+        {"slot", picojson::value(2.0)}, {"localIndex", picojson::value(1.0)},
+        {"name", picojson::value("Me 2")}});
+  if (theirs && include_peer)
+    participants.emplace_back(picojson::object{{"connectionId", picojson::value("peer")},
+        {"slot", picojson::value(3.0)}, {"localIndex", picojson::value(1.0)},
+        {"name", picojson::value("Friend 2")}});
+  if (reverse)
+    std::reverse(participants.begin(), participants.end());
+  return value.serialize();
+}
+}  // namespace
+
+TEST(OrcaRoom, CoRosterKeepsLeadSeatsAndLinks)
+{
+  const ScopedEnv direct("ORCA_DIRECT", "1");
+  for (bool joining : {false, true})
+  for (bool reverse : {false, true})
+  {
+    const auto trace = TraceRoomForTest(TraceOptions(joining), {
+        {RK::Message, 0, RosterMessage("welcome", joining)},
+        {RK::Message, 0, PeerHello(joining)},
+        {RK::LinkPeer, 0, "peer"},
+        {RK::Message, 1, CoRoster("lobby", joining, true, true, true, reverse)},
+        {RK::Message, 2, PeerPacket(joining ? 0 : 1)}});
+    EXPECT_EQ(trace[3].state, RoomState::Waiting);
+    EXPECT_TRUE(trace[3].error_code.empty());
+    EXPECT_EQ(trace[3].seat, joining ? 1 : 0);
+    EXPECT_EQ(trace[3].co_seats, (std::vector<int>{2}));
+    EXPECT_EQ(trace[3].local_indices, (std::array<int, MAX_SEATS>{0, 0, 1, 1}));
+    EXPECT_EQ(trace[3].groups[2], (std::vector<int>{joining ? 1 : 0, 2}));
+    EXPECT_EQ(trace[3].groups[3], (std::vector<int>{joining ? 0 : 1, 3}));
+    EXPECT_EQ(trace[3].linked_seats, (std::vector<int>{joining ? 0 : 1}));
+    ASSERT_EQ(trace[3].events.size(), 1u);
+    EXPECT_EQ(trace[3].events[0].kind, PeerEvent::Kind::CoSeatArrived);
+    EXPECT_EQ(trace[3].events[0].lead, joining ? 0 : 1);
+    EXPECT_EQ(trace[3].events[0].seat, 3);
+    EXPECT_EQ(trace[4].packets.size(), 1u);
+  }
+}
+
+TEST(OrcaRoom, CoRosterAccessorsUseLocalOrdinalOrder)
+{
+  picojson::value welcome;
+  ASSERT_TRUE(picojson::parse(welcome, CoRoster("welcome", false, true, false, false)).empty());
+  auto& participants = welcome.get<picojson::object>()["participants"].get<picojson::array>();
+  participants[1].get<picojson::object>()["localIndex"] = picojson::value(2.0);
+  participants.emplace_back(picojson::object{{"connectionId", picojson::value("me")},
+      {"slot", picojson::value(3.0)}, {"localIndex", picojson::value(1.0)}});
+  std::reverse(participants.begin(), participants.end());
+  const auto trace = TraceRoomForTest(TraceOptions(false), {{RK::Message, 0, welcome.serialize()}});
+  EXPECT_EQ(trace[0].seat, 0);
+  EXPECT_EQ(trace[0].co_seats, (std::vector<int>{3, 2}));
+  EXPECT_EQ(trace[0].local_indices, (std::array<int, MAX_SEATS>{0, -1, 2, 1}));
+  EXPECT_EQ(trace[0].groups[2], (std::vector<int>{0, 3, 2}));
+  EXPECT_TRUE(trace[0].groups[1].empty());
+}
+
+TEST(OrcaRoom, CoRosterArrivesAndLeavesAsAGroup)
+{
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Message, 0, CoRoster("welcome", false, true, true)},
+      {RK::Message, 0, PeerHello(false)},
+      {RK::Message, 1, CoRoster("leave", false, true, false, false)}});
+  ASSERT_EQ(trace[1].events.size(), 1u);
+  EXPECT_EQ(trace[1].events[0].seat, 1);
+  EXPECT_EQ(trace[1].events[0].co_seats, (std::vector<int>{3}));
+  ASSERT_EQ(trace[2].events.size(), 2u);
+  for (int i = 0; i < 2; ++i)
+  {
+    EXPECT_EQ(trace[2].events[i].kind, PeerEvent::Kind::Left);
+    EXPECT_EQ(trace[2].events[i].seat, i == 0 ? 1 : 3);
+  }
+  EXPECT_EQ(trace[2].local_indices[3], -1);
+  EXPECT_TRUE(trace[2].groups[3].empty());
+}
+
+TEST(OrcaRoom, CoRosterPartialLeaveKeepsTheLead)
+{
+  const ScopedEnv direct("ORCA_DIRECT", "1");
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Message, 0, CoRoster("welcome", false, true, true)},
+      {RK::Message, 0, PeerHello(false)},
+      {RK::LinkPeer, 0, "peer"},
+      {RK::Message, 1, CoRoster("lobby", false, true, false)},
+      {RK::Message, 2, PeerPacket(1)}});
+  ASSERT_EQ(trace[3].events.size(), 1u);
+  EXPECT_EQ(trace[3].events[0].kind, PeerEvent::Kind::CoSeatLeft);
+  EXPECT_EQ(trace[3].events[0].seat, 3);
+  EXPECT_EQ(trace[3].linked_seats, (std::vector<int>{1}));
+  EXPECT_EQ(trace[4].packets.size(), 1u);
+}
+
+TEST(OrcaRoom, CoRosterResetAndAwayTimeoutLeaveEverySeat)
+{
+  for (bool timeout : {false, true})
+  {
+    std::vector<RoomTestStep> steps{
+        {RK::Message, 0, CoRoster("welcome", false, true, true)},
+        {RK::Message, 0, PeerHello(false)}};
+    if (timeout)
+    {
+      steps.push_back({RK::Message, 1000, CoRoster("away", false, true, true)});
+      const int expiry = 1000 + static_cast<int>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(ROOM_HOLD).count());
+      steps.push_back({RK::Tick, expiry - 1});
+      steps.push_back({RK::Tick, expiry});
+    }
+    else
+    {
+      steps.push_back({RK::Message, 1000, PeerHello(false, true)});
+    }
+    const auto trace = TraceRoomForTest(TraceOptions(false), steps);
+    const auto& events = trace.back().events;
+    ASSERT_GE(events.size(), 2u);
+    EXPECT_EQ(events[0].kind, PeerEvent::Kind::Left);
+    EXPECT_EQ(events[0].seat, 1);
+    EXPECT_EQ(events[1].kind, PeerEvent::Kind::Left);
+    EXPECT_EQ(events[1].seat, 3);
+    if (!timeout)
+    {
+      ASSERT_EQ(events.size(), 3u);
+      EXPECT_EQ(events[2].kind, PeerEvent::Kind::Arrived);
+      EXPECT_EQ(events[2].co_seats, (std::vector<int>{3}));
+    }
+  }
+}
+
+TEST(OrcaRoom, CoPacketsFollowTheCurrentRosterOnRelayAndDirect)
+{
+  for (bool direct : {false, true})
+  {
+    Packet valid = Frames(1, 20, 3);
+    valid.co = {{3, Frames(3, 40, 3).pads}};
+    Packet wrong = valid;
+    wrong.co[0].first = 2;
+    const auto step = [direct](const Packet& packet, int time) {
+      return RoomTestStep{direct ? RK::DirectPacket : RK::Message, time,
+          direct ? EncodePacket(packet) : fmt::format(
+              R"({{"t":"msg","from":"peer","d":{}}})", EncodePacket(packet)), 1};
+    };
+    const auto trace = TraceRoomForTest(TraceOptions(false), {
+        {RK::Message, 0, CoRoster("welcome", false, true, true)},
+        {RK::Message, 0, PeerHello(false)}, step(valid, 1), step(wrong, 2),
+        {RK::Message, 3, CoRoster("lobby", false, true, false)}, step(valid, 4)});
+    ASSERT_EQ(trace[2].packets.size(), 1u);
+    EXPECT_EQ(trace[2].packets[0].co, valid.co);
+    EXPECT_TRUE(trace[3].packets.empty());
+    ASSERT_EQ(trace[5].packets.size(), 1u);
+    EXPECT_EQ(trace[5].packets[0].co, valid.co);
+  }
+}
+TEST_F(OrcaRoomRuntime, FreshTicketReusesTheOriginalLobby)
+{
+  for (const char* queue : {"private", "casual", "ranked"})
+  {
+    const std::string code = std::string("colob") + queue;
+    const std::string lobby = R"({"version":1,"minPlayers":2,"maxLocalPlayers":1,"compatibility":"original-lobby"})";
+    auto room = Open(code, fmt::format(R"({{"queue":"{}","lobby":{}}})", queue, lobby));
+    ASSERT_TRUE(Wait([&] { return room->Seat() == 1; }));
+    // Later metadata must not replace the room's original lobby.
+    picojson::value welcome;
+    ASSERT_TRUE(picojson::parse(welcome, RosterMessage("welcome")).empty());
+    auto& message = welcome.get<picojson::object>();
+    message["room"] = picojson::value(picojson::object{{"queue", picojson::value(queue)},
+        {"lobby", picojson::value(picojson::object{{"maxLocalPlayers", picojson::value(2.0)}})}});
+    message["participants"].get<picojson::array>()[0].get<picojson::object>()["name"] =
+        picojson::value("Again");
+    Action(code, picojson::value(picojson::object{{"message", welcome}}).serialize());
+    ASSERT_TRUE(Wait([&] { return room->SeatName(1) == "Again"; }));
+    std::string ticket, store, error;
+    ASSERT_TRUE(room->FreshTicket(true, &ticket, &store, &error)) << error;
+    const auto lobbies = Request("/state/" + code).get("ticket_lobbies");
+    ASSERT_TRUE(lobbies.is<picojson::array>());
+    ASSERT_EQ(lobbies.get<picojson::array>().size(), 2u);
+    EXPECT_EQ(lobbies.get<picojson::array>()[0].get("maxLocalPlayers").get<double>(), 1);
+    picojson::value expected;
+    ASSERT_TRUE(picojson::parse(expected, lobby).empty());
+    EXPECT_EQ(lobbies.get<picojson::array>()[1], expected);
+  }
+}
+
+TEST_F(OrcaRoomRuntime, FreshTicketKeepsTicketLobbyWithoutWelcomeLobby)
+{
+  const std::string code = "coticket01";
+  const std::string lobby = R"({"version":1,"minPlayers":2,"maxLocalPlayers":2,"compatibility":"ticket-lobby"})";
+  auto room = Open(code, fmt::format(R"({{"ticket_lobby":{}}})", lobby));
+  ASSERT_TRUE(Wait([&] { return room->Seat() == 1; }));
+  std::string ticket, store, error;
+  ASSERT_TRUE(room->FreshTicket(true, &ticket, &store, &error)) << error;
+  const auto lobbies = Request("/state/" + code).get("ticket_lobbies");
+  ASSERT_TRUE(lobbies.is<picojson::array>());
+  ASSERT_EQ(lobbies.get<picojson::array>().size(), 2u);
+  EXPECT_EQ(lobbies.get<picojson::array>()[0].get("maxLocalPlayers").get<double>(), 1);
+  picojson::value expected;
+  ASSERT_TRUE(picojson::parse(expected, lobby).empty());
+  EXPECT_EQ(lobbies.get<picojson::array>()[1], expected);
+}
+
+TEST(OrcaRoom, CoHostLeaveIsReportedOnce)
+{
+  const auto trace = TraceRoomForTest(TraceOptions(true), {
+      {RK::Message, 0, CoRoster("welcome", true, true, true)},
+      {RK::Message, 0, PeerHello(true)},
+      {RK::Message, 1, CoRoster("leave", true, true, false, false)}});
+  ASSERT_EQ(trace.back().events.size(), 2u);
+  EXPECT_EQ(trace.back().events[0].seat, 0);
+  EXPECT_TRUE(trace.back().events[0].host);
+  EXPECT_EQ(trace.back().events[1].seat, 3);
+  EXPECT_FALSE(trace.back().events[1].host);
+}
+
+TEST(OrcaRoom, MissingCoSeatHoldsItsHostGroup)
+{
+  const auto trace = TraceRoomForTest(TraceOptions(true), {
+      {RK::Message, 0, CoRoster("welcome", true, true, true)},
+      {RK::Message, 0, PeerHello(true)},
+      {RK::InputSilence, 1000, "3", 1000}});
+  ASSERT_TRUE(trace.back().input_held);
+  EXPECT_TRUE(*trace.back().input_held);
+  ASSERT_TRUE(trace.back().host_input_deadline);
+  EXPECT_EQ(*trace.back().host_input_deadline, RoomClock::time_point{} + 1000ms + ROOM_HOLD);
+}
+
+TEST(OrcaRoom, RetryCoSeatResetsItsWholeGroupOnce)
+{
+  const auto trace = TraceRoomForTest(TraceOptions(true), {
+      {RK::Message, 0, CoRoster("welcome", true, true, true)},
+      {RK::Message, 0, PeerHello(true)},
+      {RK::RetryPeer, 1000, "", 0}, {RK::RetryPeer, 1000, "", 3}, {RK::Tick, 1001}});
+  const auto& events = trace.back().events;
+  ASSERT_EQ(events.size(), 2u);
+  EXPECT_EQ(events[0].kind, PeerEvent::Kind::Left);
+  EXPECT_EQ(events[0].seat, 0);
+  EXPECT_TRUE(events[0].host);
+  EXPECT_EQ(events[1].kind, PeerEvent::Kind::Left);
+  EXPECT_EQ(events[1].seat, 3);
+  EXPECT_FALSE(events[1].host);
+}
+
+TEST(OrcaRoom, HostGroupsFollowCurrentRoomOwnershipOnRelayAndDirect)
+{
+  for (const bool direct : {false, true})
+  {
+    Packet valid = Frames(0, 20, 3);
+    valid.co = {{3, Frames(3, 40, 3).pads}};
+    std::array<SeatPlan, MAX_SEATS> roster{};
+    roster.fill(SeatPlan{0, NEVER, 0});
+    valid.roster = roster;
+    valid.groups = std::array<int, MAX_SEATS>{0, 1, 1, 0};
+    const auto step = [direct](const Packet& packet, int time) {
+      return RoomTestStep{direct ? RK::DirectPacket : RK::Message, time,
+          direct ? EncodePacket(packet) : fmt::format(
+              R"({{"t":"msg","from":"peer","d":{}}})", EncodePacket(packet)), 0};
+    };
+    Packet wrong_co = valid;
+    (*wrong_co.groups)[3] = 1;
+    Packet wrong_local = valid;
+    (*wrong_local.groups)[2] = 0;
+    Packet scheduled = valid;
+    (*scheduled.roster)[3].unplug_from = 60;
+    const auto trace = TraceRoomForTest(TraceOptions(true), {
+        {RK::Message, 0, CoRoster("welcome", true, true, true)},
+        {RK::Message, 0, PeerHello(true)}, step(valid, 1), step(wrong_co, 2), step(wrong_local, 3),
+        {RK::Message, 4, CoRoster("lobby", true, true, false)}, step(scheduled, 5)});
+    EXPECT_EQ(trace[2].packets.size(), 1u);
+    EXPECT_TRUE(trace[3].packets.empty());
+    EXPECT_TRUE(trace[4].packets.empty());
+    // The host's scheduled unplug can outlive the participant's presence in the room.
+    EXPECT_EQ(trace[6].packets.size(), 1u);
+  }
+}
+
+TEST(OrcaRoom, OnlyTheRoomHostSuppliesGroups)
+{
+  Packet packet = Frames(1, 20, 3);
+  std::array<SeatPlan, MAX_SEATS> roster{};
+  roster.fill(SeatPlan{0, NEVER, 0});
+  packet.roster = roster;
+  packet.groups = std::array<int, MAX_SEATS>{0, 1, 0, 1};
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Message, 0, CoRoster("welcome", false, true, true)},
+      {RK::Message, 0, PeerHello(false)},
+      {RK::Message, 1, fmt::format(R"({{"t":"msg","from":"peer","d":{}}})", EncodePacket(packet))}});
+  EXPECT_TRUE(trace.back().packets.empty());
+}
+
+TEST(OrcaRoom, VacantCoSeatInputsStopWhenTheSlotIsTakenAgain)
+{
+  for (const bool direct : {false, true})
+  {
+    Packet packet = Frames(1, 20, 3);
+    packet.co = {{3, Frames(3, 40, 3).pads}};
+    const auto step = [direct](const Packet& value, int time) {
+      return RoomTestStep{direct ? RK::DirectPacket : RK::Message, time,
+          direct ? EncodePacket(value) : fmt::format(
+              R"({{"t":"msg","from":"peer","d":{}}})", EncodePacket(value)), 1};
+    };
+    picojson::value replacement;
+    ASSERT_TRUE(picojson::parse(replacement, CoRoster("lobby", false, true, false)).empty());
+    replacement.get<picojson::object>()["participants"].get<picojson::array>().emplace_back(
+        picojson::object{{"connectionId", picojson::value("replacement")},
+                        {"slot", picojson::value(3.0)}, {"localIndex", picojson::value(0.0)}});
+    Packet lead_only = packet;
+    lead_only.co.clear();
+    const auto trace = TraceRoomForTest(TraceOptions(false), {
+        {RK::Message, 0, CoRoster("welcome", false, true, false)},
+        {RK::Message, 0, PeerHello(false)}, step(packet, 1),
+        {RK::Message, 2, CoRoster("lobby", false, true, true)}, step(packet, 3),
+        {RK::Message, 4, CoRoster("lobby", false, true, false)}, step(packet, 5),
+        {RK::Message, 6, replacement.serialize()}, step(packet, 7), step(packet, 8),
+        step(lead_only, 9),
+        {RK::Message, 10, CoRoster("lobby", false, true, false)}, step(packet, 11)});
+    EXPECT_TRUE(trace[2].packets.empty());
+    EXPECT_EQ(trace[4].packets.size(), 1u);
+    EXPECT_EQ(trace[6].packets.size(), 1u);
+    for (const int index : {8, 9, 12})
+    {
+      ASSERT_EQ(trace[index].packets.size(), 1u);
+      EXPECT_EQ(trace[index].packets[0].pads, packet.pads);
+      EXPECT_TRUE(trace[index].packets[0].co.empty());
+    }
+    EXPECT_EQ(trace[10].packets.size(), 1u);
+  }
+}
+
+TEST(OrcaRoom, OwnCoSeatRemovalReachesTheHostEventPath)
+{
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Message, 0, CoRoster("welcome", false, true, true)},
+      {RK::Message, 1, CoRoster("lobby", false, false, true)}});
+  ASSERT_EQ(trace.back().events.size(), 1u);
+  EXPECT_EQ(trace.back().events[0].kind, PeerEvent::Kind::CoSeatLeft);
+  EXPECT_EQ(trace.back().events[0].seat, 2);
+  EXPECT_EQ(trace.back().events[0].lead, 0);
+}
+
+TEST_F(OrcaRoomRuntime, CoSeatArrivalUsesOneGroupAndOneKeyframeOffer)
+{
+  FriendsHeadlessCore core;
+  for (const bool recovering : {false, true})
+  {
+    const std::string code = recovering ? "corecover" : "cogroup";
+    auto room = Open(code,
+        R"({"joining":false,"doubles":true,"co_seats":{"me":[2],"peer":[3]}})", false);
+    ASSERT_TRUE(Wait([&] { return room->Seat() == 0 && room->ArrivalPending(); }));
+    if (recovering)
+    {
+      room->TakePeerEvents();
+      Action(code, R"({"message":{"t":"msg","from":"peer","d":{"k":"hello","c":"test",
+          "r":true,"h":false,"doubles":true,"ct":"01","resume":true,"resume_id":"co-cycle"}}})");
+      ASSERT_TRUE(Wait([&] { return room->ArrivalPending(); }));
+    }
+    RoomHashGame game;
+    auto store = MakeHttpKeyframeStore([&](bool fresh, std::string* ticket, std::string* server,
+                                          std::string* error) {
+      return room->FreshTicket(fresh, ticket, server, error);
+    });
+    const auto result = Rollback::OnlineMatch::PumpFriendsHostForTest(core.system, *room, game,
+        FriendsReplay(1524, 1600), 1600, {}, true, std::move(store));
+    ASSERT_TRUE(result.error.empty()) << result.error;
+    EXPECT_EQ(result.seats, (std::vector<int>{1, 3}));
+    EXPECT_EQ(result.groups, (std::array<int, MAX_SEATS>{0, 1, 0, 1}));
+    EXPECT_EQ(result.plan[2], (SeatPlan{0, NEVER, 0}));
+    EXPECT_EQ(result.plan[1].live_from, 1600);
+    EXPECT_EQ(result.plan[3].live_from, 1600);
+    EXPECT_EQ(result.plan[1].plug_from, result.plan[3].plug_from);
+    ASSERT_TRUE(Wait([&] { return Sent(code, "msg", "kf"); }));
+    int offers = 0;
+    const auto state = Request("/state/" + code);
+    for (const auto& message : state.get("messages").get<picojson::array>())
+      if (message.get("d").is<picojson::object>() && message.get("d").get("k").to_str() == "kf")
+      {
+        ++offers;
+        EXPECT_EQ(message.get("to").to_str(), "peer");
+      }
+    EXPECT_EQ(offers, 1);
+  }
+}
+
+
+TEST_F(OrcaRoomRuntime, HostSchedulesOwnCoSeatLeaveAhead)
+{
+  FriendsHeadlessCore core;
+  const std::string code = "coownleave";
+  auto room = Open(code,
+      R"({"joining":false,"doubles":true,"co_seats":{"me":[2],"peer":[3]}})", false);
+  ASSERT_TRUE(Wait([&] { return room->Seat() == 0 && room->ArrivalPending(); }));
+  room->TakePeerEvents();
+  RoomHashGame game;
+  const auto result = Rollback::OnlineMatch::PumpFriendsHostForTest(core.system, *room, game,
+      FriendsReplay(1524, 1600, 3), 1600, {1, 3}, true, nullptr, false,
+      [&](const std::function<void()>& pump) {
+        Action(code, fmt::format(R"({{"message":{}}})", CoRoster("lobby", false, false, true)));
+        ASSERT_TRUE(Wait([&] { return room->CoSeats().empty(); }));
+        pump();
+      });
+  ASSERT_TRUE(result.error.empty()) << result.error;
+  EXPECT_EQ(result.plan[2].unplug_from, 1600 + 7 + 2 * 6 + 4);
+  EXPECT_EQ(result.plan[0].unplug_from, NEVER);
+  EXPECT_EQ(result.groups[2], 0);
+}
+
+TEST_F(OrcaRoomRuntime, HostRetiresWaitingCoSeatAndKeepsItsLead)
+{
+  FriendsHeadlessCore core;
+  const std::string code = "cowaitleave";
+  auto room = Open(code,
+      R"({"joining":false,"doubles":true,"co_seats":{"me":[2],"peer":[3]}})", false);
+  ASSERT_TRUE(Wait([&] { return room->Seat() == 0 && room->ArrivalPending(); }));
+  RoomHashGame game;
+  auto store = MakeHttpKeyframeStore([&](bool fresh, std::string* ticket, std::string* server,
+                                        std::string* error) {
+    return room->FreshTicket(fresh, ticket, server, error);
+  });
+  const auto result = Rollback::OnlineMatch::PumpFriendsHostForTest(core.system, *room, game,
+      FriendsReplay(1524, 1600), 1600, {}, true, std::move(store), false,
+      [&](const std::function<void()>& pump) {
+        Action(code, fmt::format(R"({{"message":{}}})", CoRoster("lobby", false, true, false)));
+        ASSERT_TRUE(Wait([&] { return room->GroupOf(3).empty(); }));
+        pump();
+      });
+  ASSERT_TRUE(result.error.empty()) << result.error;
+  EXPECT_EQ(result.plan[3].live_from, NEVER);
+  EXPECT_EQ(result.plan[1].live_from, 1600);
+  EXPECT_EQ(result.plan[1].unplug_from, NEVER);
+  EXPECT_EQ(result.groups[1], 1);
+}
+
+TEST_F(OrcaRoomRuntime, CoSeatOrdinalStopsAtLocalOwnership)
+{
+  const std::string code = "coordinal";
+  auto room = Open(code,
+      R"({"joining":false,"doubles":true,"co_seats":{"me":[2],"peer":[3]}})", false);
+  ASSERT_TRUE(Wait([&] { return room->CoSeats() == std::vector<int>{2}; }));
+  EXPECT_EQ(room->LocalIndex(2, true), 1);
+  EXPECT_EQ(room->LocalIndex(3), 1);
+  EXPECT_EQ(room->LocalIndex(3, true), -1);
+  picojson::value roster;
+  ASSERT_TRUE(picojson::parse(roster, CoRoster("lobby", false, false, true)).empty());
+  roster.get<picojson::object>()["participants"].get<picojson::array>().emplace_back(
+      picojson::object{{"connectionId", picojson::value("replacement")},
+                      {"slot", picojson::value(2.0)}, {"localIndex", picojson::value(0.0)}});
+  Action(code, fmt::format(R"({{"message":{}}})", roster.serialize()));
+  ASSERT_TRUE(Wait([&] { return room->GroupOf(2) == std::vector<int>{2}; }));
+  EXPECT_EQ(room->LocalIndex(2), 0);
+  EXPECT_EQ(room->LocalIndex(2, true), -1);
+  EXPECT_EQ(room->LocalIndex(0, true), 0);
+}
+
+TEST(OrcaRoom, RetakenCoSeatKeepsTheFormerOwnersLeadPacket)
+{
+  for (const bool direct : {false, true})
+  {
+    auto replacement = picojson::value{};
+    ASSERT_TRUE(picojson::parse(replacement, CoRoster("lobby", false, false, false)).empty());
+    replacement.get<picojson::object>()["participants"].get<picojson::array>().emplace_back(
+        picojson::object{{"connectionId", picojson::value("replacement")},
+                        {"slot", picojson::value(3.0)}, {"localIndex", picojson::value(0.0)}});
+    Packet packet = Frames(1, 20, 3);
+    packet.co = {{3, Frames(3, 40, 3).pads}};
+    const auto step = [direct](const Packet& value, int time) {
+      return RoomTestStep{direct ? RK::DirectPacket : RK::Message, time,
+          direct ? EncodePacket(value) : fmt::format(
+              R"({{"t":"msg","from":"peer","d":{}}})", EncodePacket(value)), 1};
+    };
+    const auto trace = TraceRoomForTest(TraceOptions(false), {
+        {RK::Message, 0, CoRoster("welcome", false, false, true)},
+        {RK::Message, 0, PeerHello(false)},
+        {RK::Message, 1, CoRoster("lobby", false, false, false)},
+        {RK::Message, 2, replacement.serialize()}, step(packet, 3)});
+    ASSERT_EQ(trace.back().packets.size(), 1u);
+    EXPECT_EQ(trace.back().packets[0].pads, packet.pads);
+    EXPECT_TRUE(trace.back().packets[0].co.empty());
+  }
+}
+
+TEST_F(OrcaRoomRuntime, RetakenCoSeatRetiresBeforeHeldAdmission)
+{
+  FriendsHeadlessCore core;
+  const std::string code = "coretake";
+  auto room = Open(code,
+      R"({"joining":false,"doubles":true,"co_seats":{"peer":[3]}})", false);
+  ASSERT_TRUE(Wait([&] { return room->ArrivalPending(); }));
+  room->TakePeerEvents();
+  RoomHashGame game;
+  Orca::Net::Config config;
+  config.seats = MAX_SEATS;
+  config.per_peer_inputs = true;
+  config.authority_seat = 0;
+  config.start_frame = 1600;
+  std::array<SeatPlan, MAX_SEATS> plan{};
+  plan[0] = {0, NEVER, 0};
+  config.plan = plan;
+  auto session = std::make_unique<Session>(config, game, *room);
+  session->SetGroup(1, {3});
+  session->AddPeerBatch({1, 3}, 1600, 1600);
+  Packet caught_up = Frames(1, 1600, 1);
+  caught_up.co = {{3, caught_up.pads}};
+  caught_up.history_ack = 1599;
+  caught_up.current_frame = 1600;
+  Action(code, fmt::format(R"({{"message":{{"t":"msg","from":"peer","d":{}}}}})",
+                           EncodePacket(caught_up)));
+  ASSERT_TRUE(Wait([&] {
+    session->OnBoundary(1599, Pad{});
+    return session->Plan()[3].plug_from != NEVER;
+  }));
+  session->UnplugSeat(3);
+  const int unplug = session->Plan()[3].unplug_from;
+  const auto lead_plan = session->Plan()[1];
+  ASSERT_GT(unplug, session->CurrentFrame());
+  auto replacement = picojson::value{};
+  ASSERT_TRUE(picojson::parse(replacement, CoRoster("lobby", false, false, false)).empty());
+  replacement.get<picojson::object>()["participants"].get<picojson::array>().emplace_back(
+      picojson::object{{"connectionId", picojson::value("replacement")},
+                      {"slot", picojson::value(3.0)}, {"localIndex", picojson::value(0.0)}});
+  Action(code, fmt::format(R"({{"message":{}}})", replacement.serialize()));
+  ASSERT_TRUE(Wait([&] { return room->GroupOf(3) == std::vector<int>{3}; }));
+  Action(code, R"({"message":{"t":"msg","from":"replacement","d":{"k":"hello","c":"test",
+      "r":true,"h":false,"doubles":true,"ct":"03"}}})");
+  ASSERT_TRUE(Wait([&] { return room->ArrivalPending(); }));
+  EXPECT_TRUE(Rollback::OnlineMatch::PumpHeldFriendsEventsForTest(*room, session, {1, 3}));
+  EXPECT_EQ(session->Plan()[3].live_from, NEVER);
+  EXPECT_EQ(session->Plan()[3].unplug_from, unplug);
+  EXPECT_EQ(session->Plan()[1], lead_plan);
+  EXPECT_TRUE(session->Error().empty()) << session->Error();
+}
+
+TEST(OrcaRoom, RetakenCoSeatKeepsTheHostsScheduledRoster)
+{
+  picojson::value replacement;
+  ASSERT_TRUE(picojson::parse(replacement, CoRoster("lobby", true, false, false)).empty());
+  replacement.get<picojson::object>()["participants"].get<picojson::array>().emplace_back(
+      picojson::object{{"connectionId", picojson::value("replacement")},
+                      {"slot", picojson::value(3.0)}, {"localIndex", picojson::value(0.0)}});
+  Packet packet = Frames(0, 20, 3);
+  std::array<SeatPlan, MAX_SEATS> plan{};
+  plan[0] = plan[1] = {0, NEVER, 0};
+  plan[3] = {0, 80, 0};
+  packet.roster = plan;
+  packet.groups = std::array<int, MAX_SEATS>{0, 1, -1, 0};
+  const auto trace = TraceRoomForTest(TraceOptions(true), {
+      {RK::Message, 0, CoRoster("welcome", true, false, true)},
+      {RK::Message, 0, PeerHello(true)},
+      {RK::Message, 1, CoRoster("lobby", true, false, false)},
+      {RK::Message, 2, replacement.serialize()},
+      {RK::Message, 3, fmt::format(R"({{"t":"msg","from":"peer","d":{}}})",
+                                  EncodePacket(packet))}});
+  ASSERT_EQ(trace.back().packets.size(), 1u);
+  EXPECT_EQ(trace.back().packets[0].groups, packet.groups);
+  EXPECT_EQ(trace.back().packets[0].roster, packet.roster);
+}
+
+TEST_F(OrcaRoomRuntime, LocalOrdinalUsesPositionAfterRemoveAndReadd)
+{
+  const ScopedEnv enabled("ORCA_SESSION", "1");
+  const Common::ScopeGuard cleanup([] { Orca::Online::Shutdown(); });
+  const std::string code = "coindex";
+  Request("/configure/" + code, fmt::format(
+      R"({{"joining":false,"doubles":true,"co_seats":{{"me":[2]}},"compatibility":"{}"}})",
+      Orca::Online::CompatibilityKey()));
+  Orca::Online::StartRoom(code, false, true);
+  ASSERT_TRUE(Wait([] { return Orca::Online::CoSeats() == std::vector<int>{2}; }));
+  auto roster = picojson::value{};
+  ASSERT_TRUE(picojson::parse(roster, CoRoster("lobby", false, true, false)).empty());
+  for (auto& participant : roster.get<picojson::object>()["participants"].get<picojson::array>())
+    if (participant.get("slot").get<double>() == 2)
+      participant.get<picojson::object>()["localIndex"] = picojson::value(2.0);
+  Action(code, fmt::format(R"({{"message":{}}})", roster.serialize()));
+  auto* room = static_cast<YouGameRoom*>(Orca::Online::Transport());
+  ASSERT_TRUE(Wait([&] { return room->LocalIndex(2) == 2; }));
+  EXPECT_EQ(Orca::Online::LocalIndex(0), 0);
+  EXPECT_EQ(Orca::Online::LocalIndex(2), 1);
+  EXPECT_EQ(Orca::Online::LocalIndex(1), -1);
+  EXPECT_EQ(Orca::Online::LocalIndex(-1), -1);
 }

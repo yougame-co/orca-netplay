@@ -24,6 +24,7 @@
 #include "Common/Network.h"
 #include "Core/Orca/Bridge.h"
 #include "Core/Orca/Profile.h"
+#include "Core/Orca/Status.h"
 #include "Core/Orca/Session/PadCodec.h"
 #include "Core/Orca/UX/Controllers.h"
 #include "InputCommon/ControlReference/ControlReference.h"
@@ -574,7 +575,9 @@ struct Teardown
 
 // LastLocalDevice, packed so one atomic holds it: the source in bit 16, the index below.
 constexpr int NO_DEVICE = -1;
-std::atomic<int> s_local_device{NO_DEVICE};
+std::array<std::atomic<int>, MAX_LOCAL> s_local_devices{NO_DEVICE, NO_DEVICE};
+std::atomic<int> s_local_count{1};
+std::array<std::atomic<bool>, MAX_LOCAL> s_assignment_known{false, false};
 
 int PackDevice(PadSource source, int index)
 {
@@ -582,7 +585,7 @@ int PackDevice(PadSource source, int index)
 }
 
 // The pad from the newest snapshot; `for_frame` also records input age.
-std::optional<LocalChoice> Choose(bool for_frame)
+std::optional<LocalChoice> Choose(int ordinal, bool for_frame)
 {
   std::optional<LocalChoice> choice;
   std::string age_line;
@@ -594,8 +597,11 @@ std::optional<LocalChoice> Choose(bool for_frame)
     const std::optional<Stream::Cached> cached = s_stream->Latest();
     if (!cached)
       return std::nullopt;
-    choice = ChooseLocalPad(*cached->snapshot, cached->age_ms);
-    if (for_frame)
+    if (ordinal < 0 || ordinal >= MAX_LOCAL)
+      return std::nullopt;
+    choice = ChooseLocalPads(*cached->snapshot, cached->age_ms,
+                             s_local_count.load(std::memory_order_relaxed))[ordinal];
+    if (for_frame && ordinal == 0)
       age_line = s_stream->NoteFrame(*cached, choice ? &*choice : nullptr);
   }
   if (!age_line.empty())
@@ -627,7 +633,7 @@ void StopControllerStream()
 
 std::optional<GCPadStatus> LatestPad()
 {
-  if (const auto choice = Choose(false))
+  if (const auto choice = Choose(0, false))
     return choice->pad;
   return std::nullopt;
 }
@@ -679,18 +685,49 @@ void StartControllerStreamFromEnvironment()
   StartControllerStream(bridge, token);
 }
 
+void SetLocalPadCount(int n)
+{
+  if (s_local_count.exchange(std::clamp(n, 1, MAX_LOCAL), std::memory_order_relaxed) !=
+      std::clamp(n, 1, MAX_LOCAL))
+    for (int ordinal = 0; ordinal < MAX_LOCAL; ++ordinal)
+    {
+      s_local_devices[ordinal].store(NO_DEVICE, std::memory_order_relaxed);
+      s_assignment_known[ordinal].store(false, std::memory_order_relaxed);
+    }
+}
+
 std::optional<GCPadStatus> LocalPad(bool for_frame)
 {
-  // Time the read before the focus check: focus changes what the game gets, not input age.
-  const auto choice = Choose(for_frame);
+  return LocalPad(0, for_frame);
+}
+
+std::optional<GCPadStatus> LocalPad(int ordinal, bool for_frame)
+{
+  if (ordinal < 0 || ordinal >= MAX_LOCAL)
+    return NeutralPad();
+  // Time the lead before the focus check, as in one-seat mode.
+  const auto choice = Choose(ordinal, for_frame);
   if (for_frame)
   {
-    s_local_device.store(choice ? PackDevice(choice->source, choice->index) : NO_DEVICE,
-                         std::memory_order_relaxed);
+    const int device = choice ? PackDevice(choice->source, choice->index) : NO_DEVICE;
+    const int previous = s_local_devices[ordinal].exchange(device, std::memory_order_relaxed);
+    const bool known = s_assignment_known[ordinal].exchange(true, std::memory_order_relaxed);
+    if (s_local_count.load(std::memory_order_relaxed) > 1 && (!known || previous != device))
+    {
+      std::string line = "orca seats";
+      for (int index = 0; index < MAX_LOCAL; ++index)
+      {
+        const auto selected = LastLocalDevice(index);
+        line += fmt::format(" {}={}", index + 1, selected ?
+            fmt::format("{}:{}", selected->source == PadSource::Adapter ? "adapter" : "pad",
+                        selected->index) : "none");
+      }
+      Status::Line(line);
+    }
   }
   if (!choice)
-    return std::nullopt;
-  // Agent copies can drive the app's virtual pad without focusing the window.
+    return s_local_count.load(std::memory_order_relaxed) > 1 ?
+               std::optional<GCPadStatus>(NeutralPad()) : std::nullopt;
   if (!ControlReference::GetInputGate() && !InputCommon::VirtualPadOnly())
     return NeutralPad();
   return choice->pad;
@@ -698,7 +735,14 @@ std::optional<GCPadStatus> LocalPad(bool for_frame)
 
 std::optional<LocalDevice> LastLocalDevice()
 {
-  const int packed = s_local_device.load(std::memory_order_relaxed);
+  return LastLocalDevice(0);
+}
+
+std::optional<LocalDevice> LastLocalDevice(int ordinal)
+{
+  if (ordinal < 0 || ordinal >= MAX_LOCAL)
+    return std::nullopt;
+  const int packed = s_local_devices[ordinal].load(std::memory_order_relaxed);
   if (packed == NO_DEVICE)
     return std::nullopt;
   return LocalDevice{(packed >> 16) ? PadSource::Gamepad : PadSource::Adapter, packed & 0xffff};

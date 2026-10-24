@@ -48,6 +48,9 @@ private:
 // times the read for the release (OverlayKey::Press::Release). CPU thread only.
 GCPadStatus FilterLocalPad(GCPadStatus pad, bool first_run, bool live,
                            OverlayKey::Ms now = OverlayKey::NowMs());
+// The same deterministic shortcut mask for a co-seat, with caller-owned combo state and no
+// overlay or talk side effects.
+GCPadStatus FilterCoSeatPad(GCPadStatus pad, OrbCombo& combo, bool first_run, bool live);
 // While the session holds a frame on a friend's input (each stall tick) no frame reads the pad, so
 // a talk press would not end until the game moved again, up to the stall limit later. `buttons` is
 // the local pad as a frame would read it now (nullopt: no fresh read, as for a test script's pad);

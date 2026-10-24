@@ -2831,6 +2831,20 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.81
+
+- More groundwork for two players on one computer in online matches (switched off; nothing changes yet).
+
+### 0.3.80
+
+- Windows: games start about 0.1-0.2 s sooner (no throwaway graphics device before the real one).
+- Groundwork for two players on one computer in online matches (switched off; nothing changes yet).
+
+### 0.3.79
+
+- The game's log times the start of a game in finer steps (system setup, Wii storage, settings file,
+  graphics device and window, the game's first frame), so slow starts can be found. Players see no change.
+
 ### 0.3.77
 
 - Project+ 3.2.1b: YG Dolphin plays the new Project+ release (profile PPLUS321) next to 3.2.

@@ -51,6 +51,7 @@
 #include "Core/Orca/Session/RoomResilience.h"
 #include "Core/Orca/Status.h"
 #include "Core/Orca/UX/Overlay.h"
+#include "Core/Orca/UX/ControllerSource.h"
 #include "Core/Orca/UX/Probe.h"
 #include "Core/Orca/UX/MenuEvents.h"
 #include "Core/Orca/UX/QueueApp.h"
@@ -135,6 +136,7 @@ struct Arrival
   Clock::time_point arrived_at = Clock::now();
   u64 arrived_boundary = 0;
   int next_keyframe_notice = 15;
+  int lead = -1;
 };
 
 struct Match
@@ -149,6 +151,7 @@ struct Match
   bool joining = false;
   bool reopen_join = false;
   int local_seat = 0;
+  std::vector<int> co_seats;
   // The frame the current boundary completes (-1 at the first boundary).
   int running = -1;
 
@@ -156,7 +159,7 @@ struct Match
   int log_base = 0;
   std::vector<Pads> log;
   // Local inputs the session had already sampled ahead (its input delay) when it ended.
-  std::deque<Pad> queued_local;
+  std::array<std::deque<Pad>, Orca::Net::MAX_SEATS> queued_local{};
   std::unique_ptr<KeyframeJob> job;
   std::optional<Orca::Net::KeyframeInfo> keyframe;
   // The header generation `keyframe` was captured under (KeyframeJob::generation).
@@ -281,6 +284,7 @@ struct Match
   {
     int frame = 0;
     int local_seat = 0;
+    std::vector<int> co_seats;
     Clock::time_point loaded_time{};
     MachineImage image;
     std::vector<Orca::Net::NandEntry> nand;
@@ -411,6 +415,23 @@ Match& TheMatch()
 {
   static Match match;
   return match;
+}
+
+int LeadSeat(const Match& match)
+{
+  return match.session ? match.session->LocalSeat() : match.local_seat;
+}
+
+bool IsLocal(const Match& match, int seat)
+{
+  return match.session ? match.session->IsLocal(seat) :
+      seat == match.local_seat || std::ranges::find(match.co_seats, seat) != match.co_seats.end();
+}
+
+void ClearQueuedLocal(Match& match)
+{
+  for (auto& queue : match.queued_local)
+    queue.clear();
 }
 
 // This game plays alone with no drop-in under way (SoloPauseAllowed).
@@ -805,17 +826,18 @@ void RunSolo(Match& match, const std::function<Pad(int)>& local_pad)
 {
   // The local pad is read every frame, even when the frame doesn't use it, so the app's stream and
   // the input stats see each frame.
-  Pad pad;
-  if (!match.queued_local.empty())
-  {
-    pad = match.queued_local.front();
-    match.queued_local.pop_front();
-  }
-  else
-  {
-    pad = local_pad(match.local_seat);
-  }
-  if (match.doubles && !match.waiting.empty() && Orca::UX::Game().Read().OnTheMenus())
+  const auto sample = [&](int seat) {
+    auto& queue = match.queued_local[seat];
+    if (queue.empty())
+      return local_pad(seat);
+    const Pad pad = queue.front();
+    queue.pop_front();
+    return pad;
+  };
+  Pad pad = sample(match.local_seat);
+  const bool mask_start = match.doubles && !match.waiting.empty() &&
+                          Orca::UX::Game().Read().OnTheMenus();
+  if (mask_start)
     pad[0] &= static_cast<u8>(~(PAD_BUTTON_START >> 8));
   const int frame = match.running + 1;
   if (const int until = FastUntil();
@@ -836,6 +858,14 @@ void RunSolo(Match& match, const std::function<Pad(int)>& local_pad)
   {
     pads.fill(Orca::Net::UNPLUGGED_PAD);
     pads[match.local_seat] = FreshPad(match, pad, frame);
+    for (const int seat : match.co_seats)
+    {
+      Pad co_pad = sample(seat);
+      if (mask_start)
+        co_pad[0] &= static_cast<u8>(~(PAD_BUTTON_START >> 8));
+      // The unseen tail/hold masks every local pad. Only the lead steers its queue pick.
+      pads[seat] = match.fresh ? Pad{} : co_pad;
+    }
   }
   match.port->SetPads(frame, pads);
   match.log.push_back(pads);
@@ -857,7 +887,8 @@ void DropFriends(Match& match, const std::string& reason, bool announce = true)
 {
   for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
   {
-    if (seat == match.local_seat || match.session->Plan()[seat].live_from == Orca::Net::NEVER)
+    if (IsLocal(match, seat) || match.session->LeadOf(seat) != seat ||
+        match.session->Plan()[seat].live_from == Orca::Net::NEVER)
       continue;
     Orca::Online::DropPeer(seat, reason);
     match.session->DropSeat(seat);
@@ -882,8 +913,12 @@ void GoSolo(Match& match, const char* why, const char* state = "playing")
   ConfirmResults(match);
   Orca::Events::NoteResync();
   match.log = match.session->TakeLog(&match.log_base);
-  const std::vector<Pad> pending = match.session->PendingLocal();
-  match.queued_local.assign(pending.begin(), pending.end());
+  for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
+  {
+    const auto pending = match.session->PendingLocal(seat);
+    match.queued_local[seat].assign(pending.begin(), pending.end());
+  }
+  std::erase_if(match.co_seats, [&](int seat) { return !match.session->IsLocal(seat); });
   Orca::Net::Stats stats = match.session->GetStats();
   NOTICE_LOG_FMT(ROLLBACK, "Drop-in: back to solo play at frame {} ({}): {} rollbacks, {} checksums matched",
                  match.running + 1, why, stats.rollbacks, stats.checksums_matched);
@@ -1110,7 +1145,12 @@ void Reseat(Match& match)
     return;
   NOTICE_LOG_FMT(ROLLBACK, "Drop-in: port {} moves to port 1 from frame {}", match.local_seat + 1,
                  match.running + 1);
+  auto pending = std::move(match.queued_local[match.local_seat]);
+  ClearQueuedLocal(match);
+  match.queued_local[0] = std::move(pending);
   match.local_seat = 0;
+  match.co_seats.clear();
+  Orca::UX::SetLocalPadCount(1);
   // Names came from the old host's roster; this player's own comes from its new room.
   match.port_names.clear();
 }
@@ -1318,7 +1358,7 @@ void BecomeSolo(Match& match, const char* why, const char* state, bool own_boot 
   {
     match.log.clear();
     match.log_base = match.running + 1;
-    match.queued_local.clear();
+    ClearQueuedLocal(match);
   }
   if (own_boot)
     Reseat(match);
@@ -1410,11 +1450,33 @@ void EndQueueForFriend(Match& match, bool arrived, bool invited)
   Orca::Status::Menu("cancel");
 }
 
+void RetireReassignedCoSeats(Match& match, Orca::Net::YouGameRoom* test_room = nullptr)
+{
+  if (!match.session || match.joining)
+    return;
+  for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
+  {
+    if (match.session->LeadOf(seat) == seat)
+      continue;
+    const auto group = test_room ? test_room->GroupOf(seat) : Orca::Online::GroupOf(seat);
+    if (!group.empty() && group.front() != match.session->LeadOf(seat))
+    {
+      match.session->UnplugSeat(seat);
+      match.session->PrepareAdmission(seat);
+    }
+  }
+}
+
 void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test_room = nullptr,
                 std::optional<bool> test_menus = std::nullopt)
 {
   ++match.host_boundaries;
   match.doubles = test_room ? test_room->Doubles() : Orca::Online::RoomDoubles();
+  if (!match.session && (test_room || Orca::Online::InRoom()))
+  {
+    match.co_seats = test_room ? test_room->CoSeats() : Orca::Online::CoSeats();
+    Orca::UX::SetLocalPadCount(match.co_seats.empty() ? 1 : 2);
+  }
   const bool in_room = test_room ? test_room->Connected() : Orca::Online::InRoom();
   const bool in_queue_room = test_room ? QueueMode(test_room->Queue()) != Orca::Engine::Mode::None :
                                          InQueueRoom();
@@ -1450,7 +1512,8 @@ void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test
           }) && std::ranges::all_of(match.menu_waiting, [&](const auto& entry) {
             return entry.first == event.seat || entry.second.doubles;
           });
-      if ((match.doubles && !event.doubles) || (!capable && (std::any_of(match.seated.begin(), match.seated.end(),
+      if ((!event.co_seats.empty() && !capable) ||
+          (match.doubles && !event.doubles) || (!capable && (std::any_of(match.seated.begin(), match.seated.end(),
                       [&event](int seat) { return seat != event.seat; }) ||
           std::any_of(match.waiting.begin(), match.waiting.end(),
                       [&event](const auto& waiting) { return waiting.first != event.seat; }) ||
@@ -1472,6 +1535,13 @@ void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test
                           match.menu_waiting : match.waiting;
       arrivals[event.seat] = {event.name, event.controls, event.queue, event.recovering,
                               event.doubles, Clock::now(), match.host_boundaries};
+      arrivals[event.seat].lead = event.seat;
+      for (const int co : event.co_seats)
+      {
+        arrivals[co] = {test_room ? test_room->SeatName(co) : Orca::Online::SeatName(co), {}, {},
+                        event.recovering, event.doubles, Clock::now(), match.host_boundaries};
+        arrivals[co].lead = event.seat;
+      }
       if (event.recovering)
       {
         if (match.doubles && match.session)
@@ -1483,6 +1553,16 @@ void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test
       match.keyframe_wanted = true;
       arrived = true;
       Orca::Status::State("friend-joining");
+    }
+    else if (event.kind == Orca::Net::PeerEvent::Kind::CoSeatLeft)
+    {
+      match.waiting.erase(event.seat);
+      match.menu_waiting.erase(event.seat);
+      match.plugging.erase(event.seat);
+      match.seated.erase(event.seat);
+      match.doubles_seats.erase(event.seat);
+      if (match.session)
+        match.session->UnplugSeat(event.seat);
     }
     else if (event.kind == Orca::Net::PeerEvent::Kind::Left)
     {
@@ -1625,6 +1705,8 @@ void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test
     }
   }
 
+  RetireReassignedCoSeats(match, test_room);
+
   // A host in a single-player mode (Classic, Training, Events...) holds waiting friends until its
   // game is back in the menus (Games/Brawl/OnlineMenu.h SequenceHoldsDropIn).
   const bool recovering = !match.waiting.empty() && std::ranges::all_of(match.waiting, [](const auto& entry) {
@@ -1632,7 +1714,8 @@ void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test
   });
   const bool batch_ready = !match.doubles || match.batch.Ready(
       on_menus, static_cast<int>(match.waiting.size()),
-      static_cast<int>(match.plugging.size()), recovering, Clock::now());
+      static_cast<int>(match.plugging.size()), recovering, Clock::now(),
+      1 + static_cast<int>(match.co_seats.size()));
   const bool hold = !match.waiting.empty() &&
       (Orca::UX::Game().Read().DropInHeld() || !batch_ready);
   const bool notice_hold = hold || !match.menu_waiting.empty();
@@ -1793,8 +1876,11 @@ void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test
     for (const auto& [seat, arrival] : match.waiting)
       if (match.session->Plan()[seat].unplug_from != Orca::Net::NEVER)
         live_from = std::max(live_from, match.session->Plan()[seat].unplug_from);
-  const bool batch = match.doubles && !recovering &&
-                     (match.waiting.size() > 1 || !match.seated.empty());
+  const bool grouped = std::ranges::any_of(match.waiting, [](const auto& entry) {
+    return entry.second.lead >= 0 && entry.second.lead != entry.first;
+  });
+  const bool batch = match.doubles &&
+                     (grouped || (!recovering && (match.waiting.size() > 1 || !match.seated.empty())));
   std::vector<int> batch_seats;
   if (batch)
   {
@@ -1823,11 +1909,16 @@ void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test
       Orca::Net::Config config = SessionConfig();
       config.per_peer_inputs = match.doubles;
       config.local_seat = 0;
+      config.co_seats = match.co_seats;
       config.authority_seat = 0;
       config.start_frame = next;
       config.start_pad = match.log.empty() ? Pad{} : match.log.back()[0];
+      for (const int local : match.co_seats)
+        config.start_pads[local] = match.log.empty() ? Pad{} : match.log.back()[local];
       std::array<Orca::Net::SeatPlan, Orca::Net::MAX_SEATS> plan{};
       plan[0] = {0, Orca::Net::NEVER, 0};
+      for (const int local : match.co_seats)
+        plan[local] = {0, Orca::Net::NEVER, 0};
       config.plan = plan;
       // Anything that arrived while solo (a departed friend's last packets) belongs to no one.
       auto* transport = test_room ? test_room : Orca::Online::Transport();
@@ -1839,7 +1930,7 @@ void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test
       match.session->SetLog(match.log_base, std::move(match.log));
       match.log.clear();
       // Solo pads had no delay; now they do, and skipped frames repeat the current pad (start_pad).
-      match.queued_local.clear();
+      ClearQueuedLocal(match);
       // A fresh start still putting port 1's pick back hands it to the player: in a session the
       // local pad is sampled ahead of the frame it plays.
       EndFresh(match, "a session starts");
@@ -1853,6 +1944,17 @@ void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test
     }
     if (batch && !batch_seats.empty())
     {
+      for (const auto& [lead, arrival] : match.waiting)
+      {
+        if (arrival.lead != lead)
+          continue;
+        std::vector<int> co;
+        for (const auto& [member, member_arrival] : match.waiting)
+          if (member != lead && member_arrival.lead == lead)
+            co.push_back(member);
+        if (!co.empty())
+          match.session->SetGroup(lead, co);
+      }
       match.session->AddPeerBatch(batch_seats, live_from, keyframe_frame);
       batch_seats.clear();
     }
@@ -1873,15 +1975,18 @@ void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test
     offer.names = AllNames(match);
     offer.names_version = match.names_version;
     // Others acknowledge the newcomer's values in their packets (Session::RequireValues).
-    if (test_room)
+    if (it->second.lead < 0 || it->second.lead == seat)
     {
-      test_room->BroadcastNames(offer.names, offer.names_version);
-      test_room->OfferKeyframe(seat, offer);
-    }
-    else
-    {
-      Orca::Online::BroadcastNames(offer.names, offer.names_version);
-      Orca::Online::OfferKeyframe(seat, offer);
+      if (test_room)
+      {
+        test_room->BroadcastNames(offer.names, offer.names_version);
+        test_room->OfferKeyframe(seat, offer);
+      }
+      else
+      {
+        Orca::Online::BroadcastNames(offer.names, offer.names_version);
+        Orca::Online::OfferKeyframe(seat, offer);
+      }
     }
     NOTICE_LOG_FMT(ROLLBACK,
                    "Drop-in: port {} replays from keyframe frame {}, live from frame {}", seat + 1,
@@ -2283,7 +2388,7 @@ std::optional<int> FreshStart(Core::System& system, Match& match)
                                   kind == FreshKind::Menu ? NewHistorySeed() : 0);
   match.log.clear();
   match.log_base = frame;
-  match.queued_local.clear();
+  ClearQueuedLocal(match);
   // This player's own name, controls and queue identity apply from the origin.
   match.port_names.clear();
   RefreshOwnValues(match, frame);
@@ -2373,6 +2478,7 @@ Load LoadKeyframe(Core::System& system, Match& match, int* frame_out)
   auto before = std::make_unique<Match::QueueImage>();
   before->frame = match.running + 1;
   before->local_seat = match.local_seat;
+  before->co_seats = match.co_seats;
   before->loaded_time = match.loaded_time;
   before->replay = match.replay;
   if (!SnapshotRing::Capture(system, &before->image, false))
@@ -2422,6 +2528,8 @@ void FinishReplay(Match& match)
   if (!download.info.shared)
     DeleteStored(match, download.info);
   match.local_seat = Orca::Online::Seat();
+  match.co_seats = Orca::Online::CoSeats();
+  Orca::UX::SetLocalPadCount(match.co_seats.empty() ? 1 : 2);
   if (match.later_names && match.later_names->names_version > download.info.names_version)
     SetNames(match, *match.later_names);
   else
@@ -2429,9 +2537,10 @@ void FinishReplay(Match& match)
   match.later_names.reset();
   match.log.clear();
   match.log_base = frame;
-  match.queued_local.clear();
+  ClearQueuedLocal(match);
   Orca::Net::Config config = SessionConfig();
   config.local_seat = match.local_seat;
+  config.co_seats = match.co_seats;
   config.authority_seat = match.host_seat;
   config.start_frame = frame;
   std::array<Orca::Net::SeatPlan, Orca::Net::MAX_SEATS> plan{};
@@ -2466,6 +2575,8 @@ bool RestoreBeforeJoin(Core::System& system, Match& match)
   system.GetJitInterface().ClearSafe();
   match.running = before->frame - 1;
   match.local_seat = before->local_seat;
+  match.co_seats = std::move(before->co_seats);
+  Orca::UX::SetLocalPadCount(match.co_seats.empty() ? 1 : 2);
   match.loaded_time = before->loaded_time;
   match.replay = std::move(before->replay);
   match.replaying.reset();
@@ -2982,7 +3093,7 @@ bool MaybeRestoreQueueImage(Core::System& system, Match& match)
   match.log_base = frame;
   match.running = frame - 1;
   match.replay = std::move(image->replay);
-  match.queued_local.clear();
+  ClearQueuedLocal(match);
   match.keyframe.reset();
   // This player's own game plays port 1, and a room of its own opens (a former joiner had none).
   Reseat(match);
@@ -3308,9 +3419,25 @@ const Orca::Net::KeyframeInfo::Name* EntryAt(const Match& match, int seat, int f
   return nullptr;
 }
 
+void RefreshCoValues(Match& match, int frame)
+{
+  for (const int seat : match.co_seats)
+  {
+    if (!IsLocal(match, seat))
+      continue;
+    const auto* now = EntryAt(match, seat, frame);
+    std::string name = Orca::Online::SeatName(seat);
+    if (name.empty() && now)
+      name = now->name;
+    if (now ? now->name != name || !now->controls.empty() || !now->queue.empty() : !name.empty())
+      AddName(match, {seat, frame, std::move(name), {}, {}});
+  }
+}
+
 // Host, as a session starts: record its own name and controls from `frame` if they changed.
 void RefreshOwnValues(Match& match, int frame)
 {
+  RefreshCoValues(match, frame);
   const Orca::Net::KeyframeInfo::Name* now = EntryAt(match, match.local_seat, frame);
   std::string own = Orca::Online::Seat() == match.local_seat ?
                         Orca::Online::SeatName(match.local_seat) :
@@ -3352,8 +3479,10 @@ std::vector<Orca::Events::PortInfo> PortsAt(Match& match, int frame)
               {match.local_seat, frame, std::move(own), std::move(controls), std::move(queue)});
     }
   }
+  if (!match.joining && !match.session)
+    RefreshCoValues(match, frame);
   const auto port = [&](int seat) {
-    Orca::Events::PortInfo info{seat, "", seat != match.local_seat, {}};
+    Orca::Events::PortInfo info{seat, "", !IsLocal(match, seat), {}};
     if (const Orca::Net::KeyframeInfo::Name* entry = EntryAt(match, seat, frame))
     {
       info.name = entry->name;
@@ -3366,6 +3495,8 @@ std::vector<Orca::Events::PortInfo> PortsAt(Match& match, int frame)
   if (!match.session)
   {
     ports.push_back(port(match.local_seat));
+    for (const int seat : match.co_seats)
+      ports.push_back(port(seat));
     return ports;
   }
   for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
@@ -3397,7 +3528,8 @@ void PerfBoundary(const Match& match)
   {
     for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
     {
-      if (seat != match.local_seat && match.session->Plugged(seat, match.running))
+      if (!IsLocal(match, seat) && match.session->LeadOf(seat) == seat &&
+          match.session->Plugged(seat, match.running))
         ++boundary.peers;
     }
     boundary.rerun_total = static_cast<u64>(match.session->GetStats().resimulated_frames);
@@ -3417,7 +3549,8 @@ void PublishStats(Match& match)
   {
     for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
     {
-      if (seat != match.local_seat && match.session->Plugged(seat, match.running))
+      if (!IsLocal(match, seat) && match.session->LeadOf(seat) == seat &&
+          match.session->Plugged(seat, match.running))
         ++peers;
     }
   }
@@ -3495,6 +3628,9 @@ void PublishStats(Match& match)
   num("rpf", input_frames > 0 ?
                  std::round(double(input.reports - input_last.reports) / input_frames * 10) / 10 :
                  -1);
+  if (!match.co_seats.empty())
+    num("local", 1 + std::ranges::count_if(match.co_seats,
+        [&](int seat) { return IsLocal(match, seat); }));
   Orca::Status::Stats(picojson::value(o).serialize());
   match.stats_time = now;
   match.stats_frame = match.running;
@@ -4344,12 +4480,13 @@ static std::optional<int> SessionBoundary(
     std::optional<Orca::Perf::StepScope> perf_scope;
     perf_scope.emplace();
     const Orca::Net::Step step = StepSession(
-        *match.session, *match.port, match.running, [&] { return local_pad(match.local_seat); },
+        *match.session, *match.port, match.running, local_pad,
         [&] {
           // A talk press still down ends when Start is let go, not when the game moves again.
           // Host only: it reads the pad without recording or sending it (UX/OrbCombo.h).
           if (local_pad_waiting)
             local_pad_waiting(match.local_seat);
+          RetireReassignedCoSeats(match);
           const auto poll_time = Clock::now();
           if (poll_time - stall_published > std::chrono::milliseconds(10))
           {
@@ -4589,6 +4726,9 @@ static std::optional<int> SessionBoundary(
       }
       if (error.empty())
       {
+        std::array<int, Orca::Net::MAX_SEATS> leads{};
+        for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
+          leads[seat] = match.session->LeadOf(seat);
         const auto missing = DropMissingFriends(*match.session, doubles);
         if (missing)
         {
@@ -4597,7 +4737,8 @@ static std::optional<int> SessionBoundary(
             match.seated.erase(seat);
             match.plugging.erase(seat);
             match.doubles_seats.erase(seat);
-            Orca::Online::DropPeer(seat, "stalled");
+            if (leads[seat] == seat)
+              Orca::Online::DropPeer(seat, "stalled");
           }
           match.friend_left_told = true;
           Orca::Status::State("friend-left stalled");
@@ -4780,6 +4921,17 @@ void SetOverLeave(Match& match)
 }
 }  // namespace
 
+namespace
+{
+Pad SeenLocalPad(const Match& match, const std::function<Pad(int)>& sample, int seat)
+{
+  const Pad pad = sample(seat);
+  if (seat == LeadSeat(match))
+    s_local_pad = pad;
+  return pad;
+}
+}
+
 std::optional<int> OnBoundary(Core::System& system,
                               const std::function<Orca::Net::Pad(int local_seat)>& local_pad,
                               const FrameHook& on_frame,
@@ -4790,9 +4942,7 @@ std::optional<int> OnBoundary(Core::System& system,
   const bool was_replaying = TheMatch().replaying != nullptr;
   // The local pad as this boundary read it for the game (for SetOverLeave).
   const std::function<Orca::Net::Pad(int)> seen = [&local_pad](int local_seat) {
-    const Orca::Net::Pad pad = local_pad(local_seat);
-    s_local_pad = pad;
-    return pad;
+    return SeenLocalPad(TheMatch(), local_pad, local_seat);
   };
   const std::optional<int> rewound_to = Boundary(system, seen, on_frame, local_pad_waiting);
   if (TheMatch().replaying || (was_replaying && !TheMatch().session))
@@ -4843,6 +4993,29 @@ void ReportJoinFailure(std::string_view code, std::string_view sentence)
     Orca::Status::Report(code.empty() || code == "room-unstable" ? "network" : code, sentence);
 }
 
+int LocalSeat()
+{
+  return LeadSeat(TheMatch());
+}
+
+int LocalSeatCount()
+{
+  const Match& match = TheMatch();
+  if (!match.started || match.finished)
+    return 1;
+  return 1 + static_cast<int>(std::ranges::count_if(match.co_seats,
+      [&](int seat) { return IsLocal(match, seat); }));
+}
+
+int LocalOrdinal(int seat)
+{
+  const Match& match = TheMatch();
+  if (seat == match.local_seat)
+    return 0;
+  const auto co = std::ranges::find(match.co_seats, seat);
+  return co == match.co_seats.end() ? -1 : static_cast<int>(co - match.co_seats.begin()) + 1;
+}
+
 bool Active()
 {
   const Match& match = TheMatch();
@@ -4855,6 +5028,7 @@ void End(const char* reason)
   if (!match.started || match.finished)
     return;
   match.finished = true;
+  Orca::UX::SetLocalPadCount(1);
   s_solo_idle = false;
   LogStats(fmt::format("ended ({})", reason).c_str());
   // Transfers in flight give up now; their threads are joined below.
@@ -5198,6 +5372,60 @@ std::vector<unsigned> TraceRoomReopenForTest(const std::vector<std::chrono::seco
   return attempts;
 }
 
+std::vector<Pads> PumpSoloSeatsForTest(Core::System& system, const std::vector<int>& co_seats,
+    int frames, bool fresh_tail, const std::function<Pad(int)>& sample,
+    std::vector<Orca::Events::PortInfo>* ports)
+{
+  Match match;
+  match.co_seats = co_seats;
+  match.origin_frame = 0;
+  match.port = std::make_unique<RingPort>(system, MAX_ROLLBACK);
+  if (fresh_tail)
+    match.fresh.emplace();
+  for (int frame = 0; frame < frames; ++frame)
+    RunSolo(match, sample);
+  if (ports)
+    *ports = PortsAt(match, frames);
+  return match.log;
+}
+
+std::optional<Pad> PumpSeenLocalPadForTest(int lead, const std::vector<int>& co_seats,
+    const std::function<Pad(int)>& sample)
+{
+  const auto previous = std::exchange(s_local_pad, std::nullopt);
+  const Common::ScopeGuard restore([&] { s_local_pad = previous; });
+  Match match;
+  match.local_seat = lead;
+  SeenLocalPad(match, sample, lead);
+  for (const int seat : co_seats)
+    SeenLocalPad(match, sample, seat);
+  return s_local_pad;
+}
+
+int PumpLeadSeatForTest(std::unique_ptr<Orca::Net::Session> session, int solo_seat)
+{
+  Match match;
+  match.local_seat = solo_seat;
+  match.session = std::move(session);
+  return LeadSeat(match);
+}
+
+std::vector<Pads> PumpJoinerSoloForTest(std::unique_ptr<Orca::Net::Session> session,
+    int frames, const std::function<Pad(int)>& sample)
+{
+  Match match;
+  match.local_seat = session->LocalSeat();
+  match.origin_frame = 0;
+  match.running = session->CurrentFrame() - 1;
+  match.port = std::make_unique<RingPort>(Core::System::GetInstance(), MAX_ROLLBACK);
+  match.session = std::move(session);
+  GoSolo(match, "test match over", nullptr);
+  Reseat(match);
+  for (int frame = 0; frame < frames; ++frame)
+    RunSolo(match, sample);
+  return match.log;
+}
+
 LaunchJoinBoundaryResult PumpLaunchJoinBoundaryForTest()
 {
   Core::System& system = Core::System::GetInstance();
@@ -5240,8 +5468,11 @@ static HostRecoveryResult PumpHostForTest(Core::System& system, Orca::Net::YouGa
                                           int current_frame, bool session_alive,
                                           const std::vector<int>& seated, std::optional<bool> menus,
                                           std::unique_ptr<Orca::Net::KeyframeStore> store,
-                                          bool host_requested = false)
+                                          bool host_requested = false,
+                                          const std::function<void(const std::function<void()>&)>&
+                                              after_admit = {})
 {
+  const Common::ScopeGuard reset_count([] { Orca::UX::SetLocalPadCount(1); });
   // This adapter supplies a headless game's history to the actual HostEvents/StartKeyframe path.
   // The room runs its real I/O thread; packing, encryption and keyframe offers are unchanged.
   Match match;
@@ -5261,6 +5492,7 @@ static HostRecoveryResult PumpHostForTest(Core::System& system, Orca::Net::YouGa
   match.log_base = match.origin_frame;
   match.log.resize(current_frame - match.log_base);
   match.seated.insert(seated.begin(), seated.end());
+  match.co_seats = room.CoSeats();
   if (room.Doubles())
     match.doubles_seats = match.seated;
   if (session_alive)
@@ -5269,10 +5501,13 @@ static HostRecoveryResult PumpHostForTest(Core::System& system, Orca::Net::YouGa
     config.seats = Orca::Net::MAX_SEATS;
     config.per_peer_inputs = room.Doubles();
     config.local_seat = 0;
+    config.co_seats = match.co_seats;
     config.authority_seat = 0;
     config.start_frame = current_frame;
     std::array<Orca::Net::SeatPlan, Orca::Net::MAX_SEATS> plan{};
     plan[0] = {0, Orca::Net::NEVER, 0};
+    for (const int local : match.co_seats)
+      plan[local] = {0, Orca::Net::NEVER, 0};
     for (const int seat : seated)
       plan[seat] = {0, Orca::Net::NEVER, 0};
     config.plan = plan;
@@ -5289,6 +5524,15 @@ static HostRecoveryResult PumpHostForTest(Core::System& system, Orca::Net::YouGa
     if (match.job->done && match.job->ok)
       result.keyframe_frame = match.job->info.frame;
     HostEvents(system, match, &room, menus);
+  }
+  if (after_admit)
+    after_admit([&] { HostEvents(system, match, &room, menus); });
+  if (match.session)
+  {
+    result.plan = match.session->Plan();
+    for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
+      result.groups[seat] = match.session->LeadOf(seat);
+    result.error = match.session->Error();
   }
   result.fresh_start = match.fresh_pending.has_value();
   result.seated = match.waiting.empty() && match.seated.contains(1);
@@ -5311,10 +5555,26 @@ HostRecoveryResult PumpFriendsHostForTest(Core::System& system, Orca::Net::YouGa
                                          int current_frame, const std::vector<int>& seated,
                                          bool on_menus,
                                          std::unique_ptr<Orca::Net::KeyframeStore> store,
-                                         bool host_requested)
+                                         bool host_requested,
+                                         const std::function<void(const std::function<void()>&)>&
+                                             after_admit)
 {
   return PumpHostForTest(system, room, game, std::move(replay), current_frame, !seated.empty(),
-                         seated, on_menus, std::move(store), host_requested);
+                         seated, on_menus, std::move(store), host_requested, after_admit);
+}
+
+bool PumpHeldFriendsEventsForTest(Orca::Net::YouGameRoom& room,
+    std::unique_ptr<Orca::Net::Session>& session, const std::vector<int>& seated)
+{
+  Match match;
+  match.running = session->CurrentFrame() - 1;
+  match.origin_frame = 0;
+  match.session = std::move(session);
+  match.seated.insert(seated.begin(), seated.end());
+  match.doubles_seats = match.seated;
+  HostEvents(Core::System::GetInstance(), match, &room, false);
+  session = std::move(match.session);
+  return match.holding;
 }
 
 int PumpFriendsHostBoundaryForTest(std::unique_ptr<Orca::Net::Session>& session, int completed,
@@ -5349,10 +5609,29 @@ std::optional<std::vector<int>> FriendsMissingInputs(const Orca::Net::Session& s
 std::optional<std::vector<int>> DropMissingFriends(Orca::Net::Session& session, bool doubles)
 {
   auto seats = FriendsMissingInputs(session, doubles);
-  if (seats)
+  if (!seats)
+    return seats;
+  bool grouped = false;
+  for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
+    grouped |= session.LeadOf(seat) != seat;
+  if (!grouped)
+  {
     for (const int seat : *seats)
       session.DropSeat(seat);
-  return seats;
+    return seats;
+  }
+  std::set<int> leads;
+  for (const int seat : *seats)
+    if (!session.IsLocal(seat))
+      leads.insert(session.LeadOf(seat));
+  std::vector<int> group_seats;
+  for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
+    if (!session.IsLocal(seat) && leads.contains(session.LeadOf(seat)) &&
+        session.Plan()[seat].live_from != Orca::Net::NEVER)
+      group_seats.push_back(seat);
+  for (const int lead : leads)
+    session.DropSeat(lead);
+  return group_seats;
 }
 
 int WaitingFriendSeat(int local_seat, const std::vector<int>& missing, bool joining,
@@ -5375,7 +5654,7 @@ bool WaitForFriendsRoster(const Orca::Net::Session& session, bool joining, bool 
 }
 
 bool FriendsBatch::Ready(bool on_menus, int waiting, int plugging, bool recovering,
-                         std::chrono::steady_clock::time_point now)
+                         std::chrono::steady_clock::time_point now, int local_seats)
 {
   if (waiting == 0)
   {
@@ -5391,7 +5670,7 @@ bool FriendsBatch::Ready(bool on_menus, int waiting, int plugging, bool recoveri
   }
   if (!m_until)
     m_until = now + std::chrono::seconds(2);
-  return waiting >= Orca::Net::MAX_SEATS - 1 || now >= *m_until;
+  return waiting >= Orca::Net::MAX_SEATS - local_seats || now >= *m_until;
 }
 
 std::optional<JoinCapture> ChooseJoinCapture(const Orca::Net::Session* session, bool doubles,

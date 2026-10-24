@@ -155,8 +155,35 @@ Orca::Net::Step StepSession(Orca::Net::Session& session, Orca::Net::Game& game, 
                             const std::function<bool(std::chrono::steady_clock::time_point)>&
                                 room_recovering)
 {
+  return StepSession(session, game, completed_frame,
+      std::function<Orca::Net::Pad(int)>([&](int seat) {
+        return seat == session.LocalSeat() ? sample_local() : Orca::Net::Pad{};
+      }), stopping, stall_wait, give_up_after, gave_up, waited_time, hold_silence,
+      stall_budget, room_recovering);
+}
+
+Orca::Net::Step StepSession(Orca::Net::Session& session, Orca::Net::Game& game, int completed_frame,
+                            const std::function<Orca::Net::Pad(int)>& sample_local,
+                            const std::function<bool()>& stopping,
+                            std::chrono::microseconds stall_wait,
+                            std::chrono::milliseconds give_up_after, bool* gave_up,
+                            std::chrono::nanoseconds* waited_time,
+                            const std::function<bool(std::chrono::steady_clock::time_point)>&
+                                hold_silence,
+                            OnlineMatch::StallBudget* stall_budget,
+                            const std::function<bool(std::chrono::steady_clock::time_point)>&
+                                room_recovering)
+{
   const auto step_start = std::chrono::steady_clock::now();
-  Orca::Net::Pad local_pad = sample_local();
+  Orca::Net::Pads local_pads{};
+  const auto sample = [&] {
+    const int lead = session.LocalSeat();
+    local_pads[lead] = sample_local(lead);
+    for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
+      if (seat != lead && session.IsLocal(seat))
+        local_pads[seat] = sample_local(seat);
+  };
+  sample();
   bool waited = false;
   // From the end of the first call that said wait or stall to the start of the last call.
   std::optional<std::chrono::steady_clock::time_point> wait_from;
@@ -209,7 +236,7 @@ Orca::Net::Step StepSession(Orca::Net::Session& session, Orca::Net::Game& game, 
   while (true)
   {
     const auto call_start = std::chrono::steady_clock::now();
-    const Orca::Net::Step step = session.OnBoundary(completed_frame, local_pad);
+    const Orca::Net::Step step = session.OnBoundary(completed_frame, local_pads[session.LocalSeat()], &local_pads);
     if (step.kind == Orca::Net::StepKind::Wait || step.kind == Orca::Net::StepKind::Stall)
     {
       if (!wait_from)
@@ -228,7 +255,7 @@ Orca::Net::Step StepSession(Orca::Net::Session& session, Orca::Net::Game& game, 
       std::this_thread::sleep_for(FRAME_PERIOD);
       waited = true;
       // The session decides a wait before sampling, so the frame uses the pad read now.
-      local_pad = sample_local();
+      sample();
       continue;
     }
     if (step.kind != Orca::Net::StepKind::Stall)

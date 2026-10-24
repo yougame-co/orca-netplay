@@ -56,6 +56,7 @@
 #include "Core/Orca/Sandbox.h"
 #include "Core/Orca/Status.h"
 #include "Core/Orca/UX/UX.h"
+#include "Core/PowerPC/JitInterface.h"
 #include "Core/Rollback/Diag.h"
 #include "Core/Rollback/Harness.h"
 #include "Core/Rollback/SessionPort.h"
@@ -80,6 +81,7 @@ static std::unique_ptr<Platform> s_platform;
 static bool s_embedded = false;
 // Arm presentation timing only when the guest game's frame hook is live (not a loader splash).
 static std::atomic<bool> s_boot_guest_ready{false};
+static std::atomic<std::size_t> s_boot_jit_blocks{0};
 static bool s_single_line_panics = false;
 // Embed::ClaimStdout redirects stdout to stderr; diagnostics for the app use its private stream.
 static std::FILE* s_panic_output = nullptr;
@@ -132,7 +134,10 @@ static void PrintPanicLine(const char* text) noexcept
 // On the CPU thread, so std::fprintf: a throw from there can't unwind (Orca/CrashNote.h).
 static void EndBootLogs()
 {
-  s_boot_guest_ready.store(true, std::memory_order_relaxed);
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::GuestHook);
+  s_boot_jit_blocks.store(Core::System::GetInstance().GetJitInterface().GetBlockCount(),
+                         std::memory_order_relaxed);
+  s_boot_guest_ready.store(true, std::memory_order_release);
   Orca::BootThrottle::FinishAtFirstFrame();
   if (!s_embedded)
     return;
@@ -742,13 +747,32 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
       fmt::print(stderr, "Orca: YOUGAME_STDIO=1 without --embed: the app's bridge is off\n");
   }
 
+  // Read the existing JIT cache count only on its owning CPU thread, once per VI until the
+  // first game presentation. Removing both hooks then leaves no per-frame diagnostic work.
+  // This is the resident block count at the latest VI (or guest-hook), not compile attempts.
+  Common::EventHook boot_jit_hook = GetVideoEvents().vi_end_field_event.Register([] {
+    s_boot_jit_blocks.store(Core::System::GetInstance().GetJitInterface().GetBlockCount(),
+                           std::memory_order_relaxed);
+  });
   // Remove this diagnostic listener after the first game presentation: no per-frame timer work.
   Common::EventHook boot_phase_frame_hook;
   boot_phase_frame_hook = GetVideoEvents().after_present_event.Register(
-      [&boot_phase_frame_hook, session = Orca::SessionActive()](PresentInfo&) {
-        if (session && !s_boot_guest_ready.load(std::memory_order_relaxed))
+      [&boot_phase_frame_hook, &boot_jit_hook, session = Orca::SessionActive(),
+       presented = false](PresentInfo& info) mutable {
+        const bool waiting_for_guest = session && !s_boot_guest_ready.load(std::memory_order_acquire);
+        if (!presented)
+        {
+          // A loader splash can precede the first game frame. Otherwise FirstFrame is also
+          // the first presentation, so there is no separate milestone to report.
+          if (waiting_for_guest)
+            Orca::BootPhase::Mark(Orca::BootPhase::Phase::FirstPresent);
+          presented = true;
+        }
+        if (waiting_for_guest)
           return;
-        Orca::BootPhase::Mark(Orca::BootPhase::Phase::FirstFrame);
+        boot_jit_hook.reset();
+        Orca::BootPhase::FirstFrame(info.frame_count,
+                                  s_boot_jit_blocks.load(std::memory_order_relaxed));
         boot_phase_frame_hook.reset();
       });
   // Tell the app "ready" once the first frame is on screen.

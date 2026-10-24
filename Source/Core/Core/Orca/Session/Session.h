@@ -121,6 +121,8 @@ struct Packet
   // pads[i] is the input for frame first_frame + i.
   int first_frame = 0;
   std::vector<Pad> pads;
+  // Other seats on this connection, with exactly the same frame range as pads.
+  std::vector<std::pair<int, std::vector<Pad>>> co;
   // Highest contiguous input received for each seat (-1: none). The sender's own seat stays -1,
   // except for completed-seat history during a doubles rebuild.
   std::array<int, MAX_SEATS> ack{-1, -1, -1, -1};
@@ -152,6 +154,8 @@ struct Packet
 
   // Drop-in (see SeatPlan): which seats are plugged in when. Only the host's roster counts.
   std::optional<std::array<SeatPlan, MAX_SEATS>> roster;
+  // Host-owned machine groups beside the roster: each seat's lead, or -1 for no seat.
+  std::optional<std::array<int, MAX_SEATS>> groups;
   // Multi-peer pre-match batch: suppress Start during [first, second).
   std::optional<std::pair<int, int>> start_gate;
   // The host's final seat history through completed stays (opted-in friends rooms only).
@@ -192,6 +196,8 @@ struct Config
   int seats = 2;
   bool per_peer_inputs = false;
   int local_seat = 0;
+  // Fixed local group, dormant unless explicitly configured.
+  std::vector<int> co_seats;
   // Frames between sampling a local input and the frame it applies to: the starting delay and the
   // adaptive floor. Two, like Slippi: rollback hides the rest of a normal link.
   int input_delay = 2;
@@ -230,6 +236,8 @@ struct Config
   // The local pad the host held when the session started; it fills the frames the input delay
   // skips, so a held button stays held.
   Pad start_pad{};
+  // Held pads for co-seats; the lead continues to use start_pad.
+  std::array<Pad, MAX_SEATS> start_pads{};
   // Each seat's plan at the start (default: seats below `seats` plugged in from frame 0).
   std::optional<std::array<SeatPlan, MAX_SEATS>> plan;
   // The seat whose roster decides who plugs in and when (the host), or -1 for a fixed roster.
@@ -312,6 +320,7 @@ public:
   // first boundary). `local_pad` is the local controller now; it applies to frame (next frame +
   // Delay()). Re-run boundaries also call this; the pad is ignored there.
   Step OnBoundary(int completed_frame, const Pad& local_pad);
+  Step OnBoundary(int completed_frame, const Pad& local_pad, const Pads* co_pads);
   // A measured relay round trip, from the transport's pings. Call on the OnBoundary thread once per
   // new measurement (YouGameRoom::RoundTripMs gives a sequence number; feed only when it changes,
   // or one ping counts many times). A new session may take the room's recent ones at once, oldest
@@ -344,9 +353,20 @@ public:
   void AddPeer(int seat, int live_from, int history_from);
   // Host: all members plug in together after every member catches up.
   void AddPeerBatch(const std::vector<int>& seats, int live_from, int history_from);
+  // Host: declare a fixed machine group before admitting it with AddPeerBatch.
+  void SetGroup(int lead, const std::vector<int>& co_seats);
+  bool IsLocal(int seat) const;
+  int LocalSeat() const { return m_config.local_seat; }
+  int LeadOf(int seat) const;
+  bool SameMachine(int a, int b) const;
+  int PeersInPlay() const;
   // Host: the player at `seat` is gone (left or stopped answering); its controller unplugs after
   // its last received input.
   void DropSeat(int seat);
+  // Host: schedule a co-seat's unplug ahead of the rollback window; a lead takes its group.
+  // Retire a scheduled co-seat while preserving its agreed input prefix and unplug frame.
+  void PrepareAdmission(int seat);
+  void UnplugSeat(int seat);
   // A joining player: ask the host to unplug this controller. LeftDone() once it has.
   void RequestLeave();
   bool LeftDone() const;
@@ -364,6 +384,7 @@ public:
   // Local inputs already sampled for frames from CurrentFrame() on (the host keeps them when it
   // goes back to solo play).
   std::vector<Pad> PendingLocal() const;
+  std::vector<Pad> PendingLocal(int seat) const;
   // Whether this seat's controller is plugged in at `frame`, including completed stays.
   bool Plugged(int seat, int frame) const;
   // The newest frame the host reported (a joining player catches up to it).
@@ -417,7 +438,15 @@ public:
   const std::map<int, u64>& LocalChecksums() const { return m_local_checksums; }
 
 private:
+  void AdmitSeat(int seat, int live_from, int history_from);
+  void RetireSeat(int seat, bool preserve_unplug = false);
+  void CloseEmptyBatch();
+  void ReceiveCoPrefixReplies(const Packet& packet);
+  void PrepareCoPrefixReplies(const Packet& packet);
   void ReceivePackets();
+  void ReceiveOne(const Packet& packet, bool input_only = false);
+  bool ApplyGroups(const Packet& packet);
+  void AddCoPads(Packet* packet) const;
   void AddPeerChecksum(int seat, const Packet& packet);
   void SendPacket();
   Pads PadsFor(int frame);
@@ -430,7 +459,7 @@ private:
   // Fail, for what another player sent (ErrorFromPeer).
   Step FailPeer(std::string error);
   bool SaveOnce(int frame);
-  void SampleLocal(const Pad& local_pad);
+  void SampleLocal(const Pad& local_pad, const Pads* co_pads);
   void AdaptDelay();
   void RaiseToLink();
   void NoteDelay(int from, std::string why);
@@ -472,6 +501,17 @@ private:
   int m_dirty;
 
   std::map<int, Pad> m_local;
+  std::array<std::map<int, Pad>, MAX_SEATS> m_co_local;
+  std::array<int, MAX_SEATS> m_lead{0, 1, 2, 3};
+  std::array<bool, MAX_SEATS> m_group_known{};
+  // A removed initial local co-seat may subsequently belong to another machine.
+  std::array<bool, MAX_SEATS> m_local_retired{};
+  // Former co-seat leads can still have aligned input copies in flight after re-admission.
+  std::array<unsigned, MAX_SEATS> m_retired_co_leads{};
+  // A scheduled co-seat stay can outlive room ownership while its slot is being replaced.
+  std::array<int, MAX_SEATS> m_departed_owner{-1, -1, -1, -1};
+  std::array<int, MAX_SEATS> m_local_co_until{NEVER, NEVER, NEVER, NEVER};
+  std::map<int, DepartedInputs> m_co_prefix_replies;
   std::array<std::map<int, Pad>, MAX_SEATS> m_remote;
   // Highest frame of each seat's input received contiguously.
   std::array<int, MAX_SEATS> m_received{-1, -1, -1, -1};
@@ -597,7 +637,7 @@ private:
   std::array<int, MAX_SEATS> m_history_stuck{0, 0, 0, 0};
   // A joining player: its own live frame as the host first named it (NEVER: not yet). History is
   // accepted only for frames before it.
-  int m_own_live_from = NEVER;
+  std::array<int, MAX_SEATS> m_own_live_from{NEVER, NEVER, NEVER, NEVER};
   bool m_leaving = false;
   // Port values: per seat, the version every player must hold before it plugs in (host), and the
   // newest each player acknowledged (host); then the newest this machine holds.

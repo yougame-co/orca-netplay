@@ -38,6 +38,7 @@
 #include "Core/Orca/Session/PadCodec.h"
 #include "Core/Orca/Status.h"
 #include "Core/Orca/UX/OrbCombo.h"
+#include "Core/Orca/UX/Controllers.h"
 #include "Core/Orca/UX/OverlayKey.h"
 #include "Core/PowerPC/JitCommon/JitBase.h"
 #include "Core/PowerPC/JitInterface.h"
@@ -617,6 +618,18 @@ void OnFrameBoundary(const Core::CPUThreadGuard& guard)
   if (Orca::Online::Enabled())
   {
     const auto local_pad = [](int local_seat) {
+      const bool lead = local_seat == OnlineMatch::LocalSeat();
+      int ordinal = lead ? 0 : Orca::Online::LocalIndex(local_seat);
+      if (!lead && ordinal < 0 && !Orca::Online::InRoom())
+        ordinal = OnlineMatch::LocalOrdinal(local_seat);
+      if (ordinal < 0)
+        return Orca::Net::EncodePad(Orca::UX::NeutralPad());
+      static std::array<Orca::UX::OrbCombo, Orca::UX::MAX_LOCAL> co_combos{};
+      const auto filter = [&](GCPadStatus pad, bool first, bool live) {
+        return lead ? Orca::UX::FilterLocalPad(pad, first, live) :
+            Orca::UX::FilterCoSeatPad(pad, co_combos[std::min(ordinal, Orca::UX::MAX_LOCAL - 1)],
+                                    first, live);
+      };
       // The local pad comes from a test script, the app's input stream, or the host's first
       // controller, and the YouGame shortcut (Up + Start) is filtered out before it is sent.
       // `first_run` uses the session's flag, which counts a joiner's catch-up as a first run; the
@@ -630,18 +643,20 @@ void OnFrameBoundary(const Core::CPUThreadGuard& guard)
         if (!IsResimulating())
           Orca::Activity::NoteLocalPad(
               Orca::Activity::PAD_SCRIPT | static_cast<u32>(local_seat), *scripted);
-        return Orca::Net::EncodePad(Orca::UX::FilterLocalPad(*scripted, first_run, true));
+        return Orca::Net::EncodePad(filter(*scripted, first_run, true));
       }
       const bool live = ControlReference::GetInputGate();
-      if (const auto from_app = Orca::Events::LocalPad(!IsResimulating()))
-        return Orca::Net::EncodePad(Orca::UX::FilterLocalPad(
+      if (const auto from_app = Orca::Events::LocalPad(ordinal, !IsResimulating()))
+        return Orca::Net::EncodePad(filter(
             *from_app, first_run, live || InputCommon::VirtualPadOnly()));
+      if (!lead)
+        return Orca::Net::EncodePad(Orca::UX::NeutralPad());
       g_controller_interface.SetCurrentInputChannel(ciface::InputChannel::SerialInterface);
       g_controller_interface.UpdateInput();
       const GCPadStatus pad = Pad::GetStatus(0);
       if (!IsResimulating())
         Orca::Activity::NoteLocalPad(Orca::Activity::PAD_DOLPHIN, pad);
-      return Orca::Net::EncodePad(Orca::UX::FilterLocalPad(pad, first_run, live));
+      return Orca::Net::EncodePad(filter(pad, first_run, live));
     };
     // While the session holds this frame on a friend's input, the same pad read again, only so a
     // talk press ends when Start is let go (UX/OrbCombo.h LocalPadWaiting). Host only: nothing

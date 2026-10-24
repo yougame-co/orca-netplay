@@ -11,8 +11,11 @@ namespace Orca::BootPhase
 const char* Name(Phase phase)
 {
   static constexpr std::array names = {
-      "main",   "config",     "disc",       "hash-cached", "hash-full", "video", "shaders",
-      "audio",  "window",     "emu-thread", "ios-reload",  "launcher",  "first-frame"};
+      "main",          "config",          "disc",        "hash-cached", "hash-full",
+      "video",         "shaders",         "audio",       "window",      "emu-thread",
+      "ios-reload",    "launcher",        "first-frame", "system-init", "wii-root",
+      "sysconf",       "core-init",       "video-info",  "window-created",
+      "video-device",  "video-swapchain", "guest-hook",  "first-present"};
   static_assert(names.size() == static_cast<std::size_t>(Phase::Count));
   const auto index = static_cast<std::size_t>(phase);
   return index < names.size() ? names[index] : nullptr;
@@ -29,6 +32,17 @@ void Clock::SetOutput(std::FILE* output)
 }
 
 void Clock::Mark(Phase phase)
+{
+  Mark(phase, nullptr);
+}
+
+void Clock::FirstFrame(std::uint64_t frames, std::size_t jit_blocks)
+{
+  const GuestStats guest{frames, jit_blocks};
+  Mark(Phase::FirstFrame, &guest);
+}
+
+void Clock::Mark(Phase phase, const GuestStats* guest)
 {
   const char* const name = Name(phase);
   if (m_finished.load(std::memory_order_relaxed) || !name)
@@ -48,6 +62,17 @@ void Clock::Mark(Phase phase)
   {
     std::fprintf(m_output, "orca boot phase %s %lld %lld\n", name, record.elapsed, record.delta);
     std::fflush(m_output);
+  }
+  if (guest)
+  {
+    std::snprintf(m_guest_summary.data(), m_guest_summary.size(),
+                  "orca boot guest frames=%llu jit-blocks=%zu",
+                  static_cast<unsigned long long>(guest->frames), guest->jit_blocks);
+    if (m_output)
+    {
+      std::fprintf(m_output, "%s\n", m_guest_summary.data());
+      std::fflush(m_output);
+    }
   }
   LogPendingLocked();
   if (phase == Phase::FirstFrame)
@@ -72,6 +97,12 @@ void Clock::LogPendingLocked()
     // Like BootMemory, these few diagnostics reach the normal listeners even with BOOT off.
     logs->LogWithFullPath(Common::Log::LogLevel::LNOTICE, Common::Log::LogType::BOOT,
                           "Orca/BootPhase.cpp", 0, line.data());
+  }
+  if (m_guest_summary[0] && !m_summary_logged)
+  {
+    logs->LogWithFullPath(Common::Log::LogLevel::LNOTICE, Common::Log::LogType::BOOT,
+                          "Orca/BootPhase.cpp", 0, m_guest_summary.data());
+    m_summary_logged = true;
   }
 }
 
@@ -100,6 +131,11 @@ void SetOutput(std::FILE* output)
 void Mark(Phase phase)
 {
   ProcessClock().Mark(phase);
+}
+
+void FirstFrame(std::uint64_t frames, std::size_t jit_blocks)
+{
+  ProcessClock().FirstFrame(frames, jit_blocks);
 }
 
 void LogPending()

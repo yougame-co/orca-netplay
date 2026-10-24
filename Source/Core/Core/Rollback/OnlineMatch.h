@@ -70,7 +70,7 @@ class FriendsBatch
 {
 public:
   bool Ready(bool on_menus, int waiting, int plugging, bool recovering,
-             std::chrono::steady_clock::time_point now);
+             std::chrono::steady_clock::time_point now, int local_seats = 1);
   void Clear() { m_until.reset(); }
 private:
   std::optional<std::chrono::steady_clock::time_point> m_until;
@@ -126,6 +126,9 @@ struct HostRecoveryResult
   int current_frame = -1;
   std::optional<int> keyframe_frame;
   std::vector<int> seats;
+  std::array<Orca::Net::SeatPlan, Orca::Net::MAX_SEATS> plan{};
+  std::array<int, Orca::Net::MAX_SEATS> groups{};
+  std::string error;
 };
 HostRecoveryResult PumpRecoveryHostForTest(Core::System& system, Orca::Net::YouGameRoom& room,
                                           Orca::Net::Game& game, Orca::Net::ReplayArchive replay,
@@ -136,7 +139,13 @@ HostRecoveryResult PumpFriendsHostForTest(Core::System& system, Orca::Net::YouGa
                                          int current_frame, const std::vector<int>& seated,
                                          bool on_menus,
                                          std::unique_ptr<Orca::Net::KeyframeStore> store,
-                                         bool host_requested = false);
+                                         bool host_requested = false,
+                                         const std::function<void(const std::function<void()>&)>&
+                                             after_admit = {});
+
+// Runs room events while friends admission is held off the menus.
+bool PumpHeldFriendsEventsForTest(Orca::Net::YouGameRoom& room,
+    std::unique_ptr<Orca::Net::Session>& session, const std::vector<int>& seated);
 
 // Runs Boundary's session loop with a supplied session and short silence window.
 int PumpFriendsHostBoundaryForTest(std::unique_ptr<Orca::Net::Session>& session, int completed,
@@ -554,6 +563,21 @@ FriendsPickStep DecideFriendsPick(const FriendsPickInputs& in);
 
 // True while this process plays online (solo in its room, or with friends).
 bool Active();
+// CPU thread: the lead's game port, including solo play after leaving a room.
+int LocalSeat();
+int LocalOrdinal(int seat);
+int LocalSeatCount();
+std::vector<Orca::Net::Pads> PumpSoloSeatsForTest(Core::System& system,
+    const std::vector<int>& co_seats, int frames, bool fresh_tail,
+    const std::function<Orca::Net::Pad(int)>& sample,
+    std::vector<Orca::Events::PortInfo>* ports);
+std::optional<Orca::Net::Pad> PumpSeenLocalPadForTest(int lead,
+    const std::vector<int>& co_seats, const std::function<Orca::Net::Pad(int)>& sample);
+int PumpLeadSeatForTest(std::unique_ptr<Orca::Net::Session> session, int solo_seat);
+// Exercise the match-over handoff, including the old seat's delayed samples.
+std::vector<Orca::Net::Pads> PumpJoinerSoloForTest(
+    std::unique_ptr<Orca::Net::Session> session, int frames,
+    const std::function<Orca::Net::Pad(int)>& sample);
 // Logs the session's stats.
 void LogStats(const char* when);
 // Logs the stats and the reason, ends the session and leaves the room. Safe to call more than once;

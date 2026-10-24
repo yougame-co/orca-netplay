@@ -116,6 +116,9 @@ std::optional<bool> Joining();
 // and whether the room is gone.
 Net::Transport* Transport();
 int Seat();
+std::vector<int> CoSeats();
+int LocalIndex(int seat);
+std::vector<int> GroupOf(int seat);
 std::vector<Net::PeerEvent> TakePeerEvents();
 // Whether the untaken events include the game's host leaving the room. Any thread.
 bool HostLeftPending();

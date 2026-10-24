@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include "Core/Orca/Bridge.h"
+#include "Common/ScopeGuard.h"
 #include "Core/Orca/UX/ControllerSource.h"
 #include "InputCommon/ControlReference/ControlReference.h"
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
@@ -137,4 +138,55 @@ TEST_F(OrcaVirtualPadOnly, ReportsModeOnceAndIsSilentWhenUnset)
     UICommon::ReportInputMode();
   }
   EXPECT_EQ(testing::internal::GetCapturedStdout(), "orca input virtual-pad-only\n");
+}
+
+TEST_F(OrcaVirtualPadOnly, ExplicitOrdinalsSurviveVirtualPadIndexShuffling)
+{
+  const ScopedEnv mode("ORCA_VIRTUAL_PAD_ONLY", "1");
+  const ScopedEnv stdio("YOUGAME_STDIO", "1");
+  Orca::UX::SetLocalPadCount(2);
+  const Common::ScopeGuard count([] { Orca::UX::SetLocalPadCount(1); });
+  Orca::UX::StartControllerStreamFromStdio();
+  ControlReference::SetInputGate(false);
+  for (int sequence = 1; sequence <= 3; ++sequence)
+  {
+    std::string pads;
+    for (int ordinal = 0; ordinal < 2; ++ordinal)
+    {
+      if (ordinal)
+        pads += ',';
+      const int index = sequence == 1 ? ordinal : 1 - ordinal;
+      pads += "{\"index\":" + std::to_string(index) + ",\"seat\":" +
+          std::to_string(sequence == 3 ? 3 : ordinal) +
+          R"(,"mapping":"standard","axes":[)" + (ordinal ? "-1" : "1") + ",0,0,0],\"buttons\":[";
+      for (int button = 0; button < 17; ++button)
+      {
+        if (button)
+          pads += ',';
+        pads += button == 0 ? R"({"value":1,"pressed":true})" :
+                              R"({"value":0,"pressed":false})";
+      }
+      pads += "]}";
+    }
+    const std::string line =
+        R"(yg {"push":{"type":"controllers","snapshot":{"schema":1,"session":"co-virtual",)"
+        R"("sequence":)" + std::to_string(sequence) +
+        R"(,"sentAt":1000,"receivedAt":1000,"owned":false,"suspended":false,"ports":[],"pads":[)" +
+        pads + "]}}}";
+    ASSERT_TRUE(Orca::Bridge::Route({line}).empty());
+    for (int ordinal = 0; ordinal < 2; ++ordinal)
+    {
+      const auto pad = Orca::UX::LocalPad(ordinal, true);
+      ASSERT_TRUE(pad);
+      EXPECT_TRUE(pad->isConnected);
+      EXPECT_EQ(pad->stickX, sequence == 3 ? 128 : (ordinal ? 1 : 255));
+      EXPECT_EQ(pad->button, sequence == 3 ? 0 : PAD_BUTTON_A);
+    }
+    if (sequence != 3)
+    {
+      ControlReference::SetInputGate(true);
+      EXPECT_EQ(Orca::UX::LocalPad(1, true)->stickX, 1);
+      ControlReference::SetInputGate(false);
+    }
+  }
 }

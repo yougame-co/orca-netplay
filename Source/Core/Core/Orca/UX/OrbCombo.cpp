@@ -80,6 +80,15 @@ GCPadStatus FilterLocalPad(GCPadStatus pad, bool first_run, bool live, OverlayKe
   return pad;
 }
 
+GCPadStatus FilterCoSeatPad(GCPadStatus pad, OrbCombo& combo, bool first_run, bool live)
+{
+  if (first_run && live)
+    pad.button = combo.Next(pad.button).buttons;
+  else if (combo.Held())
+    pad.button &= static_cast<u16>(~(OrbCombo::START | OrbCombo::DPAD));
+  return pad;
+}
+
 void LocalPadWaiting(std::optional<u16> buttons, OverlayKey::Ms now)
 {
   // Not s_combo: its mask moves with frames only, so the pads the session sends stay the same.

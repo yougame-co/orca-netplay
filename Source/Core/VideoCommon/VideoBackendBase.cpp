@@ -308,6 +308,10 @@ bool VideoBackendBase::InitializeShared(std::unique_ptr<AbstractGfx> gfx,
                                         std::unique_ptr<EFBInterfaceBase> efb_interface,
                                         std::unique_ptr<TextureCacheBase> texture_cache)
 {
+  // Null has no physical device; this marks its virtual graphics object instead.
+  if (g_backend_info.api_type == APIType::Nothing)
+    Orca::BootPhase::Mark(Orca::BootPhase::Phase::VideoDevice);
+
   memset(reinterpret_cast<u8*>(&g_main_cp_state), 0, sizeof(g_main_cp_state));
   memset(reinterpret_cast<u8*>(&g_preprocess_cp_state), 0, sizeof(g_preprocess_cp_state));
   s_tex_mem.fill(0);

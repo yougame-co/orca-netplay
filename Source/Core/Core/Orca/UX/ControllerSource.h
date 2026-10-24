@@ -26,6 +26,9 @@ namespace Orca::UX
 // Neutral while unfocused unless ORCA_VIRTUAL_PAD_ONLY=1. `for_frame` marks the read feeding the
 // input-age stats.
 std::optional<GCPadStatus> LocalPad(bool for_frame = false);
+std::optional<GCPadStatus> LocalPad(int ordinal, bool for_frame);
+// CPU thread: keep explicit assignment mode for the lifetime of a multi-seat match.
+void SetLocalPadCount(int n);
 
 // The app device the newest `for_frame` read took the local pad from: the adapter's physical port
 // or the standard pad's index in the app's snapshot. nullopt when that read had no app device
@@ -36,6 +39,7 @@ struct LocalDevice
   int index;
 };
 std::optional<LocalDevice> LastLocalDevice();
+std::optional<LocalDevice> LastLocalDevice(int ordinal);
 
 // Starts the stream when running under the app: on the stdio bridge (YOUGAME_STDIO=1,
 // Orca/Bridge.h) the app's snapshots arrive on stdin, otherwise from the loopback bridge

@@ -535,6 +535,30 @@ int Seat()
   return room ? room->Seat() : -1;
 }
 
+std::vector<int> CoSeats()
+{
+  const auto room = Room();
+  return room ? room->CoSeats() : std::vector<int>{};
+}
+
+int LocalIndex(int seat)
+{
+  const auto room = Room();
+  if (!room || seat < 0)
+    return -1;
+  if (seat == room->Seat())
+    return 0;
+  const auto co_seats = room->CoSeats();
+  const auto co = std::ranges::find(co_seats, seat);
+  return co == co_seats.end() ? -1 : static_cast<int>(co - co_seats.begin()) + 1;
+}
+
+std::vector<int> GroupOf(int seat)
+{
+  const auto room = Room();
+  return room ? room->GroupOf(seat) : std::vector<int>{};
+}
+
 std::vector<Net::PeerEvent> TakePeerEvents()
 {
   const auto room = Room();

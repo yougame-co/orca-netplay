@@ -88,8 +88,9 @@ std::vector<RecordedFrame> LoadRecording(const std::string& path)
 
 VirtualRemote::VirtualRemote(const std::vector<RecordedFrame>& recording, std::vector<int> seats,
                              int local_seat, int lag, int jitter, int input_delay,
-                             int checksum_every)
-    : m_recording(recording), m_local_seat(local_seat), m_lag(lag), m_jitter(jitter),
+                             int checksum_every, std::vector<int> local_co_seats)
+    : m_recording(recording), m_local_seat(local_seat),
+      m_local_co_seats(std::move(local_co_seats)), m_lag(lag), m_jitter(jitter),
       m_input_delay(input_delay), m_checksum_every(checksum_every)
 {
   for (const int seat : seats)
@@ -185,6 +186,8 @@ std::vector<Orca::Net::Packet> VirtualRemote::Receive()
       for (int frame = packet.first_frame; frame <= last; ++frame)
         packet.pads.push_back(m_recording[frame].pads[seat.seat]);
       packet.ack[m_local_seat] = m_local_newest;
+      for (const int local : m_local_co_seats)
+        packet.ack[local] = m_local_newest;
       packet.current_frame = std::max(position, 0);
       const int checksum_frame = seat.last_checksum + m_checksum_every;
       if (checksum_frame <= std::min(position, newest) &&

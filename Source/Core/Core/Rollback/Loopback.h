@@ -38,7 +38,8 @@ class VirtualRemote final : public Orca::Net::Transport
 {
 public:
   VirtualRemote(const std::vector<RecordedFrame>& recording, std::vector<int> seats, int local_seat,
-                int lag, int jitter, int input_delay, int checksum_every);
+                int lag, int jitter, int input_delay, int checksum_every,
+                std::vector<int> local_co_seats = {});
 
   // Call on each first-pass local frame. After a spike, first pays back any lead the remote took,
   // as time sync would.
@@ -73,6 +74,7 @@ private:
   const std::vector<RecordedFrame>& m_recording;
   std::vector<Seat> m_seats;
   int m_local_seat;
+  std::vector<int> m_local_co_seats;
   int m_lag;
   int m_jitter;
   int m_input_delay;

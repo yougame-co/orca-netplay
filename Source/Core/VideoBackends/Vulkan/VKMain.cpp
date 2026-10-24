@@ -6,6 +6,8 @@
 #include "Common/Logging/LogManager.h"
 #include "Common/MsgHandler.h"
 
+#include "Core/Orca/BootPhase.h"
+
 #include "VideoBackends/Vulkan/CommandBufferManager.h"
 #include "VideoBackends/Vulkan/ObjectCache.h"
 #include "VideoBackends/Vulkan/StateTracker.h"
@@ -176,6 +178,8 @@ bool VideoBackend::Initialize(const WindowSystemInfo& wsi)
     return false;
   }
 
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::VideoDevice);
+
   // Since VulkanContext maintains a copy of the device features and properties, we can use this
   // to initialize the backend information, so that we don't need to enumerate everything again.
   VulkanContext::PopulateBackendInfoFeatures(&g_backend_info, g_vulkan_context->GetPhysicalDevice(),
@@ -208,6 +212,9 @@ bool VideoBackend::Initialize(const WindowSystemInfo& wsi)
       return false;
     }
   }
+
+  if (swap_chain)
+    Orca::BootPhase::Mark(Orca::BootPhase::Phase::VideoSwapchain);
 
   // Create command buffers. We do this separately because the other classes depend on it.
   g_command_buffer_mgr = std::make_unique<CommandBufferManager>(g_Config.bBackendMultithreading);

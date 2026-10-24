@@ -16,6 +16,8 @@
 #include "Common/Common.h"
 #include "Common/MsgHandler.h"
 
+#include "Core/Orca/BootPhase.h"
+
 #include "VideoBackends/Metal/MTLBoundingBox.h"
 #include "VideoBackends/Metal/MTLGfx.h"
 #include "VideoBackends/Metal/MTLObjectCache.h"
@@ -93,6 +95,7 @@ bool Metal::VideoBackend::Initialize(const WindowSystemInfo& wsi)
       selected_adapter_index = 0;
     }
     MRCOwned<id<MTLDevice>> adapter = std::move(devs[selected_adapter_index]);
+    Orca::BootPhase::Mark(Orca::BootPhase::Phase::VideoDevice);
     Util::PopulateBackendInfoFeatures(g_Config, &g_backend_info, adapter);
 
 #if TARGET_OS_OSX
@@ -125,6 +128,8 @@ bool Metal::VideoBackend::Initialize(const WindowSystemInfo& wsi)
     if (Util::ToAbstract([layer pixelFormat]) == AbstractTextureFormat::Undefined)
       [layer setPixelFormat:MTLPixelFormatBGRA8Unorm];
     [CATransaction commit];
+    if (layer)
+      Orca::BootPhase::Mark(Orca::BootPhase::Phase::VideoSwapchain);
 
     ObjectCache::Initialize(std::move(adapter));
     g_state_tracker = std::make_unique<StateTracker>();

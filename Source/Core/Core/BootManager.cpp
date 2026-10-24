@@ -306,6 +306,7 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
   Orca::UX::SelectModule(Orca::ActiveProfile());
 
   system.Initialize();
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::SystemInit);
 
   Core::UpdateWantDeterminism(system, /*initial*/ true);
 
@@ -314,6 +315,7 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
   if (system.IsWii())
   {
     Core::InitializeWiiRoot(Core::WantsDeterminism());
+    Orca::BootPhase::Mark(Orca::BootPhase::Phase::WiiRoot);
 
     // Ensure any new settings are written to the SYSCONF
     if (!Core::WantsDeterminism())
@@ -330,6 +332,7 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
             return Config::GetActiveLayerForConfig(location) >= Config::LayerType::Movie;
           });
     }
+    Orca::BootPhase::Mark(Orca::BootPhase::Phase::Sysconf);
   }
 
   AchievementManager::GetInstance().CloseGame();

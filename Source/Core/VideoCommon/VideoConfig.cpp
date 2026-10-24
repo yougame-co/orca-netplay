@@ -210,7 +210,7 @@ void VideoConfig::VerifyValidity()
   if (iAdapter < 0 || iAdapter > ((int)g_backend_info.Adapters.size() - 1))
     iAdapter = 0;
 
-  if (!Common::Contains(g_backend_info.AAModes, iMultisamples))
+  if (g_backend_info.bAAModesReady && !Common::Contains(g_backend_info.AAModes, iMultisamples))
     iMultisamples = 1;
 
   if (stereo_mode != StereoMode::Off)

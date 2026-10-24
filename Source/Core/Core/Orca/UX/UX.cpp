@@ -32,7 +32,7 @@ void SetGameDisc(std::string path)
 void Init()
 {
   StartControllerStreamFromEnvironment();
-  Orca::Events::SetLocalPadSource([](bool for_frame) { return LocalPad(for_frame); });
+  Orca::Events::SetLocalPadSource([](int ordinal, bool for_frame) { return LocalPad(ordinal, for_frame); });
   Orca::Events::SetInputAgeSource([] { return GetInputAge(); });
   InitOverlay();
   // The input gate's masks for the frame about to run: every rule's masks ORed, from memory alone.

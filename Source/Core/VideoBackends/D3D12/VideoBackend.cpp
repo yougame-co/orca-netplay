@@ -9,6 +9,7 @@
 #include "Common/StringUtil.h"
 
 #include "Core/ConfigManager.h"
+#include "Core/Orca/BootPhase.h"
 
 #include "VideoBackends/D3D12/Common.h"
 #include "VideoBackends/D3D12/D3D12BoundingBox.h"
@@ -113,6 +114,8 @@ bool VideoBackend::Initialize(const WindowSystemInfo& wsi)
     return false;
   }
 
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::VideoDevice);
+
   FillBackendInfo();
   UpdateActiveConfig();
 
@@ -132,6 +135,9 @@ bool VideoBackend::Initialize(const WindowSystemInfo& wsi)
     ShutdownShared();
     return false;
   }
+
+  if (swap_chain)
+    Orca::BootPhase::Mark(Orca::BootPhase::Phase::VideoSwapchain);
 
   // Create main wrapper instances.
   auto gfx = std::make_unique<DX12::Gfx>(std::move(swap_chain), wsi.render_surface_scale);

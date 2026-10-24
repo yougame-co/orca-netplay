@@ -149,6 +149,7 @@ bool PlatformWin32::CreateAdoptedWindow()
     fprintf(stderr, "Orca: CreateWindowEx for adoption failed (%lu)\n", GetLastError());
     return false;
   }
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::WindowCreated);
   const auto deadline = std::chrono::steady_clock::now() + ADOPTION_TIMEOUT;
   while (!IsAdoptedBy(m_hwnd, parent) && std::chrono::steady_clock::now() < deadline)
   {

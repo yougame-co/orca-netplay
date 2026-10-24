@@ -1404,6 +1404,13 @@ void OnFrameBoundary(const Core::CPUThreadGuard& guard)
   if (s_hashlog && first_pass_here && s_synctest_k <= 0)
   {
     const auto regions = HashRegions(system);
+    static int local_seats = 1;
+    const int count = OnlineMatch::LocalSeatCount();
+    if (count != local_seats)
+    {
+      std::fprintf(s_hashlog, "# localSeats %d\n", count);
+      local_seats = count;
+    }
     std::fprintf(s_hashlog, "%d %s %016llx\n", frame_here, s_scene.c_str(),
                  static_cast<unsigned long long>(
                      XXH3_64bits(regions.data(), regions.size() * sizeof(u64))));

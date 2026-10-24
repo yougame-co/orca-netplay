@@ -184,6 +184,7 @@ std::optional<StandardPad> ParsePad(const picojson::value& v)
     return std::nullopt;
   }
   StandardPad pad;
+  pad.seat = Integer(o, "seat", 0, 3);
   if (mapping->get<std::string>() != "standard")
   {
     pad.index = -1;
@@ -478,5 +479,56 @@ std::optional<LocalChoice> ChooseLocalPad(const Snapshot& snapshot, double age_m
     return LocalChoice{PadSource::Gamepad, pad.index, MapStandardPad(pad), false};
   }
   return std::nullopt;
+}
+std::array<std::optional<LocalChoice>, MAX_LOCAL> ChooseLocalPads(const Snapshot& snapshot,
+                                                               double age_ms, int n)
+{
+  std::array<std::optional<LocalChoice>, MAX_LOCAL> choices{};
+  if (n == 1)
+  {
+    choices[0] = ChooseLocalPad(snapshot, age_ms);
+    return choices;
+  }
+  const bool stale = !(age_ms <= STALE_MS) || snapshot.suspended;
+  for (int ordinal = 0; ordinal < std::clamp(n, 0, MAX_LOCAL); ++ordinal)
+  {
+    const AdapterPort* adapter = nullptr;
+    bool ambiguous = false;
+    if (snapshot.owned)
+      for (const auto& port : snapshot.ports)
+        if (port.connected && port.seat == ordinal)
+        {
+          ambiguous |= adapter != nullptr;
+          adapter = &port;
+        }
+    if (ambiguous)
+      continue;
+    if (adapter)
+    {
+      const double report_age = snapshot.sent_at - snapshot.received_at + age_ms;
+      const bool neutral = stale || snapshot.received_at <= 0 || !(report_age <= STALE_MS);
+      choices[ordinal] = LocalChoice{PadSource::Adapter, adapter->port,
+          neutral ? NeutralPad() : MapAdapterPort(*adapter), neutral};
+    }
+    else
+    {
+      const StandardPad* assigned = nullptr;
+      for (const auto& pad : snapshot.pads)
+        if (pad.seat == ordinal)
+        {
+          ambiguous |= assigned != nullptr;
+          assigned = &pad;
+        }
+      if (assigned && !ambiguous)
+        choices[ordinal] = LocalChoice{PadSource::Gamepad, assigned->index,
+            stale ? NeutralPad() : MapStandardPad(*assigned), stale};
+    }
+    for (int previous = 0; previous < ordinal; ++previous)
+      if (choices[ordinal] && choices[previous] &&
+          choices[ordinal]->source == choices[previous]->source &&
+          choices[ordinal]->index == choices[previous]->index)
+        choices[ordinal].reset();
+  }
+  return choices;
 }
 }  // namespace Orca::UX

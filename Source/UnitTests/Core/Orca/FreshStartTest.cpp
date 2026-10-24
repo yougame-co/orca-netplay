@@ -539,3 +539,54 @@ TEST(OrcaResetStart, WarnsBeforeSchedulingAFriendsReset)
   EXPECT_EQ(step(t0 + 9s), FreshStep::None);
   EXPECT_FALSE(warned_at);
 }
+
+TEST(OrcaFreshStart, SoloCoSeatsKeepSeparatePadsPortsAndNeutralTails)
+{
+  auto& system = Core::System::GetInstance();
+  for (const bool tail : {false, true})
+  {
+    std::array<int, Orca::Net::MAX_SEATS> reads{};
+    std::vector<Orca::Events::PortInfo> ports;
+    const auto log = PumpSoloSeatsForTest(system, {2}, 3, tail,
+        [&](int seat) {
+          ++reads[seat];
+          return Orca::Net::Pad{static_cast<u8>(0x10 + seat), 0, 0, 0,
+                                static_cast<u8>(seat + 1), 0, 0, 0};
+        }, &ports);
+    EXPECT_EQ(reads, (std::array<int, Orca::Net::MAX_SEATS>{3, 0, 3, 0}));
+    ASSERT_EQ(log.size(), 3u);
+    for (const auto& pads : log)
+    {
+      EXPECT_EQ(pads[0][0], tail ? 0 : 0x10);
+      EXPECT_EQ(pads[2][0], tail ? 0 : 0x12);
+      EXPECT_EQ(pads[0][4], tail ? 0 : 1);
+      EXPECT_EQ(pads[2][4], tail ? 0 : 3);
+      EXPECT_EQ(pads[1], Orca::Net::UNPLUGGED_PAD);
+      EXPECT_EQ(pads[3], Orca::Net::UNPLUGGED_PAD);
+    }
+    ASSERT_EQ(ports.size(), 2u);
+    EXPECT_EQ(ports[0].port, 0);
+    EXPECT_EQ(ports[1].port, 2);
+    EXPECT_FALSE(ports[0].remote);
+    EXPECT_FALSE(ports[1].remote);
+    EXPECT_TRUE(ports[1].controls.empty());
+  }
+}
+
+TEST(OrcaCoSeats, SetOverButtonsKeepTheLeadSample)
+{
+  for (const int lead : {0, 1})
+  {
+    for (const bool lead_b : {false, true})
+    {
+      const auto seen = PumpSeenLocalPadForTest(lead, {2, 3}, [&](int seat) {
+        GCPadStatus pad;
+        if ((seat == lead) == lead_b)
+          pad.button = PAD_BUTTON_B;
+        return Orca::Net::EncodePad(pad);
+      });
+      ASSERT_TRUE(seen);
+      EXPECT_EQ(Orca::Net::DecodePad(*seen).button, lead_b ? PAD_BUTTON_B : 0);
+    }
+  }
+}

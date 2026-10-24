@@ -77,12 +77,17 @@ void SetLocalPadSource(LocalPadSource source)
 
 std::optional<GCPadStatus> LocalPad(bool for_frame)
 {
+  return LocalPad(0, for_frame);
+}
+
+std::optional<GCPadStatus> LocalPad(int ordinal, bool for_frame)
+{
   LocalPadSource source;
   {
     std::lock_guard lk(s_lock);
     source = s_pad_source;
   }
-  return source ? source(for_frame) : std::nullopt;
+  return source ? source(ordinal, for_frame) : std::nullopt;
 }
 
 void SetInputAgeSource(InputAgeSource source)

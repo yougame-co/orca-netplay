@@ -45,6 +45,7 @@ Make AA apply instantly during gameplay if possible
 #include "Common/MsgHandler.h"
 
 #include "Core/Config/GraphicsSettings.h"
+#include "Core/Orca/BootPhase.h"
 
 #include "VideoBackends/OGL/OGLBoundingBox.h"
 #include "VideoBackends/OGL/OGLConfig.h"
@@ -199,6 +200,10 @@ bool VideoBackend::Initialize(const WindowSystemInfo& wsi)
                         Config::Get(Config::GFX_PREFER_GLES));
   if (!main_gl_context)
     return false;
+  // GL creates the context and its drawable together.
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::VideoDevice);
+  if (wsi.render_surface)
+    Orca::BootPhase::Mark(Orca::BootPhase::Phase::VideoSwapchain);
 
   if (!FillBackendInfo(main_gl_context.get()))
     return false;

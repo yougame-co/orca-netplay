@@ -10,6 +10,8 @@
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
 
+#include "Core/Orca/BootPhase.h"
+
 #include "VideoBackends/Software/SWTexture.h"
 
 SWOGLWindow::SWOGLWindow() = default;
@@ -37,6 +39,10 @@ bool SWOGLWindow::Initialize(const WindowSystemInfo& wsi)
   m_gl_context = GLContext::Create(wsi);
   if (!m_gl_context)
     return false;
+  // Software uses this GL context and drawable to present its CPU-rendered frames.
+  Orca::BootPhase::Mark(Orca::BootPhase::Phase::VideoDevice);
+  if (wsi.render_surface)
+    Orca::BootPhase::Mark(Orca::BootPhase::Phase::VideoSwapchain);
 
   // Init extension support.
   if (!GLExtensions::Init(m_gl_context.get()))

@@ -124,6 +124,9 @@ struct PeerEvent
     // The host starts or stops holding this joiner's join (`holding`), e.g. while its game is in a
     // single-player mode. Sent only to a joiner without a keyframe yet.
     Hold,
+    // A co-seat appeared/disappeared while its connection stayed in the room.
+    CoSeatArrived,
+    CoSeatLeft,
   };
   Kind kind = Kind::Arrived;
   int seat = -1;
@@ -143,6 +146,10 @@ struct PeerEvent
   // Arrived: a retained friends-room player requests a current-match keyframe.
   bool recovering = false;
   bool doubles = false;
+  // Arrived: the connection's other seats, ordered by localIndex.
+  std::vector<int> co_seats;
+  // CoSeatArrived / CoSeatLeft: the connection's lead seat.
+  int lead = -1;
 };
 
 // How other players' inputs reach this one (DirectLink.h): the worst of them.
@@ -203,6 +210,12 @@ public:
   RoomState GetState() const;
   // This Orca's room slot (its seat), once in the room (-1 before).
   int Seat() const;
+  // Our other seats, ordered by localIndex. Empty until the roster names any.
+  std::vector<int> CoSeats() const;
+  // The roster's local ordinal (-1 for an absent/invalid seat).
+  int LocalIndex(int seat, bool only_mine = false) const;
+  // A seat's machine group, lead first then co-seats by localIndex (empty if absent).
+  std::vector<int> GroupOf(int seat) const;
   // Whether this Orca joins someone else's game, once the ticket is in (nullopt before, or if the
   // room ended first).
   std::optional<bool> Joining() const;
@@ -397,6 +410,8 @@ std::string GameStartMessage(const std::string& queue, const std::string& match,
                              int start);
 // Packets as room messages (exposed for tests).
 std::string EncodePacket(const Packet& packet);
+// Direct inputs omit history and retain the oldest frames that fit, for every local seat.
+std::string EncodeDirectPacket(const Packet& packet);
 bool DecodePacket(const std::string& json, Packet* packet);
 // Port values in the room's "nm" and "kf" messages (exposed for tests): each entry is [seat, from,
 // name], plus controls hex (empty for none) and then queue hex when present. At most 16 entries are
@@ -434,6 +449,8 @@ struct RoomTestStep
   {
     Message,
     DirectInput,
+    DirectPacket,
+    LinkPeer,
     Tick,
     SocketClose,
     RetryPeer,
@@ -472,6 +489,12 @@ struct RoomTestSnapshot
   std::optional<std::chrono::steady_clock::time_point> public_deadline;
   bool session_recovering = false;
   std::optional<bool> input_held;
+  int seat = -1;
+  std::vector<int> co_seats;
+  std::array<int, MAX_SEATS> local_indices{-1, -1, -1, -1};
+  std::array<std::vector<int>, MAX_SEATS> groups;
+  std::vector<int> linked_seats;
+  std::optional<std::chrono::steady_clock::time_point> host_input_deadline;
 };
 std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions& options,
                                              const std::vector<RoomTestStep>& steps);
