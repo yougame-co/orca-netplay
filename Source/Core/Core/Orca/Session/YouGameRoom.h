@@ -4,6 +4,7 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -212,6 +213,11 @@ public:
   int Seat() const;
   // Our other seats, ordered by localIndex. Empty until the roster names any.
   std::vector<int> CoSeats() const;
+  // Unresolved/cancelling adds cannot supply local ports to solo emulation.
+  std::optional<std::vector<int>> CoSeatsForSolo() const;
+  // CPU thread: published before constructing/after releasing the rollback session.
+  void SetSessionActive(bool active);
+  bool TryStartSession(const std::vector<int>& co_seats);
   // The roster's local ordinal (-1 for an absent/invalid seat).
   int LocalIndex(int seat, bool only_mine = false) const;
   // A seat's machine group, lead first then co-seats by localIndex (empty if absent).
@@ -348,7 +354,8 @@ public:
 private:
   YouGameRoom(RoomOptions options, bool start_io);
   friend std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions&,
-                                                      const std::vector<RoomTestStep>&);
+                                                      const std::vector<RoomTestStep>&,
+                                                      const std::function<void(YouGameRoom&)>&);
   struct Impl;
   std::unique_ptr<Impl> m_impl;
 };
@@ -463,6 +470,11 @@ struct RoomTestStep
     ReportGame,
     GameStart,
     Stall,
+    PageEvent,
+    SessionActive,
+    Tournament,
+    OfferKeyframe,
+    AppCaps,
   };
   Kind kind;
   int milliseconds = 0;
@@ -495,7 +507,11 @@ struct RoomTestSnapshot
   std::array<std::vector<int>, MAX_SEATS> groups;
   std::vector<int> linked_seats;
   std::optional<std::chrono::steady_clock::time_point> host_input_deadline;
+  picojson::object mirror;
+  std::string published_mirror;
+  unsigned mirror_serializations = 0;
 };
 std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions& options,
-                                             const std::vector<RoomTestStep>& steps);
+                                             const std::vector<RoomTestStep>& steps,
+                                             const std::function<void(YouGameRoom&)>& observe = {});
 }  // namespace Orca::Net

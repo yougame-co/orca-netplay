@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <sstream>
 #include <string>
 
@@ -166,6 +167,74 @@ TEST(OrcaStatus, ReportsBrandOnlyTheSentence)
   ASSERT_NE(std::fgets(buffer, sizeof(buffer), out), nullptr);
   EXPECT_EQ(std::string(buffer), "orca error orca_code Restart YG Dolphin from "
                                 "/Applications/Orca.app. Update YG Dolphin.\n");
+}
+
+TEST(OrcaStatus, CoSeatsCapsAreAppendOnlyAndFitLegacyReaders)
+{
+  const auto old_session = Orca::GetEnv("ORCA_SESSION");
+  const auto old_source = Orca::GetEnv("ORCA_REPLAY_SOURCE");
+  const auto old_switch = Orca::GetEnv("ORCA_COSEATS");
+  const auto old_profile = Orca::ActiveProfile() ? std::optional{*Orca::ActiveProfile()} : std::nullopt;
+  Common::ScopeGuard restore([&] {
+    SetEnv("ORCA_SESSION", old_session);
+    SetEnv("ORCA_REPLAY_SOURCE", old_source);
+    SetEnv("ORCA_COSEATS", old_switch);
+    Orca::SetActiveProfile(old_profile);
+    Orca::Status::SetAppCaps("");
+  });
+  SetEnv("ORCA_SESSION", "1");
+  const auto sys = (std::filesystem::path(__FILE__).parent_path() / "../../../../Data/Sys/").string();
+  for (const char* game : {"RSBE01", "PPLUS32"})
+  {
+    std::string error;
+    const auto profile = Orca::LoadProfileFrom(sys, game, std::nullopt, &error);
+    ASSERT_TRUE(profile) << error;
+    Orca::SetActiveProfile(profile);
+    for (const bool product : {false, true})
+    {
+      SCOPED_TRACE(std::string(game) + (product ? " product" : " session"));
+      SetEnv("ORCA_REPLAY_SOURCE", product ? "fixture-replay.orca" : "");
+      std::string before = product ?
+          "leave stats pause delay perf chat yougame gfx" :
+          "join leave stats pause delay perf direct host chat yougame gfx";
+      before += " music results locks queue2 pick-casual pick-ranked talk rumble";
+      if (product)
+      {
+        // Core always includes BroadcastSink.cpp; its private define is not a test define.
+        before += " replay broadcast";
+      }
+      before += " record hostui";
+      SetEnv("ORCA_COSEATS", "0");
+      EXPECT_EQ(Orca::Status::OfferedCaps(), before);
+      SetEnv("ORCA_COSEATS", "1");
+      const auto after = Orca::Status::OfferedCaps();
+      EXPECT_EQ(after, before + " coseats");
+      std::FILE* output = std::tmpfile();
+      ASSERT_NE(output, nullptr);
+      Orca::Status::SetOutput(output);
+      Orca::Status::PrintCaps();
+      std::rewind(output);
+      char buffer[1024]{};
+      ASSERT_NE(std::fgets(buffer, sizeof(buffer), output), nullptr);
+      EXPECT_EQ(std::string(buffer), "orca caps " + before + " coseats\n");
+      Orca::Status::SetOutput(nullptr);
+      std::fclose(output);
+      std::istringstream words(after);
+      unsigned count = 0;
+      for (std::string word; words >> word;)
+        ++count;
+      const unsigned expected = product ? 21 : 22;
+      EXPECT_EQ(count, expected);
+      EXPECT_LE(count, 24u);
+      Orca::Status::SetAppCaps("join");
+      EXPECT_FALSE(Orca::Status::Cap("coseats"));
+      Orca::Status::SetAppCaps("join coseats");
+      EXPECT_TRUE(Orca::Status::Cap("coseats"));
+      SetEnv("ORCA_COSEATS", "0");
+      Orca::Status::SetAppCaps("join coseats");
+      EXPECT_FALSE(Orca::Status::Cap("coseats"));
+    }
+  }
 }
 
 TEST(OrcaStatusDeathTest, ErrorsAndLegacyReportsBrandTheOutputAndListener)

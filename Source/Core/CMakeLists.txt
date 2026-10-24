@@ -1,7 +1,7 @@
 # The YG Dolphin version, X.Y.Z (a release passes -DORCA_VERSION, Tools/orca-package-*.sh): the
 # macOS Info.plist and Windows version resource (DolphinNoGUI), and the version a mod.json's
 # engine.minOrca is checked against (Core/Orca/Mod.cpp). Here, before every target that reads it.
-set(ORCA_VERSION "0.3.82" CACHE STRING "The Orca version (Info.plist, version resource, mod.json minOrca)")
+set(ORCA_VERSION "0.3.83" CACHE STRING "The Orca version (Info.plist, version resource, mod.json minOrca)")
 if(NOT ORCA_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
   message(FATAL_ERROR "ORCA_VERSION must be X.Y.Z, not ${ORCA_VERSION}")
 endif()

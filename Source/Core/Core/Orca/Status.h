@@ -114,13 +114,15 @@ inline constexpr const char* RUMBLE_CAP = "rumble";
 inline constexpr const char* REPLAY_CAP = "replay";
 // "record": every profile, after optional replay and before hostui; an app without it never records.
 inline constexpr const char* RECORD_CAP = "record";
-// "hostui": every profile, last. The newest word: an app that reads fewer caps words drops it first.
+// "hostui": every profile, after record and before coseats.
 // Only an app that agrees it gets native orb and feedback controls (UX/YgOrb.h).
 inline constexpr const char* HOSTUI_CAP = "hostui";
 // This build's caps for the running profile: CAPS, plus "music", "results", "locks", "queue2" and
 // the pick caps where supported, then "talk", "rumble", "replay" in product playback,
 // "broadcast" in product playback on builds with the sink, then "record" and "hostui" in every
-// mode. In mod mode (Core/Orca/Mod.h) a builtin's caps only once its guard words have held, and
+// mode, followed by "coseats" unless ORCA_COSEATS=0. Co-seats need the app's explicit agreement
+// and a friends doubles room; the ticket's lobby never depends on this switch.
+// In mod mode (Core/Orca/Mod.h) a builtin's caps only once its guard words have held, and
 // never after they failed.
 std::string OfferedCaps();
 void PrintCaps();

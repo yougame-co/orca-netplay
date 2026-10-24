@@ -24,7 +24,7 @@ enum class Mode : u8
 enum class Ruleset : u8
 {
   None = 0,
-  Brawl = 1,  // Supernova 2025: 3 stocks, 8:00, BF PS1 LC SV YI + FD DP
+  Brawl = 1,  // Ranked Supernova 2026; casual Supernova 2025; 3 stocks, 8:00
   PPlus = 2,  // Project+ 2024 recommended procedure and proposed stage list
 };
 

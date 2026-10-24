@@ -37,6 +37,8 @@
 #include "Core/HW/SI/SI_Device.h"
 #include "Core/Orca/Session/Events.h"
 #include "Core/Orca/Session/YouGameRoom.h"
+#include "Core/Orca/UX/ControllerSource.h"
+#include "Core/Orca/UX/Probe.h"
 #include "Core/Rollback/ReplayStream.h"
 
 namespace Orca::Online
@@ -541,6 +543,12 @@ std::vector<int> CoSeats()
   return room ? room->CoSeats() : std::vector<int>{};
 }
 
+std::optional<std::vector<int>> CoSeatsForSolo()
+{
+  const auto room = Room();
+  return room ? room->CoSeatsForSolo() : std::optional(std::vector<int>{});
+}
+
 int LocalIndex(int seat)
 {
   const auto room = Room();
@@ -551,6 +559,18 @@ int LocalIndex(int seat)
   const auto co_seats = room->CoSeats();
   const auto co = std::ranges::find(co_seats, seat);
   return co == co_seats.end() ? -1 : static_cast<int>(co - co_seats.begin()) + 1;
+}
+
+void SetSessionActive(bool active)
+{
+  if (const auto room = Room())
+    room->SetSessionActive(active);
+}
+
+bool TryStartSession(const std::vector<int>& co_seats)
+{
+  const auto room = Room();
+  return room ? room->TryStartSession(co_seats) : co_seats.empty();
 }
 
 std::vector<int> GroupOf(int seat)

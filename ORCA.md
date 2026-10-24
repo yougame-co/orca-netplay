@@ -2835,6 +2835,11 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.83
+
+- Groundwork for two players on one computer in friends rooms (needs the next desktop app; nothing changes until then).
+- Small rules cleanups (no change to play).
+
 ### 0.3.82
 
 - Brawl ranked plays the Supernova 2026 rules: 8 stages, 2 bans, a ledge-grab limit of 30 (10 in a tiebreak; Meta Knight 20 and 6), and the Meta Knight clause. Project+ ranked and casual play are unchanged.

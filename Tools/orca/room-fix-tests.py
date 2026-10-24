@@ -97,6 +97,10 @@ class Handler(BaseHTTPRequestHandler):
                 ticket_failed = cfg.get("ticket_fail_count", 0) > 0 and ticket_number > 1
                 if ticket_failed:
                     cfg["ticket_fail_count"] -= 1
+            if (cfg.get("required_local_players") is not None and
+                    body.get("lobby", {}).get("maxLocalPlayers") != cfg["required_local_players"]):
+                self.reply({"error": "Lobby mismatch"}, 403)
+                return
             if ticket_failed:
                 self.reply({"error": "fixture ticket unavailable"}, 503)
                 return

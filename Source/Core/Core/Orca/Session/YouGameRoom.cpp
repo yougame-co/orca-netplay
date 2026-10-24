@@ -35,6 +35,7 @@
 #include "Core/Orca/Session/DirectLink.h"
 #include "Core/Orca/Session/Keyframe.h"
 #include "Core/Orca/Session/Online.h"
+#include "Core/Orca/UX/ControllerSource.h"
 #include "Core/Orca/Session/Replay.h"
 #include "Core/Orca/Session/RoomResilience.h"
 #include "Core/Orca/Status.h"
@@ -58,6 +59,9 @@ constexpr const char* CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 constexpr auto SEND_GAP = std::chrono::milliseconds(10);
 constexpr auto PING_EVERY = std::chrono::seconds(1);
 constexpr auto HELLO_EVERY = std::chrono::seconds(1);
+// Allow delayed room round trips, then bound cleanup independently. Never enter a session
+// while the room may still assign us an unaccounted local participant.
+constexpr auto CO_SEAT_WAIT = std::chrono::seconds(10);
 constexpr size_t MAX_INBOX = 1024;
 // The server answers every ping (one a second), so a connection silent this long is dead even if
 // sends still succeed into the socket buffer (the network vanished, the laptop slept). Not much
@@ -1298,6 +1302,15 @@ struct YouGameRoom::Impl
   // the game's host ever said hello, and when the server last sent anything.
   std::optional<Clock::time_point> welcomed_at;
   bool host_seen = false;
+  bool hello_sent = false;  // I/O thread: P4 joiner adds stop at its first hello.
+  bool page_add_before_welcome = false;
+  bool co_hello_pending = false;  // A held hello must still follow the co-seat roster.
+  bool session_active = false;  // under mutex
+  bool local_add_pending = false;  // under mutex: an accepted add reserves solo ownership
+  std::optional<Clock::time_point> co_wait_until;
+  bool co_wait_expired = false;  // cancellation: wait for the removal roster
+  bool inherited_co_cleanup = false;
+  std::set<std::string> co_removals;
   Clock::time_point last_heard{};
 
   // Under the desktop app, the room is mirrored to the YouGame page through the app's bridge
@@ -1320,6 +1333,8 @@ struct YouGameRoom::Impl
   std::mutex bridge_mutex;
   std::condition_variable bridge_wake;
   std::optional<std::string> bridge_pending;
+  bool mirror_dirty = true;  // I/O thread only, like every RoomMirror input.
+  std::optional<bool> mirror_co_cap;
   std::string last_published;  // I/O thread only
   bool mirror_closed = false;  // under s_mirror_mutex: the emptied room went out
   std::atomic<bool> leave_requested{false};
@@ -1529,6 +1544,7 @@ struct YouGameRoom::Impl
   unsigned test_send_failures = 0;
   std::vector<std::string> test_notices;
   std::vector<std::string> test_results;
+  unsigned test_mirror_serializations = 0;
   Clock::time_point Now() const { return test_now.value_or(Clock::now()); }
 
   explicit Impl(RoomOptions room_options, bool start_thread = true) : options(std::move(room_options))
@@ -1655,7 +1671,8 @@ struct YouGameRoom::Impl
     picojson::object lobby;
     lobby["version"] = picojson::value(1.0);
     lobby["minPlayers"] = picojson::value(2.0);
-    lobby["maxLocalPlayers"] = picojson::value(1.0);
+    // Build constant: the room's lobby key must agree even when the app lacks co-seats.
+    lobby["maxLocalPlayers"] = picojson::value(2.0);
     lobby["compatibility"] = picojson::value(options.compatibility);
 
     const std::string bridge = Env("YOUGAME_BRIDGE"), token = Env("YOUGAME_TOKEN");
@@ -1831,11 +1848,15 @@ struct YouGameRoom::Impl
     }
     keyframes_url = KeyframesUrl(Str(reply, "keyframes"));
     std::lock_guard lock(mutex);
+    mirror_dirty = true;
     code = room;
+    ticket_tourney = Int(reply, "tourney", 1, 1).has_value();
     ticket_lobby = lobby;
     if (const auto original = reply.find("lobby");
         original != reply.end() && original->second.is<picojson::object>())
       ticket_lobby = original->second.get<picojson::object>();
+    else if (ticket_tourney)
+      ticket_lobby["maxLocalPlayers"] = picojson::value(1.0);  // The site forces tournament tickets to one.
     current_ticket = *ticket;
     ticket_minted = Now();
     role_known = true;
@@ -1843,7 +1864,6 @@ struct YouGameRoom::Impl
       ParseIce(it->second, &ice);
     ice_minted = Clock::now();
     ticket_direct = TicketAllowsDirect(reply);
-    ticket_tourney = Int(reply, "tourney", 1, 1).has_value();
     return true;
   }
 
@@ -3027,7 +3047,10 @@ struct YouGameRoom::Impl
     picojson::object lobby;
     lobby["version"] = picojson::value(1.0);
     lobby["minPlayers"] = picojson::value(2.0);
-    lobby["maxLocalPlayers"] = picojson::value(1.0);
+    {
+      std::lock_guard lock(mutex);
+      lobby["maxLocalPlayers"] = picojson::value(CoSeatsEnabledLocked() ? 2.0 : 1.0);
+    }
     lobby["compatibility"] = picojson::value(options.compatibility);
     picojson::object room;
     room["type"] = picojson::value("mpRoom");
@@ -3059,11 +3082,26 @@ struct YouGameRoom::Impl
     return room;
   }
 
+  bool MirrorNeedsPublish()
+  {
+    // Caps can be replaced by the app thread without a room message.
+    const bool co_cap = Orca::Status::Cap("coseats") && Env("ORCA_COSEATS") != "0";
+    if (mirror_co_cap != co_cap)
+    {
+      mirror_co_cap = co_cap;
+      mirror_dirty = true;
+    }
+    return mirror_dirty;
+  }
+
   void Publish()
   {
-    if (!bridged)
+    if (!bridged || !MirrorNeedsPublish())
       return;
+    mirror_dirty = false;
     std::string snapshot = picojson::value(RoomMirror(false)).serialize();
+    if (test_now)
+      ++test_mirror_serializations;
     if (snapshot == last_published)
       return;
     last_published = snapshot;
@@ -3125,7 +3163,92 @@ struct YouGameRoom::Impl
       commands.swap(page_commands);
     }
     for (const auto& command : commands)
-      SendJson(command);
+    {
+      const auto action = Str(command, "t");
+      if (action == "local-add" || action == "local-remove")
+        SendLocalCommand(command);
+      else
+        SendJson(command);
+    }
+  }
+
+  void LocalStatus(const std::string& line)
+  {
+    SetStatus(line);
+    if (test_now)
+      test_notices.push_back(line);
+    Orca::Status::Line(line);
+  }
+
+  std::string LocalRefusalLocked(bool removing) const
+  {
+    if (!Orca::Status::Cap("coseats") || Env("ORCA_COSEATS") == "0")
+      return "no-cap";
+    if (!queue_known || queue != "private" || ticket_tourney)
+      return "queue";
+    if (!doubles)
+      return "not-doubles";
+    if (state == RoomState::Ended || stop || leave_requested ||
+        (!removing && (session_active || (joining && hello_sent))))
+      return "in-match";
+    return {};
+  }
+
+  void RefuseLocal(const std::string& action, const std::string& reason)
+  {
+    LocalStatus(fmt::format("Room: {} local player isn't available here ({})",
+                           action == "local-add" ? "Add" : "Remove", reason));
+  }
+
+  void SendLocalCommand(const picojson::object& command)
+  {
+    const auto action = Str(command, "t");
+    if (action == "local-remove" && !welcomed_at)
+    {
+      RefuseLocal(action, "not-ready");
+      return;
+    }
+    if (action == "local-add" && !welcomed_at)
+    {
+      page_add_before_welcome = true;
+      return;
+    }
+    std::string reason;
+    {
+      std::lock_guard lock(mutex);
+      const bool removing = action == "local-remove";
+      reason = LocalRefusalLocked(removing);
+      if (reason.empty() && removing &&
+          !std::ranges::any_of(room_participants, [&](const picojson::value& participant) {
+            if (!participant.is<picojson::object>())
+              return false;
+            const auto& p = participant.get<picojson::object>();
+            return Str(p, "id") == Str(command, "id") && Str(p, "connectionId") == me &&
+                   Int(p, "localIndex", 1, MAX_SEATS - 1).has_value();
+          }))
+        reason = "not-local";
+      if (reason.empty() && action == "local-add")
+      {
+        if (!my_co_seats.empty())
+          reason = "full";
+        else if (local_add_pending)
+          reason = "in-match";
+        else
+          local_add_pending = true;
+      }
+    }
+    if (!reason.empty())
+    {
+      RefuseLocal(action, reason);
+      return;
+    }
+    if (action == "local-add")
+    {
+      co_wait_expired = false;
+      co_wait_until = Now() + CO_SEAT_WAIT;
+      co_hello_pending = joining;
+    }
+    SendJson(command);
   }
 
   void BridgeLoop()
@@ -3156,6 +3279,12 @@ struct YouGameRoom::Impl
   }
 
   // One event from the app's stream: a lobby command the page sent this game.
+  bool CoSeatsEnabledLocked() const
+  {
+    return Orca::Status::Cap("coseats") && Env("ORCA_COSEATS") != "0" &&
+           queue_known && doubles && queue == "private" && !ticket_tourney;
+  }
+
   void OnPageEvent(const std::string& line)
   {
     picojson::value value;
@@ -3191,8 +3320,16 @@ struct YouGameRoom::Impl
       if (page_commands.size() < 16)
         page_commands.push_back(std::move(kick));
     }
-    // ready, setting, local-add and local-remove don't apply: one controller per Orca, and the
-    // host's Orca starts the match itself.
+    else if (cmd == "local-add" || (cmd == "local-remove" && Str(e, "id").starts_with("local:")))
+    {
+      picojson::object command{{"t", picojson::value(cmd)}};
+      if (cmd == "local-remove")
+        command["id"] = picojson::value(Str(e, "id"));
+      std::lock_guard lock(bridge_mutex);
+      if (page_commands.size() < 16)
+        page_commands.push_back(std::move(command));
+    }
+    // The host's Orca starts the match itself; ready and setting do not apply.
   }
 
   struct EventStream
@@ -3340,7 +3477,10 @@ struct YouGameRoom::Impl
         }
       }
       if (!held_match)
+      {
+        mirror_dirty |= match_id != id;
         match_id = std::move(id);
+      }
     }
     if (const auto it = m.find("participants");
         !rejoin_verdict_until && it != m.end() && it->second.is<picojson::array>())
@@ -3963,6 +4103,7 @@ struct YouGameRoom::Impl
     std::lock_guard lock(mutex);
     set_done = true;
     rejoin_verdict_until.reset();
+    mirror_dirty |= !match_id.empty();
     match_id.clear();
   }
 
@@ -3996,6 +4137,7 @@ struct YouGameRoom::Impl
         std::lock_guard lock(mutex);
         set_done = true;
         rejoin_verdict_until.reset();
+        mirror_dirty |= !match_id.empty();
         match_id.clear();
         // The server has settled the set. Keep the socket/outbox alive solely to
         // reconcile receipts, without letting a previous hold end that work.
@@ -4038,6 +4180,7 @@ struct YouGameRoom::Impl
     finish_sent = false;
     std::lock_guard lock(mutex);
     rejoin_verdict_until.reset();
+    mirror_dirty |= !match_id.empty();
     match_id.clear();
     return true;
   }
@@ -4096,6 +4239,8 @@ struct YouGameRoom::Impl
   void Tick()
   {
     const auto now = Now();
+    if (welcomed_at && MirrorNeedsPublish())
+      Publish();
     std::vector<std::string> retries, notices;
     {
       std::lock_guard lock(mutex);
@@ -4153,7 +4298,7 @@ struct YouGameRoom::Impl
     // A joiner in a room without its friend's game (a stale invite, or a host that left, restarted
     // or arrived second) would wait forever for a keyframe, so it gives up soon after its welcome
     // unless the host has said hello. After that, the host's leave covers it.
-    if (joining && !host_seen && welcomed_at && now - *welcomed_at >= HOST_WAIT)
+    if (joining && !co_wait_until && !host_seen && welcomed_at && now - *welcomed_at >= HOST_WAIT)
     {
       End("Your friend isn't in that game any more", "peer_left");
       return;
@@ -4232,7 +4377,36 @@ struct YouGameRoom::Impl
     // Say hello to every other Orca until it answers, so neither side treats the other as a player
     // before both are up and agree on the build. Then the host offers each newcomer its keyframe
     // every second until the newcomer's first packet arrives.
-    if (now - last_hello >= HELLO_EVERY || offer_now.exchange(false))
+    if (co_wait_until)
+    {
+      if (co_wait_expired)
+      {
+        if (now >= *co_wait_until)
+        {
+          const std::string line =
+              "Room: Local player removal did not finish; leave and rejoin the room";
+          LocalStatus(line);
+          End(line, "room-refused");
+          return;
+        }
+      }
+      else if (!my_co_seats.empty())
+      {
+        co_wait_until.reset();
+        last_hello = {};
+      }
+      else if (now >= *co_wait_until)
+      {
+        co_wait_expired = true;
+        co_wait_until = now + CO_SEAT_WAIT;
+        LocalStatus("Room: Add local player timed out; waiting for its removal");
+        // The add's participant id is assigned by rooms. A delayed accepted roster supplies
+        // that id; Roster sends its removal and waits for the confirming roster. If no add
+        // response ever arrives, the cleanup deadline leaves instead of assuming one seat.
+      }
+    }
+    if ((!joining || !co_wait_until) &&
+        (co_hello_pending || now - last_hello >= HELLO_EVERY || offer_now.exchange(false)))
     {
       last_hello = now;
       std::map<int, KeyframeInfo> offers;
@@ -4257,7 +4431,8 @@ struct YouGameRoom::Impl
           return;
         }
         const bool retry_resume = peer.resume_requested && now >= peer.resume_retry_at;
-        if (peer.resume_requested ? retry_resume : (!peer.heard || !peer.heard_us))
+        if (peer.resume_requested ? retry_resume :
+                                   (co_hello_pending || !peer.heard || !peer.heard_us))
         {
           picojson::object d;
           d["k"] = picojson::value("hello");
@@ -4288,6 +4463,7 @@ struct YouGameRoom::Impl
           if (joining && !options.queue.empty() && options.queue.size() <= MAX_QUEUE)
             d["qi"] = picojson::value(ToHex(options.queue.data(), options.queue.size()));
           SendTo(id, d);
+          hello_sent = true;
           if (peer.resume_requested)
           {
             peer.resume_retry_at = now + peer.resume_backoff;
@@ -4302,6 +4478,7 @@ struct YouGameRoom::Impl
           SendTo(id, KeyframeOfferToJson(offer->second));
         }
       }
+      co_hello_pending = false;
     }
 
     LinkPeers();
@@ -4422,6 +4599,7 @@ struct YouGameRoom::Impl
 
   void ResetPeer(std::map<std::string, Peer>::iterator p, const std::string& why = "")
   {
+    mirror_dirty |= p->second.announced;
     if (p->second.announced || p->second.presence.suspended)
     {
       EmitLeft(p->second, why.empty() ? p->second.bye : why);
@@ -4540,8 +4718,9 @@ struct YouGameRoom::Impl
       Orca::UX::SetEnd::Current().CasualOpponentLeft(Orca::UX::SetEnd::NowMs());
   }
 
-  void Roster(const picojson::object& m)
+  void Roster(const picojson::object& m, bool fresh_without_add = false)
   {
+    mirror_dirty = true;
     LobbyFields(m);
     // Settlement can clear the gameplay roster before its verdict reaches a recovering game.
     // Keep identities/session, including departures, until the verdict or its bounded wait ends.
@@ -4571,6 +4750,7 @@ struct YouGameRoom::Impl
     // Order by localIndex, independent of participant/slot order in the roster.
     std::map<std::string, std::map<int, Participant>> connections;
     std::map<int, std::string> names;
+    std::vector<std::string> local_co_ids;
     for (const auto& p : room_participants)
     {
       if (!p.is<picojson::object>())
@@ -4582,6 +4762,14 @@ struct YouGameRoom::Impl
                                                 std::optional<int>(0);
       if (id.empty() || !slot || !index)
         continue;
+      if (id == me && *index > 0 && Str(o, "id").starts_with("local:"))
+      {
+        local_co_ids.push_back(Str(o, "id"));
+        inherited_co_cleanup |= fresh_without_add;
+        // A fresh process has no controller assignment for a previous process's co-seat.
+        if (inherited_co_cleanup)
+          continue;
+      }
       names[*slot] = CleanName(Str(o, "name"));
       connections[id].emplace(*index, Participant{*slot, Str(o, "name")});
     }
@@ -4598,6 +4786,16 @@ struct YouGameRoom::Impl
     {
       std::lock_guard lock(mutex);
       const auto previous_local = my_co_seats;
+      if (inherited_co_cleanup && !local_co_ids.empty())
+      {
+        local_add_pending = true;
+        if (!co_wait_expired)
+        {
+          co_wait_expired = true;
+          co_wait_until = Now() + CO_SEAT_WAIT;
+          co_hello_pending = joining;
+        }
+      }
       seat_names = std::move(names);
       peer_ids.clear();
       peer_co_slots.clear();
@@ -4641,11 +4839,33 @@ struct YouGameRoom::Impl
       }
       for (auto& owners : former_co_owners)
         std::erase_if(owners, [&](const std::string& id) { return !connections.contains(id); });
+      if (!co_wait_expired && !my_co_seats.empty())
+        local_add_pending = false;
       for (const int previous : previous_local)
         if (std::ranges::find(my_co_seats, previous) == my_co_seats.end())
           removed_local.push_back(previous);
       my_seat = seat;
       friends_room = queue_known && queue == "private";
+    }
+    if (co_wait_expired)
+    {
+      for (const auto& participant : local_co_ids)
+        if (co_removals.insert(participant).second)
+          SendJson({{"t", picojson::value("local-remove")},
+                    {"id", picojson::value(participant)}});
+      if (!co_removals.empty() && local_co_ids.empty())
+      {
+        co_removals.clear();
+        co_wait_until.reset();
+        co_wait_expired = false;
+        inherited_co_cleanup = false;
+        {
+          std::lock_guard lock(mutex);
+          local_add_pending = false;
+        }
+        last_hello = {};
+        LocalStatus("Room: Add local player cancelled; continuing with one local player");
+      }
     }
     for (const int removed : removed_local)
     {
@@ -4932,7 +5152,15 @@ struct YouGameRoom::Impl
         public_socket_reachable = true;
       }
       LinkPeers();
-      Roster(m);
+      bool add_pending;
+      {
+        std::lock_guard lock(mutex);
+        add_pending = local_add_pending ||
+                      (page_add_before_welcome && LocalRefusalLocked(false).empty());
+      }
+      Roster(m, first_welcome && !add_pending);
+      if (first_welcome && std::exchange(page_add_before_welcome, false) && my_co_seats.empty())
+        SendLocalCommand({{"t", picojson::value("local-add")}});
       if (QueueRecovery() &&
           (m.count("hold_ms") || (m.count("recovering") && m.at("recovering").is<bool>() &&
                                   m.at("recovering").get<bool>())))
@@ -5140,6 +5368,26 @@ struct YouGameRoom::Impl
     }
     else if (t == "command-error")
     {
+      const auto action = Str(m, "action");
+      if (action == "local-add" || action == "local-remove")
+      {
+        const auto error = Str(m, "error");
+        const std::string reason = error == "No local player slot is available" ? "full" :
+            error == "Only your additional local players can be removed" ? "not-local" :
+            error == "The set is over" || error == "This match is complete" ? "in-match" :
+            "room-refused";
+        RefuseLocal(action, reason);
+        if (action == "local-add")
+        {
+          co_wait_until.reset();
+          {
+            std::lock_guard lock(mutex);
+            local_add_pending = false;
+          }
+          co_wait_expired = false;
+          last_hello = {};
+        }
+      }
       WARN_LOG_FMT(NETPLAY, "Orca room: {} refused: {}", Str(m, "action"), Str(m, "error"));
       // A void refused while the match's games were still being decided goes again shortly.
       if (Str(m, "action") == "finish" && last_finish.find("\"void\":true") != std::string::npos &&
@@ -5191,6 +5439,8 @@ struct YouGameRoom::Impl
     for (auto it = packet.co.begin(); it != packet.co.end();)
     {
       const int slot = it->first;
+      if (slot < 0 || slot >= MAX_SEATS)
+        return false;
       if ((owned != peer_co_slots.end() &&
            std::ranges::find(owned->second, slot) != owned->second.end()) ||
           (!id.empty() && seat_groups[slot].empty() && last_co_owner[slot] == id))
@@ -5399,6 +5649,7 @@ struct YouGameRoom::Impl
       // A game player: a joiner at a seat other than the host's, or the host itself.
       if (!peer.announced && peer.slot >= 0)
       {
+        mirror_dirty = true;
         peer.announced = true;
         std::string room;
         {
@@ -5441,6 +5692,8 @@ struct YouGameRoom::Impl
     }
     if (kind == "kf")
     {
+      if (joining && co_wait_until)
+        return;  // The host retries after our complete local group can say hello.
       // Only from the host, to a joiner.
       if (!peer.drop_in_host || !joining)
         return;
@@ -5553,11 +5806,13 @@ YouGameRoom::YouGameRoom(RoomOptions options, bool start_io)
 YouGameRoom::~YouGameRoom() = default;
 
 std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions& options,
-                                             const std::vector<RoomTestStep>& steps)
+                                             const std::vector<RoomTestStep>& steps,
+                                             const std::function<void(YouGameRoom&)>& observe)
 {
   YouGameRoom owner(options, false);
   auto& room = *owner.m_impl;
   room.code = options.room_code;
+  room.bridged = true;  // Exercise publication without starting a bridge or making requests.
   std::vector<RoomTestSnapshot> trace;
   for (const RoomTestStep& step : steps)
   {
@@ -5568,6 +5823,30 @@ std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions& options,
     {
     case RoomTestStep::Kind::Message:
       room.OnMessage(step.text);
+      break;
+    case RoomTestStep::Kind::PageEvent:
+      room.OnPageEvent(step.text);
+      room.SendPageCommands();
+      break;
+    case RoomTestStep::Kind::SessionActive:
+      if (step.close_code)
+        input_held = owner.TryStartSession(owner.CoSeats());
+      else
+        owner.SetSessionActive(false);
+      break;
+    case RoomTestStep::Kind::OfferKeyframe:
+    {
+      picojson::value value;
+      if (Json::ParseJson(step.text, &value) && value.is<picojson::object>())
+        if (const auto info = KeyframeOfferFromJson(value.get<picojson::object>()))
+          owner.OfferKeyframe(static_cast<int>(step.close_code), *info);
+      break;
+    }
+    case RoomTestStep::Kind::Tournament:
+      room.ticket_tourney = true;
+      break;
+    case RoomTestStep::Kind::AppCaps:
+      Orca::Status::SetAppCaps(step.text);
       break;
     case RoomTestStep::Kind::ReportGame:
     case RoomTestStep::Kind::GameStart:
@@ -5646,6 +5925,8 @@ std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions& options,
         room.End(room.RoomRefusalReason(step.text), RefusalCode(step.text));
       break;
     }
+    if (observe)
+      observe(owner);
     trace.push_back({room.state, std::exchange(room.events, {}), std::exchange(room.inbox, {}),
                      room.host_away_until, room.reconnect.since.has_value(), reconnect_started,
                      std::exchange(room.test_sent, {}), room.reconnect.attempts,
@@ -5654,6 +5935,9 @@ std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions& options,
                      std::exchange(room.test_results, {}), room.WaitingDeadlineLocked(),
                      owner.RoomRecovering(*room.test_now), input_held});
     auto& snapshot = trace.back();
+    snapshot.mirror = room.RoomMirror(false);
+    snapshot.published_mirror = room.last_published;
+    snapshot.mirror_serializations = room.test_mirror_serializations;
     snapshot.host_input_deadline = owner.HostAwayDeadline();
     snapshot.seat = owner.Seat();
     snapshot.co_seats = owner.CoSeats();
@@ -5687,6 +5971,30 @@ std::vector<int> YouGameRoom::CoSeats() const
 {
   std::lock_guard lock(m_impl->mutex);
   return m_impl->my_co_seats;
+}
+
+std::optional<std::vector<int>> YouGameRoom::CoSeatsForSolo() const
+{
+  std::lock_guard lock(m_impl->mutex);
+  if (m_impl->local_add_pending)
+    return std::nullopt;
+  return m_impl->my_co_seats;
+}
+
+void YouGameRoom::SetSessionActive(bool active)
+{
+  std::lock_guard lock(m_impl->mutex);
+  m_impl->session_active = active;
+}
+
+bool YouGameRoom::TryStartSession(const std::vector<int>& co_seats)
+{
+  std::lock_guard lock(m_impl->mutex);
+  if (m_impl->local_add_pending || m_impl->my_co_seats != co_seats ||
+      (!co_seats.empty() && m_impl->state == RoomState::Ended))
+    return false;
+  m_impl->session_active = true;
+  return true;
 }
 
 int YouGameRoom::LocalIndex(int seat, bool only_mine) const
