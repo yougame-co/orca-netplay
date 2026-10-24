@@ -2835,6 +2835,10 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.84
+
+- Matchmaking: the queue can now measure your real connection to the other player before game 1 and find you someone closer when it's too slow (needs both players on 0.3.84).
+
 ### 0.3.83
 
 - Groundwork for two players on one computer in friends rooms (needs the next desktop app; nothing changes until then).
