@@ -475,6 +475,8 @@ struct RoomTestStep
     Tournament,
     OfferKeyframe,
     AppCaps,
+    SocketMessage,
+    FlushHeld,
   };
   Kind kind;
   int milliseconds = 0;

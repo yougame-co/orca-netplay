@@ -115,7 +115,7 @@ if [ -n "$VERSION" ]; then
     "refs/tags/$TAG" >/dev/null 2>&1 ||
     echo "orca-package: WARNING: $TAG is not public yet at $PUBLIC" >&2
 else
-  VERSION=0.3.83
+  VERSION=0.3.84
   SOURCE="not published (a development build)"
 fi
 
