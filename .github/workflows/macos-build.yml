@@ -40,7 +40,7 @@ concurrency:
 
 jobs:
   package:
-    runs-on: macos-14 # Apple silicon, as the Mac kit (CMAKE_OSX_ARCHITECTURES=arm64)
+    runs-on: macos-26 # Apple silicon with Xcode 26, as the Mac kit (Xcode 15's libc++ can't build this tree)
     timeout-minutes: 150
     steps:
       - name: Check the inputs (they reach shell steps only after this)
@@ -119,7 +119,7 @@ jobs:
 
   unit-tests:
     # The package script builds with ENABLE_TESTS=OFF; the unit tests get their own build, in parallel.
-    runs-on: macos-14
+    runs-on: macos-26
     timeout-minutes: 150
     steps:
       - name: Check the inputs

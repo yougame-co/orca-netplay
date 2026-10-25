@@ -41,7 +41,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: windows-2022 # Visual Studio 2022, as on the PC
+    runs-on: windows-2025 # Visual Studio 2026 (the preset's generator, as on the PC)
     timeout-minutes: 180
     defaults:
       run:
