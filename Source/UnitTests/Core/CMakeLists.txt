@@ -24,7 +24,8 @@ if(NOT MSVC)
   set_property(SOURCE Orca/BootMemoryTest.cpp APPEND PROPERTY COMPILE_OPTIONS -fexceptions)
 endif()
 add_dolphin_test(OrcaRoomTest Orca/RoomTest.cpp Orca/OfflineReplayTest.cpp)
-add_dolphin_test(OrcaDirectLinkTest Orca/DirectLinkTest.cpp)
+add_dolphin_test(OrcaDirectLinkTest Orca/DirectLinkTest.cpp Orca/TurnRetryTest.cpp
+  Orca/TurnRetryHarness.c)
 # TURN stays test-only; the production libjuice target keeps NO_SERVER.
 set(ORCA_TURN_SOURCE ${CMAKE_SOURCE_DIR}/Tools/orca/turn-fixture.c)
 set(ORCA_JUICE_SOURCE ${CMAKE_SOURCE_DIR}/Externals/libjuice/libjuice)

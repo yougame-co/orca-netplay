@@ -24,12 +24,30 @@ function(juice_replace_once source_var anchor replacement)
   set(${source_var} "${patched}" PARENT_SCOPE)
 endfunction()
 
-foreach(JUICE_PATCH_FILE conn_poll conn_thread conn_mux)
+foreach(JUICE_PATCH_FILE conn_poll conn_thread conn_mux agent)
   set(upstream "${LIBJUICE_DIR}/src/${JUICE_PATCH_FILE}.c")
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${upstream}")
   file(READ "${upstream}" source)
   string(REPLACE "\r\n" "\n" source "${source}")
-  if(NOT ORCA_JUICE_UNPATCHED AND JUICE_PATCH_FILE STREQUAL "conn_poll")
+  if(JUICE_PATCH_FILE STREQUAL "agent")
+    juice_replace_once(source [=[			// Resend request when possible
+			agent_arm_transmission(agent, entry, 0);
+
+		} else if (msg->error_code == 438)]=] [=[			// Authentication changes the request (RFC 8489, 9.2.5).
+			juice_random(entry->transaction_id, STUN_TRANSACTION_ID_SIZE);
+			agent_arm_transmission(agent, entry, 0);
+
+		} else if (msg->error_code == 438)]=])
+    juice_replace_once(source [=[			// Resend request when possible
+			agent_arm_transmission(agent, entry, 0);
+
+		} else if (msg->msg_method == STUN_METHOD_ALLOCATE &&]=]
+      [=[			// A nonce change also starts a new transaction (RFC 8489, 9.2.5).
+			juice_random(entry->transaction_id, STUN_TRANSACTION_ID_SIZE);
+			agent_arm_transmission(agent, entry, 0);
+
+		} else if (msg->msg_method == STUN_METHOD_ALLOCATE &&]=])
+  elseif(NOT ORCA_JUICE_UNPATCHED AND JUICE_PATCH_FILE STREQUAL "conn_poll")
     juice_replace_once(source [=[			if ((ret = conn_poll_recv_udp(conn_impl->udp_sock, buffer, BUFFER_SIZE,
 							&src)) <= 0) {
 				break;
@@ -91,7 +109,7 @@ endforeach()
 
 add_library(juice STATIC
   ${LIBJUICE_DIR}/src/addr.c
-  ${LIBJUICE_DIR}/src/agent.c
+  ${CMAKE_CURRENT_BINARY_DIR}/agent.c
   ${LIBJUICE_DIR}/src/base64.c
   ${LIBJUICE_DIR}/src/conn.c
   ${CMAKE_CURRENT_BINARY_DIR}/conn_mux.c

@@ -2835,6 +2835,10 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.89
+
+- Online: the relay login (TURN) no longer fails now and then. A failed login left one side without a relay, which could make a doubles session slow down and drop.
+
 ### 0.3.88
 
 - Pack sessions start clean, with no shared save and only the pack's textures.
