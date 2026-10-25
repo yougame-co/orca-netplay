@@ -194,7 +194,7 @@ TEST_F(DiscReportTest, SameFilesPassAndOutputIsJsonLinesThenVerdict)
   EXPECT_EQ(code, 0);
   EXPECT_TRUE(text.starts_with(Report::HeaderLine(report->header) + '\n'));
   EXPECT_TRUE(text.ends_with("PASS: files match invented reference\n"));
-  EXPECT_EQ(std::count(text.begin(), text.end(), '\n'), report->files.size() + 2);
+  EXPECT_EQ(static_cast<size_t>(std::count(text.begin(), text.end(), '\n')), report->files.size() + 2);
   for (const auto& file : report->files)
     EXPECT_NE(text.find(Report::FileLine(file) + '\n'), std::string::npos);
   EXPECT_TRUE(Run(std::nullopt, &code).ends_with("PASS: files match GTEE01\n"));
