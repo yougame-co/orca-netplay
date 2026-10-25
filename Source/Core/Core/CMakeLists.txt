@@ -529,6 +529,8 @@ add_library(core
   Orca/CrashNote.h
   Orca/Disc.cpp
   Orca/Disc.h
+  Orca/DiscReport.cpp
+  Orca/DiscReport.h
   Orca/DiscVerify.cpp
   Orca/DiscVerify.h
   Orca/Engine/Display.h

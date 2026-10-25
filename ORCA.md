@@ -2835,6 +2835,13 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.88
+
+- Pack sessions start clean, with no shared save and only the pack's textures.
+- Online doubles: play casual 2v2 rooms the queue makes, with one or two players per computer.
+- A disc check tool helps check rebuilt Brawl discs.
+- Windows crash reports name where the crash happened.
+
 ### 0.3.87
 
 - Linux: mod packs now start inside YouGame's Linux sandbox as it really runs (the 0.3.86 check refused it: the sandbox has no user list and creates empty home folders). Homes must still be empty placeholders, with no host home and no keys, browser or Steam folders visible.

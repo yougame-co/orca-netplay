@@ -672,7 +672,10 @@ void SetSeedSessionSave(bool seed)
 
 bool SeedSessionSave()
 {
-  return s_seed_session_save;
+  // Bundles have no NAND save import contract. A listed file or saveTitle alone cannot
+  // supply a seed; mod sessions start clean, including before their profile is selected.
+  return s_seed_session_save &&
+         !(SessionActive() && (Mod::Requested() || Mod::ActiveMod()));
 }
 
 std::optional<Profile> LoadProfile(const std::string& game_id, std::optional<u16> revision,

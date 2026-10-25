@@ -204,6 +204,9 @@ std::string OfferedCaps()
   // Append-only: old desktop builds read at most 24 words.
   if (SessionActive() && GetEnv("ORCA_COSEATS") != "0")
     caps += " coseats";
+  // Casual queue doubles also works with one seat per computer, without co-seats.
+  if (SessionActive())
+    caps += " qdoubles";
   return caps;
 }
 

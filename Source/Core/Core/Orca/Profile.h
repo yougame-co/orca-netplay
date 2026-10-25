@@ -299,9 +299,9 @@ u64 HashSessionSave(u64 title_id);
 void SetSeedSaveHash(u64 hash);
 u64 GetSeedSaveHash();
 
-// Whether a session copies the title's save from the configured NAND into the session NAND (on by
-// default). Orca.app turns it off, so every app session starts from an empty NAND (save hash 0) and
-// the game creates its save in-session on both machines.
+// Whether a session copies the title's save from the configured NAND into the session NAND.
+// Mod sessions never do: bundles currently have no NAND save import contract. Legacy sessions
+// keep the default (on); Orca.app turns it off so the game creates its save in-session.
 void SetSeedSessionSave(bool seed);
 bool SeedSessionSave();
 

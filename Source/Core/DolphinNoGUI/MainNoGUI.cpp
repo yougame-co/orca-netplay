@@ -48,6 +48,7 @@
 #include "Core/Orca/Bundle.h"
 #include "Core/Orca/CrashNote.h"
 #include "Core/Orca/Disc.h"
+#include "Core/Orca/DiscReport.h"
 #include "Core/Orca/DiscVerify.h"
 #include "Core/Orca/Launch.h"
 #include "Core/Orca/Mod.h"
@@ -848,8 +849,71 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
   return Orca::Status::Finish();
 }
 
+// A separate parser and an immediate return keep this tool outside every boot/session path.
+// Validate first: optparse's error path throws, while this executable disables exceptions.
+static std::optional<int> RunDiscReport(const int argc, char* argv[])
+{
+  bool requested = false;
+  for (int i = 1; i < argc; ++i)
+  {
+    const std::string_view arg(argv[i]);
+    if (arg == "--")
+      break;
+    const auto option = arg.substr(0, arg.find('='));
+    requested |= option == "--disc-report" || option == "--against";
+  }
+  if (!requested)
+    return std::nullopt;
+
+  const auto fail = [](std::string_view reason) {
+    fmt::print(stdout, "{}\n", Orca::DiscReport::FailureLine(reason));
+    return 1;
+  };
+  bool image = false;
+  bool reference = false;
+  for (int i = 1; i < argc; ++i)
+  {
+    const std::string_view arg(argv[i]);
+    const size_t equals = arg.find('=');
+    const auto option = arg.substr(0, equals);
+    if (option != "--disc-report" && option != "--against")
+      return fail("--disc-report accepts only an image and optional --against reference");
+    bool& seen = option == "--disc-report" ? image : reference;
+    if (seen)
+      return fail("duplicate disc report option");
+    seen = true;
+    if (equals != std::string_view::npos)
+    {
+      if (equals + 1 == arg.size())
+        return fail("disc report option needs a path");
+    }
+    else if (++i == argc || argv[i][0] == '\0' || argv[i][0] == '-')
+    {
+      return fail("disc report option needs a path");
+    }
+  }
+  if (!image)
+    return fail("--against requires --disc-report");
+
+  optparse::OptionParser parser;
+  parser.add_option("--disc-report").action("store").type("string");
+  parser.add_option("--against").action("store").type("string");
+  const auto& options = parser.parse_args(argc, argv);
+  std::optional<std::string> against;
+  if (reference)
+    against = static_cast<const char*>(options.get("against"));
+  // A damaged container must never open an alert window, even on Windows.
+  Common::RegisterMsgAlertHandler(
+      [](const char*, const char*, bool, Common::MsgType) { return false; });
+  return Orca::DiscReport::Run(static_cast<const char*>(options.get("disc_report")), against,
+                               stdout);
+}
+
 int main(const int raw_argc, char* raw_argv[])
 {
+  if (const auto report = RunDiscReport(raw_argc, raw_argv))
+    return *report;
+
   Orca::BootPhase::Start();
   // Windows: a C++ exception names itself on stderr as it is thrown, so a run it ends says why.
   Orca::CrashNote::InstallThrowReporter();

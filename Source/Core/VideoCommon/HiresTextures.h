@@ -40,6 +40,8 @@ struct HiresTextureFile
 // pack (passed only during a session), one per texture name. Orca's pack wins every name it has,
 // so a player pack can't bring back a texture Orca replaces. Otherwise, as in Dolphin, the first
 // directory and file with a given name win. Mip level files (<name>_mip<N>) are skipped.
+// Mod sessions ignore player_directories entirely; their replacements come only from the bundle
+// (or the engine pack for a flat bundle). Legacy sessions and non-session play retain player packs.
 std::vector<HiresTextureFile>
 CollectHiresTextureFiles(const std::vector<std::string>& player_directories,
                          const std::vector<std::string>& orca_directories);

@@ -6273,70 +6273,84 @@ TEST(OrcaDoublesAdmission, WindowFillsEarlyAndLateArrivalsWaitForMenus)
 TEST_F(OrcaRoomRuntime, DoublesBatchOffersOneCaptureWithEveryPortValue)
 {
   FriendsHeadlessCore core;
-  const std::string code = "batch444";
-  auto room = Open(code, R"({"joining":false,"peers":3,"doubles":true})", false);
-  ASSERT_TRUE(Wait([&] { return room->Seat() == 0 && room->RoundTripMs() >= 0; }));
-  ASSERT_TRUE(room->Doubles());
-  constexpr int origin = 1524, current = 1600;
-  ReplayArchive replay = FriendsReplay(origin, current);
-  RoomHashGame game;
-  auto store = MakeHttpKeyframeStore([&](bool fresh, std::string* ticket, std::string* server,
-                                        std::string* error) {
-    return room->FreshTicket(fresh, ticket, server, error);
-  });
-  const auto result = Rollback::OnlineMatch::PumpFriendsHostForTest(
-      core.system, *room, game, replay, current, {}, true, std::move(store));
-  EXPECT_EQ(result.seats, (std::vector<int>{1, 2, 3}));
-  EXPECT_EQ(result.keyframe_frame, current);
-  EXPECT_FALSE(result.fresh_start);
-  ASSERT_TRUE(Wait([&] {
-    const auto state = Request("/state/" + code);
-    std::set<std::string> recipients;
-    for (const auto& message : state.get("messages").get<picojson::array>())
-      if (message.get("d").is<picojson::object>() && message.get("d").get("k").to_str() == "kf")
-        recipients.insert(message.get("to").to_str());
-    return recipients.size() == 3;
-  }));
-  const auto state = Request("/state/" + code);
-  std::set<std::string> captures;
-  std::set<std::string> recipients;
-  std::optional<std::vector<KeyframeInfo::Name>> names;
-  for (const auto& message : state.get("messages").get<picojson::array>())
+  for (const char* queue : {"private", "casual"})
   {
-    const auto& data = message.get("d");
-    if (!data.is<picojson::object>() || data.get("k").to_str() != "kf")
-      continue;
-    const auto offer = KeyframeOfferFromJson(data.get<picojson::object>());
-    ASSERT_TRUE(offer);
-    EXPECT_TRUE(offer->shared);
-    EXPECT_EQ(offer->frame, current);
-    captures.insert(offer->id);
-    recipients.insert(message.get("to").to_str());
-    if (!names)
-      names = offer->names;
-    EXPECT_EQ(offer->names, *names);
-    std::set<int> ports;
-    for (const auto& name : offer->names)
+    SCOPED_TRACE(queue);
+    const std::string code = std::string("btch") + queue;
+    auto room = Open(code, fmt::format(
+        R"({{"joining":false,"peers":3,"doubles":true,"queue":"{}"}})", queue), false);
+    ASSERT_TRUE(Wait([&] { return room->Seat() == 0 && room->RoundTripMs() >= 0; }));
+    ASSERT_TRUE(room->Doubles());
+    constexpr int origin = 1524, current = 1600;
+    ReplayArchive replay = FriendsReplay(origin, current);
+    RoomHashGame game;
+    auto store = MakeHttpKeyframeStore([&](bool fresh, std::string* ticket, std::string* server,
+                                          std::string* error) {
+      return room->FreshTicket(fresh, ticket, server, error);
+    });
+    const auto result = Rollback::OnlineMatch::PumpFriendsHostForTest(
+        core.system, *room, game, replay, current, {}, true, std::move(store));
+    EXPECT_EQ(result.seats, (std::vector<int>{1, 2, 3}));
+    EXPECT_EQ(result.keyframe_frame, current);
+    EXPECT_FALSE(result.fresh_start);
+    ASSERT_TRUE(Wait([&] {
+      const auto state = Request("/state/" + code);
+      std::set<std::string> recipients;
+      for (const auto& message : state.get("messages").get<picojson::array>())
+        if (message.get("d").is<picojson::object>() && message.get("d").get("k").to_str() == "kf")
+          recipients.insert(message.get("to").to_str());
+      return recipients.size() == 3;
+    }));
+    const auto state = Request("/state/" + code);
+    std::set<std::string> captures;
+    std::set<std::string> recipients;
+    std::optional<std::vector<KeyframeInfo::Name>> names;
+    for (const auto& message : state.get("messages").get<picojson::array>())
     {
-      ports.insert(name.seat);
-      if (name.seat > 0)
-        EXPECT_EQ(name.controls, (std::vector<u8>{static_cast<u8>(name.seat)}));
+      const auto& data = message.get("d");
+      if (!data.is<picojson::object>() || data.get("k").to_str() != "kf")
+        continue;
+      const auto offer = KeyframeOfferFromJson(data.get<picojson::object>());
+      ASSERT_TRUE(offer);
+      EXPECT_TRUE(offer->shared);
+      EXPECT_EQ(offer->frame, current);
+      captures.insert(offer->id);
+      recipients.insert(message.get("to").to_str());
+      if (!names)
+        names = offer->names;
+      EXPECT_EQ(offer->names, *names);
+      std::set<int> ports;
+      for (const auto& name : offer->names)
+      {
+        ports.insert(name.seat);
+        if (name.seat > 0)
+          EXPECT_EQ(name.controls, (std::vector<u8>{static_cast<u8>(name.seat)}));
+      }
+      EXPECT_EQ(ports, (std::set<int>{0, 1, 2, 3}));
     }
-    EXPECT_EQ(ports, (std::set<int>{0, 1, 2, 3}));
+    EXPECT_EQ(captures.size(), 1u);
+    EXPECT_EQ(recipients.size(), 3u);
   }
-  EXPECT_EQ(captures.size(), 1u);
-  EXPECT_EQ(recipients.size(), 3u);
 }
 
-TEST_F(OrcaRoomRuntime, DoublesFlagCannotEnableQueueRooms)
+TEST_F(OrcaRoomRuntime, CasualDoublesUsesAllFourSeats)
 {
-  for (const auto* queue : {"ranked", "casual"})
-  {
-    auto room = Open(std::string("ndbl") + queue,
-                     fmt::format(R"({{"queue":"{}","doubles":true}})", queue));
-    ASSERT_TRUE(Wait([&] { return room->Seat() == 1; }));
-    EXPECT_FALSE(room->Doubles());
-  }
+  auto room = Open("casdbl4", R"({"queue":"casual","doubles":true,"peers":3,"joining":false})", false);
+  ASSERT_TRUE(Wait([&] { return room->Seat() == 0 && room->RoundTripMs() >= 0; }));
+  EXPECT_TRUE(room->Doubles());
+  EXPECT_EQ(room->Queue(), "casual");
+  EXPECT_EQ(room->PlayQueue(), "private");
+  std::set<int> seats;
+  ASSERT_TRUE(Wait([&] {
+    for (const auto& event : room->TakePeerEvents())
+      if (event.kind == PeerEvent::Kind::Arrived)
+      {
+        EXPECT_TRUE(event.doubles);
+        seats.insert(event.seat);
+      }
+    return seats.size() == 3;
+  }));
+  EXPECT_EQ(seats, (std::set<int>{1, 2, 3}));
 }
 
 TEST_F(OrcaRoomRuntime, BatchEnvelopeDeliversOnlyThisRecipientsPacket)
@@ -7719,10 +7733,16 @@ TEST(OrcaRoom, CoPageMirrorRequiresFriendsDoublesAndAgreedCap)
         const auto trace = TraceRoomForTest(TraceOptions(false), {{RK::Message, 0, welcome}});
         const picojson::value mirror(trace.back().mirror);
         EXPECT_EQ(mirror.get("lobby").get("maxLocalPlayers").get<double>(),
-                  cap && doubles && std::string_view(queue) == "private" ? 2 : 1);
+                  cap && doubles && std::string_view(queue) != "ranked" ? 2 : 1);
         picojson::value original;
         ASSERT_TRUE(picojson::parse(original, welcome).empty());
-        EXPECT_EQ(mirror.get("participants"), original.get("participants"));
+        if (std::string_view(queue) == "ranked" && doubles)
+        {
+          EXPECT_EQ(trace.back().state, RoomState::Ended);
+          EXPECT_TRUE(mirror.get("participants").get<picojson::array>().empty());
+        }
+        else
+          EXPECT_EQ(mirror.get("participants"), original.get("participants"));
         EXPECT_EQ(mirror.get("me"), original.get("me"));
       }
 }
@@ -7825,7 +7845,9 @@ TEST(OrcaRoom, CoPageCommandsPinEveryGateAndStatus)
   struct Gate { const char* queue; bool doubles; bool cap; bool active; bool tournament; const char* reason; };
   for (const auto& gate : std::vector<Gate>{
       {"private", true, true, false, false, ""},
-      {"casual", true, true, false, false, "queue"},
+      {"casual", true, true, false, false, ""},
+      {"casual", false, true, false, false, "queue"},
+      {"casual", true, true, false, true, "queue"},
       {"ranked", true, true, false, false, "queue"},
       {"private", true, true, false, true, "queue"},
       {"private", false, true, false, false, "not-doubles"},
@@ -8461,4 +8483,187 @@ TEST(OrcaRoom, JoinerPageAddAfterTheWelcomeTickIsAMidSessionAdd)
       "Room: Add local player isn't available here (in-match)"}));
   EXPECT_TRUE(trace[3].co_seats.empty());
   // The page must send Add with or before joining; after hello it needs P5.
+}
+
+TEST(OrcaRoom, QueueDoublesWelcomeAndRankedRefusal)
+{
+  for (const char* queue : {"private", "casual", "ranked"})
+  {
+    SCOPED_TRACE(queue);
+    bool doubles = false;
+    const auto welcome = CoPageWelcome(false, queue, true);
+    const auto trace = TraceRoomForTest(TraceOptions(false), {
+        {RK::Message, 0, welcome}, {RK::Message, 1, welcome}, {RK::Tick, 1001}},
+        [&](YouGameRoom& room) { doubles = room.Doubles(); });
+    if (std::string_view(queue) == "ranked")
+    {
+      EXPECT_FALSE(doubles);
+      EXPECT_EQ(trace.back().state, RoomState::Ended);
+      EXPECT_EQ(trace.back().status, "Room: ranked doubles needs a newer YG Dolphin");
+      size_t lines = 0;
+      for (const auto& step : trace)
+        lines += std::count(step.notices.begin(), step.notices.end(),
+                            "Room: ranked doubles needs a newer YG Dolphin");
+      EXPECT_EQ(lines, 1u);
+      for (const auto& step : trace)
+        for (const auto& wire : step.sent)
+        {
+          picojson::value message;
+          ASSERT_TRUE(picojson::parse(message, wire).empty());
+          // A forced trace tick may ping; the refused room never sends gameplay or results.
+          EXPECT_EQ(message.get("t").to_str(), "ping");
+        }
+      EXPECT_TRUE(picojson::value(trace.back().mirror).get("participants").get<picojson::array>().empty());
+    }
+    else
+    {
+      EXPECT_TRUE(doubles);
+      EXPECT_NE(trace.back().state, RoomState::Ended);
+      EXPECT_TRUE(picojson::value(trace.back().mirror).get("doubles").get<bool>());
+      EXPECT_EQ(picojson::value(trace.back().mirror).get("size").get<double>(), 4);
+    }
+  }
+}
+
+TEST(OrcaRoom, ParticipantTeamsFollowWelcomeLobbyAndStart)
+{
+  auto roster = [](const char* kind, bool swap) {
+    picojson::value value;
+    picojson::parse(value, CoPageWelcome(false, "casual", true));
+    value.get<picojson::object>()["t"] = picojson::value(kind);
+    auto& participants = value.get<picojson::object>()["participants"].get<picojson::array>();
+    participants.emplace_back(picojson::object{{"connectionId", picojson::value("guest")},
+        {"slot", picojson::value(2.0)}, {"localIndex", picojson::value(0.0)}});
+    participants.emplace_back(picojson::object{{"connectionId", picojson::value("peer")},
+        {"slot", picojson::value(3.0)}, {"localIndex", picojson::value(1.0)}});
+    for (auto& p : participants)
+      p.get<picojson::object>()["team"] = picojson::value(
+          double((int(p.get("slot").get<double>()) % 2) ^ int(swap)));
+    return value.serialize();
+  };
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Message, 0, roster("welcome", false)},
+      {RK::Message, 1, roster("lobby", true)},
+      {RK::Message, 2, roster("start", false)},
+      {RK::Message, 3, CoPageWelcome(false, "casual", true)}});
+  EXPECT_EQ(trace[0].teams, (std::map<int, int>{{0, 0}, {1, 1}, {2, 0}, {3, 1}}));
+  EXPECT_EQ(trace[1].teams, (std::map<int, int>{{0, 1}, {1, 0}, {2, 1}, {3, 0}}));
+  EXPECT_EQ(trace[2].teams, trace[0].teams);
+  EXPECT_TRUE(trace[3].teams.empty());
+}
+
+TEST(OrcaRoom, InvalidOrPartialTeamsAreIgnoredForTheRoomOnce)
+{
+  for (const auto& bad : std::vector<picojson::value>{picojson::value(), picojson::value(-1.0),
+           picojson::value(2.0), picojson::value(0.5), picojson::value(true), picojson::value("0")})
+  {
+    picojson::value good;
+    picojson::parse(good, CoPageWelcome(false, "casual", true));
+    for (auto& p : good.get<picojson::object>()["participants"].get<picojson::array>())
+      p.get<picojson::object>()["team"] = picojson::value(p.get("slot").get<double>());
+    auto invalid = good;
+    auto& p = invalid.get<picojson::object>()["participants"].get<picojson::array>().back().get<picojson::object>();
+    if (bad.is<picojson::null>())
+      p.erase("team");
+    else
+      p["team"] = bad;
+    const auto trace = TraceRoomForTest(TraceOptions(false), {
+        {RK::Message, 0, invalid.serialize()}, {RK::Message, 1, invalid.serialize()},
+        {RK::Message, 2, good.serialize()}});
+    size_t lines = 0;
+    for (const auto& step : trace)
+    {
+      EXPECT_TRUE(step.teams.empty());
+      const picojson::value mirror(step.mirror);
+      for (const auto& participant : mirror.get("participants").get<picojson::array>())
+        EXPECT_EQ(participant.get<picojson::object>().count("team"), 0u);
+      lines += std::count(step.notices.begin(), step.notices.end(),
+                          "Room: invalid or incomplete teams; ignoring teams for this room");
+    }
+    EXPECT_EQ(lines, 1u);
+  }
+}
+
+TEST(OrcaRoom, QueueDoublesTicketSeatsIncludeAnAddBeforeWelcome)
+{
+  const ScopedEnv session("ORCA_SESSION", "1");
+  const ScopedEnv game("YOUGAME_GAME", "co-page");
+  const ScopedEnv enabled("ORCA_COSEATS", "1");
+  Orca::Status::SetAppCaps("coseats");
+  const Common::ScopeGuard cleanup([] { Orca::Status::SetAppCaps(""); });
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Tick, 0},
+      {RK::PageEvent, 1, R"({"slug":"co-page","cmd":"local-add"})"},
+      {RK::Message, 2, CoPageWelcome(false, "casual", true)},
+      {RK::Message, 3, CoPageWelcome(false, "casual", true, true)},
+      {RK::PageEvent, 4, R"({"slug":"co-page","cmd":"local-remove","id":"local:me:1"})"},
+      {RK::Message, 5, CoPageWelcome(false, "casual", true)}});
+  EXPECT_EQ(trace[0].ticket_local_seats, 1);
+  for (const int step : {1, 2, 3})
+    EXPECT_EQ(trace[step].ticket_local_seats, 2);
+  EXPECT_EQ(trace[2].sent, (std::vector<std::string>{R"({"t":"local-add"})"}));
+  EXPECT_EQ(trace[4].sent, (std::vector<std::string>{R"({"id":"local:me:1","t":"local-remove"})"}));
+  EXPECT_EQ(trace[5].ticket_local_seats, 1);
+}
+
+TEST_F(OrcaRoomRuntime, TicketRequestsPublishActualLocalSeatCount)
+{
+  const ScopedEnv session("ORCA_SESSION", "1");
+  const ScopedEnv game("YOUGAME_GAME", "co-page");
+  Orca::Status::SetAppCaps("coseats");
+  const Common::ScopeGuard cleanup([] { Orca::Status::SetAppCaps(""); });
+  const std::string code = "dblticketls";
+  auto room = Open(code, R"({"queue":"casual","doubles":true,"joining":false,"co_seats":{"me":[2]}})", false);
+  ASSERT_TRUE(Wait([&] { return room->Seat() == 0; }));
+  ASSERT_TRUE(Wait([&] { return room->CoSeats() == std::vector<int>{2}; }));
+  std::string ticket, store, error;
+  ASSERT_TRUE(room->FreshTicket(true, &ticket, &store, &error)) << error;
+  const auto seats = Request("/state/" + code).get("ticket_local_seats");
+  ASSERT_TRUE(seats.is<picojson::array>());
+  ASSERT_EQ(seats.get<picojson::array>().size(), 2u);
+  ASSERT_TRUE(seats.get<picojson::array>()[0].is<double>());
+  ASSERT_TRUE(seats.get<picojson::array>()[1].is<double>());
+  EXPECT_EQ(seats.get<picojson::array>()[0].get<double>(), 1);
+  EXPECT_EQ(seats.get<picojson::array>()[1].get<double>(), 2);
+}
+
+TEST(OrcaRoom, CasualDoublesDoesNotSendSinglesResults)
+{
+  picojson::value welcome;
+  ASSERT_TRUE(picojson::parse(welcome, QueueRoster("welcome", "casual", "false", false)).empty());
+  auto& room = welcome.get<picojson::object>()["room"].get<picojson::object>();
+  room["doubles"] = picojson::value(true);
+  room["size"] = picojson::value(4.0);
+  auto start = welcome;
+  start.get<picojson::object>()["t"] = picojson::value("start");
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Message, 0, welcome.serialize()}, {RK::Message, 1, start.serialize()},
+      {RK::GameStart, 2, "", 120}, {RK::ReportGame, 3, "1", 120},
+      {RK::Tick, 5}});
+  for (const auto& step : trace)
+    for (const auto& wire : step.sent)
+    {
+      picojson::value message;
+      ASSERT_TRUE(picojson::parse(message, wire).empty());
+      EXPECT_NE(message.get("t").to_str(), "begin");
+      EXPECT_NE(message.get("t").to_str(), "game-start");
+      EXPECT_NE(message.get("t").to_str(), "game-report");
+      EXPECT_NE(message.get("t").to_str(), "finish");
+    }
+}
+
+TEST(OrcaRoom, SentLocalAddCountsInTicketsUntilTheRoomAnswers)
+{
+  const ScopedEnv session("ORCA_SESSION", "1");
+  const ScopedEnv game("YOUGAME_GAME", "co-page");
+  const ScopedEnv enabled("ORCA_COSEATS", "1");
+  Orca::Status::SetAppCaps("coseats");
+  const Common::ScopeGuard cleanup([] { Orca::Status::SetAppCaps(""); });
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Message, 0, CoPageWelcome(false, "casual", true)},
+      {RK::PageEvent, 1, R"({"slug":"co-page","cmd":"local-add"})"},
+      {RK::AppCaps, 2, ""}, {RK::Tick, 3}});
+  EXPECT_EQ(trace[0].ticket_local_seats, 1);
+  for (const int step : {1, 2, 3})
+    EXPECT_EQ(trace[step].ticket_local_seats, 2);
 }

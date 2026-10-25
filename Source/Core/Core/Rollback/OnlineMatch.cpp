@@ -1484,7 +1484,7 @@ void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test
     }
   }
   const bool in_room = test_room ? test_room->Connected() : Orca::Online::InRoom();
-  const bool in_queue_room = test_room ? QueueMode(test_room->Queue()) != Orca::Engine::Mode::None :
+  const bool in_queue_room = test_room ? QueueMode(test_room->PlayQueue()) != Orca::Engine::Mode::None :
                                          InQueueRoom();
   // `host` also opens private/tournament rooms. Only a confirmed welcome can disarm the queue
   // start: before it, "private" is also the default for a queue room still connecting.

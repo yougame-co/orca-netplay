@@ -1,6 +1,7 @@
 // Copyright 2026 YouGame
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -14,6 +15,13 @@
 #include "Common/CommonTypes.h"
 #include "Common/FileUtil.h"
 #include "Core/Orca/CrashNote.h"
+
+#ifdef _WIN32
+#include <thread>
+#include <windows.h>
+
+#include "Core/Core.h"
+#endif
 
 namespace
 {
@@ -194,6 +202,56 @@ TEST(OrcaCrashNote, FaultNamesOnlyTheFatalCodes)
   EXPECT_EQ(Orca::CrashNote::FaultName(0x40010006), nullptr);
 }
 
+TEST(OrcaCrashNote, FaultStackFormatsModuleOffsetsAndStripsPaths)
+{
+  using namespace Orca::CrashNote;
+  const StackFrame frames[] = {{"C:\\build\\yg-dolphin.exe", 0x1234},
+                               {"/system/ntdll.dll", 0x118095},
+                               {{}, 0x7FFA12345678},
+                               {"bad\nname\t.dll", 0}};
+  char out[512];
+  const size_t length = FormatFaultStack(out, sizeof(out), frames);
+  EXPECT_EQ(std::string(out, length),
+            "Orca: exception stack yg-dolphin.exe+0x1234 ntdll.dll+0x118095 "
+            "?+0x7FFA12345678 bad?name?.dll+0x0");
+  EXPECT_EQ(length, std::strlen(out));
+  FormatFaultStack(out, sizeof(out), {});
+  EXPECT_STREQ(out, "Orca: exception stack unavailable");
+}
+
+TEST(OrcaCrashNote, FaultStackLimitsFramesAndKeepsCompleteTokensWithinAppLimit)
+{
+  using namespace Orca::CrashNote;
+  std::array<StackFrame, 30> frames;
+  frames.fill({"a", 1});
+  char out[512];
+  const size_t length = FormatFaultStack(out, sizeof(out), frames);
+  EXPECT_EQ(std::string(out, length), "Orca: exception stack" +
+                                        std::string(" a+0x1 a+0x1 a+0x1 a+0x1 a+0x1 a+0x1") +
+                                        " a+0x1 a+0x1 a+0x1 a+0x1 a+0x1 a+0x1" +
+                                        " a+0x1 a+0x1 a+0x1 a+0x1 a+0x1 a+0x1" +
+                                        " a+0x1 a+0x1 a+0x1 a+0x1 a+0x1 a+0x1 ...");
+  frames.fill({"yg-dolphin.exe", 0x123456789ABCDEF0});
+  const size_t capped = FormatFaultStack(out, sizeof(out), frames);
+  EXPECT_LE(capped + 1, MAX_FAULT_STACK_LINE);
+  EXPECT_TRUE(std::string_view(out).ends_with("yg-dolphin.exe+0x123456789ABCDEF0 ..."));
+  // Don't print half a module/offset when the caller's buffer is smaller.
+  char small[32];
+  FormatFaultStack(small, sizeof(small), frames);
+  EXPECT_STREQ(small, "Orca: exception stack ...");
+  char tiny[5];
+  EXPECT_EQ(FormatFaultStack(tiny, sizeof(tiny), frames), 4u);
+  EXPECT_STREQ(tiny, "Orca");
+  EXPECT_EQ(FormatFaultStack(nullptr, 0, frames), 0u);
+  char one = 'x';
+  EXPECT_EQ(FormatFaultStack(&one, 1, frames), 0u);
+  EXPECT_EQ(one, '\0');
+  const std::string huge(400, 'm');
+  const StackFrame huge_frame[] = {{huge, 1}};
+  FormatFaultStack(out, sizeof(out), huge_frame);
+  EXPECT_STREQ(out, "Orca: exception stack ...");
+}
+
 TEST(OrcaCrashNote, FaultLineNamesTheModuleOffsetAndGraphicsDevice)
 {
   // The 0.3.39 crashes: an access violation a moment after the device hung.
@@ -247,3 +305,61 @@ TEST(OrcaCrashNote, FaultLineNamesTheModuleOffsetAndGraphicsDevice)
   EXPECT_EQ(Orca::CrashNote::FormatFault(small, sizeof(small), breakpoint), 15u);
   EXPECT_STREQ(small, "Orca: exception");
 }
+
+#if defined(_WIN32) && GTEST_HAS_DEATH_TEST
+namespace
+{
+__declspec(noinline) void RaiseStackTestFault()
+{
+  // A synthetic exception, without damaging memory. Keep a native caller frame in release builds.
+  RaiseException(0xC0000374, 0, 0, nullptr);
+  volatile int returned = 1;
+  (void)returned;
+}
+
+void CatchStackTestFault()
+{
+  __try
+  {
+    RaiseStackTestFault();
+  }
+  __except (EXCEPTION_EXECUTE_HANDLER)
+  {
+  }
+}
+
+void PrepareStackTestFault()
+{
+  SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+  SetUnhandledExceptionFilter(nullptr);
+  Orca::CrashNote::InstallFaultReporter();
+}
+}  // namespace
+
+TEST(OrcaCrashNoteDeathTest, WorkerFaultIncludesNativeCaller)
+{
+  // Before stack capture this produces only the exception/address line, so the regex fails.
+  EXPECT_EXIT(
+      {
+        PrepareStackTestFault();
+        std::thread worker(RaiseStackTestFault);
+        worker.join();
+        ExitProcess(0);
+      },
+      ::testing::ExitedWithCode(static_cast<int>(0xC0000374)),
+      "Orca: exception stack .*tests\\.exe\\+0x\\w+");
+}
+
+TEST(OrcaCrashNoteDeathTest, CaughtCpuFirstChanceIncludesNativeCaller)
+{
+  EXPECT_EXIT(
+      {
+        PrepareStackTestFault();
+        Core::DeclareAsCPUThread();
+        CatchStackTestFault();
+        ExitProcess(0);
+      },
+      ::testing::ExitedWithCode(0),
+      "\\(first chance\\).*\r?\nOrca: exception stack .*tests\\.exe\\+0x\\w+");
+}
+#endif

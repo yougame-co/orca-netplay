@@ -144,6 +144,47 @@ size_t FormatFault(char* out, size_t size, const Fault& fault)
   return line.Length();
 }
 
+size_t FormatFaultStack(char* out, size_t size, std::span<const StackFrame> frames) noexcept
+{
+  const size_t capacity = std::min(size, MAX_FAULT_STACK_LINE);
+  FixedLine line(out, capacity);
+  line << "Orca: exception stack";
+  if (frames.empty())
+    line << " unavailable";
+  size_t shown = 0;
+  for (const StackFrame& frame : frames.first(std::min(frames.size(), MAX_FAULT_STACK_FRAMES)))
+  {
+    std::string_view module = frame.module;
+    if (const size_t slash = module.find_last_of("/\\"); slash != std::string_view::npos)
+      module.remove_prefix(slash + 1);
+    if (module.empty())
+      module = "?";
+    // Reserve enough space for the entire token and a possible omission marker. Never leave an
+    // offset cut in half: it would look valid but resolve to the wrong address in the PDB.
+    if (module.size() >= MAX_FAULT_STACK_LINE)
+      break;
+    char token[MAX_FAULT_STACK_LINE];
+    FixedLine next(token, sizeof(token));
+    next << " ";
+    for (const unsigned char c : module)
+    {
+      const char safe = c > ' ' && c < 0x7F ? static_cast<char>(c) : '?';
+      next << std::string_view(&safe, 1);
+    }
+    next << "+";
+    next.Hex(frame.offset);
+    const size_t reserve = shown + 1 < frames.size() ? 4 : 0;
+    if (!capacity || line.Length() + next.Length() + reserve >= capacity ||
+        next.Length() == sizeof(token) - 1)
+      break;
+    line << std::string_view(token, next.Length());
+    ++shown;
+  }
+  if (shown < frames.size())
+    line << " ...";
+  return line.Length();
+}
+
 std::string TypeName(std::string_view decorated)
 {
   std::string_view s = decorated;
@@ -386,40 +427,200 @@ int s_fault_count = 0;
 char s_fault_line[768];
 char s_fault_graphics[256];
 char s_fault_module[MAX_PATH];
-wchar_t s_fault_path[MAX_PATH];
+// Resolve the native query before installing handlers. Higher-level filename APIs may allocate
+// temporary buffers; MemoryMappedFilenameInformation writes into this caller-owned buffer.
+using QueryVirtualMemory = LONG(NTAPI*)(HANDLE, const void*, int, void*, SIZE_T, SIZE_T*);
+QueryVirtualMemory s_query_virtual_memory = nullptr;
+struct MappedName
+{
+  USHORT length;
+  USHORT maximum_length;
+  wchar_t* name;
+  wchar_t buffer[MAX_PATH];
+};
+MappedName s_fault_mapping{};
+// Protected by the same non-waiting flag as the fault line. Keep the module-name storage off an
+// already exhausted stack; the capture context, addresses and output line have fixed stack space.
+char s_stack_modules[MAX_FAULT_STACK_FRAMES][MAX_PATH];
+
+u64 FaultImage(const void* address)
+{
+  MEMORY_BASIC_INFORMATION memory{};
+  if (!VirtualQuery(address, &memory, sizeof(memory)) || memory.Type != MEM_IMAGE)
+    return 0;
+  return reinterpret_cast<u64>(memory.AllocationBase);
+}
 
 // The file name of the module `address` is in (a path would name the player's folders), as ASCII,
 // and its base; empty when it is in none (JIT code).
 std::string_view FaultModule(const void* address, u64* base)
 {
-  HMODULE module = nullptr;
-  if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                              GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                          static_cast<LPCWSTR>(address), &module) ||
-      !module)
-  {
+  *base = FaultImage(address);
+  if (!*base)
     return {};
-  }
-  *base = reinterpret_cast<u64>(module);
-  const DWORD length = GetModuleFileNameW(module, s_fault_path, MAX_PATH);
-  if (length == 0 || length >= MAX_PATH)
+  // Query the mapping, not the loader's module list: no loader lock in the exception path.
+  constexpr int MEMORY_MAPPED_FILENAME_INFORMATION = 2;
+  if (!s_query_virtual_memory ||
+      s_query_virtual_memory(GetCurrentProcess(), address, MEMORY_MAPPED_FILENAME_INFORMATION,
+                             &s_fault_mapping, sizeof(s_fault_mapping), nullptr) < 0)
     return "?";
-  const wchar_t* file = s_fault_path;
-  for (const wchar_t* c = s_fault_path; *c; ++c)
+  const size_t length = s_fault_mapping.length / sizeof(wchar_t);
+  const auto start = reinterpret_cast<uintptr_t>(s_fault_mapping.name);
+  const auto end = reinterpret_cast<uintptr_t>(&s_fault_mapping) + sizeof(s_fault_mapping);
+  if (!length || start < reinterpret_cast<uintptr_t>(s_fault_mapping.buffer) || start >= end ||
+      s_fault_mapping.length > end - start)
+    return "?";
+  size_t file = 0;
+  for (size_t i = 0; i < length; ++i)
   {
-    if (*c == L'\\' || *c == L'/')
-      file = c + 1;
+    if (s_fault_mapping.name[i] == L'\\' || s_fault_mapping.name[i] == L'/')
+      file = i + 1;
   }
   size_t n = 0;
-  for (; file[n] && n < MAX_PATH - 1; ++n)
-    s_fault_module[n] = file[n] < 0x80 ? static_cast<char>(file[n]) : '?';
+  for (; file + n < length && n < MAX_PATH - 1; ++n)
+  {
+    const wchar_t c = s_fault_mapping.name[file + n];
+    s_fault_module[n] = c > L' ' && c < 0x7F ? static_cast<char>(c) : '?';
+  }
   return {s_fault_module, n};
+}
+
+// Only native image unwind tables. Avoid DbgHelp's symbol state/locks and dynamic function-table
+// callbacks (including JIT code). The containing CaptureFaultStack SEH guard bounds bad reads.
+PRUNTIME_FUNCTION FaultFunction(u64 pc, u64 base)
+{
+  const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+  if (dos->e_magic != IMAGE_DOS_SIGNATURE)
+    return nullptr;
+  const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+  if (nt->Signature != IMAGE_NT_SIGNATURE ||
+      nt->OptionalHeader.NumberOfRvaAndSizes <= IMAGE_DIRECTORY_ENTRY_EXCEPTION)
+    return nullptr;
+  const auto& directory = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+  if (!directory.VirtualAddress || directory.VirtualAddress >= nt->OptionalHeader.SizeOfImage ||
+      directory.Size > nt->OptionalHeader.SizeOfImage - directory.VirtualAddress)
+    return nullptr;
+  auto* table = reinterpret_cast<PRUNTIME_FUNCTION>(base + directory.VirtualAddress);
+  const size_t count = directory.Size / sizeof(*table);
+  // PE runtime function entries are sorted by BeginAddress. Find the last start <= pc.
+  size_t low = 0;
+  size_t high = count;
+  const u64 rva = pc - base;
+  while (low < high)
+  {
+    const size_t middle = low + (high - low) / 2;
+    if (table[middle].BeginAddress <= rva)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (!low)
+    return nullptr;
+  PRUNTIME_FUNCTION entry = &table[low - 1];
+#if defined(_M_X64)
+  return rva < entry->EndAddress ? entry : nullptr;
+#elif defined(_M_ARM64)
+  // ARM64 packed entries carry FunctionLength (11 bits, in instructions); unpacked .xdata
+  // headers carry FunctionLength in their low 18 bits. Flag 3 is reserved.
+  const u32 flag = entry->UnwindData & 3;
+  if (flag == 3)
+    return nullptr;
+  const u64 length = flag ? ((entry->UnwindData >> 2) & 0x7FF) * 4 :
+                           (*reinterpret_cast<const u32*>(base + entry->UnwindData) & 0x3FFFF) * 4;
+  return rva - entry->BeginAddress < length ? entry : nullptr;
+#endif
+}
+
+size_t CaptureFaultStack(const CONTEXT* original, u64* addresses) noexcept
+{
+  size_t count = 0;
+  if (!original)
+    return count;
+  // RtlCaptureStackBackTrace would start in this handler. Unwind a COPY of the fault context so
+  // frame zero is the fault, and Windows can still dispatch the untouched original afterwards.
+  __try
+  {
+    CONTEXT context = *original;
+    ULONG_PTR stack_low = 0;
+    ULONG_PTR stack_high = 0;
+    GetCurrentThreadStackLimits(&stack_low, &stack_high);
+    while (count < MAX_FAULT_STACK_FRAMES)
+    {
+#if defined(_M_X64)
+      const u64 pc = context.Rip;
+      const u64 sp = context.Rsp;
+#elif defined(_M_ARM64)
+      const u64 pc = context.Pc;
+      const u64 sp = context.Sp;
+#endif
+      if (!pc)
+        break;
+      addresses[count++] = pc;
+      if (sp < stack_low || sp >= stack_high || sp % sizeof(u64))
+        break;
+      const u64 base = FaultImage(reinterpret_cast<const void*>(pc));
+      if (!base)
+        break;  // JIT/unknown code has no native image table. Do not guess return addresses.
+      if (PRUNTIME_FUNCTION entry = FaultFunction(pc, base))
+      {
+        void* handler_data = nullptr;
+        DWORD64 establisher = 0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, pc, entry, &context, &handler_data, &establisher,
+                         nullptr);
+      }
+      else
+      {
+        // Native leaf functions have no table entry. Their return address is on the stack (x64)
+        // or in the link register (ARM64).
+#if defined(_M_X64)
+        if (stack_high - sp < sizeof(u64))
+          break;
+        context.Rip = *reinterpret_cast<const u64*>(sp);
+        context.Rsp += sizeof(u64);
+#elif defined(_M_ARM64)
+        context.Pc = context.Lr;
+        context.Lr = 0;
+#endif
+      }
+#if defined(_M_X64)
+      if (context.Rsp <= sp)
+        break;
+#elif defined(_M_ARM64)
+      if (context.Sp < sp || (context.Sp == sp && context.Pc == pc))
+        break;
+#endif
+    }
+  }
+  __except (EXCEPTION_EXECUTE_HANDLER)
+  {
+    // Damaged stack/unwind data: retain every frame already captured; never fault recursively.
+  }
+  return count;
+}
+
+void WriteFaultStack(const CONTEXT* context)
+{
+  u64 addresses[MAX_FAULT_STACK_FRAMES];
+  const size_t count = CaptureFaultStack(context, addresses);
+  StackFrame frames[MAX_FAULT_STACK_FRAMES];
+  for (size_t i = 0; i < count; ++i)
+  {
+    u64 base = 0;
+    const std::string_view module = FaultModule(reinterpret_cast<const void*>(addresses[i]), &base);
+    std::copy(module.begin(), module.end(), s_stack_modules[i]);
+    frames[i] = {{s_stack_modules[i], module.size()}, addresses[i] - base};
+  }
+  char line[MAX_FAULT_STACK_LINE + 1];
+  size_t length = FormatFaultStack(line, sizeof(line), std::span(frames, count));
+  line[length++] = '\n';
+  DWORD written;
+  WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
 }
 
 // Prints `record`'s line once (at most MAX_FAULTS different ones). A first-chance line and the
 // unhandled filter's line for the same fault are different lines, so a fault the CPU thread's
 // handler saw first and that then ended Orca is said both ways.
-void RecordFault(const EXCEPTION_RECORD& record, bool first_chance)
+void RecordFault(const EXCEPTION_RECORD& record, const CONTEXT* context, bool first_chance)
 {
   if (s_fault_busy.test_and_set(std::memory_order_acquire))
     return;
@@ -454,6 +655,7 @@ void RecordFault(const EXCEPTION_RECORD& record, bool first_chance)
     DWORD written;
     WriteFile(GetStdHandle(STD_ERROR_HANDLE), s_fault_line, static_cast<DWORD>(length), &written,
               nullptr);
+    WriteFaultStack(context);
   }
   s_fault_busy.clear(std::memory_order_release);
 }
@@ -471,7 +673,7 @@ const EXCEPTION_RECORD* ReportedFault(const EXCEPTION_POINTERS* pointers)
 LONG CALLBACK OnCpuThreadFault(EXCEPTION_POINTERS* pointers)
 {
   if (const EXCEPTION_RECORD* record = ReportedFault(pointers); record && Core::IsCPUThread())
-    RecordFault(*record, true);
+    RecordFault(*record, pointers->ContextRecord, true);
   return EXCEPTION_CONTINUE_SEARCH;
 }
 
@@ -482,7 +684,7 @@ LPTOP_LEVEL_EXCEPTION_FILTER s_previous_filter = nullptr;
 LONG WINAPI OnUnhandledFault(EXCEPTION_POINTERS* pointers)
 {
   if (const EXCEPTION_RECORD* record = ReportedFault(pointers))
-    RecordFault(*record, false);
+    RecordFault(*record, pointers->ContextRecord, false);
   return s_previous_filter ? s_previous_filter(pointers) : EXCEPTION_CONTINUE_SEARCH;
 }
 }  // namespace
@@ -492,6 +694,8 @@ void InstallFaultReporter()
   static std::atomic<bool> s_installed{false};
   if (s_installed.exchange(true))
     return;
+  s_query_virtual_memory = reinterpret_cast<QueryVirtualMemory>(
+      GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryVirtualMemory"));
   // Last, after the fastmem and rollback-snapshot handler (MemTools.cpp, installed first), which
   // takes the access violations that are Orca's own business and resumes them.
   AddVectoredExceptionHandler(FALSE, OnCpuThreadFault);
