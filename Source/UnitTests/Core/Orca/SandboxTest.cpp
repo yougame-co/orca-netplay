@@ -972,6 +972,14 @@ protected:
     Write("/proc/self/net/dev", NetworkHeader() + NetworkRow("lo"));
     probes.root_type = [] { return std::optional<long>(0x01021994); };
     probes.passwd_home = [] { return std::optional<std::string>("/home/host"); };
+    probes.home_entries = [this](const std::string& base) {
+      return std::optional<Sandbox::PackJailHomeEntries>(
+          {false, base == "/home" ? home_names : var_home_names});
+    };
+    probes.root_device = [] { return std::optional<unsigned long long>(7); };
+    probes.directory = [](const std::string&) {
+      return std::optional<Sandbox::PackJailDirectory>({7, 0x01021994});
+    };
     probes.exists = [](const std::string&) { return std::optional<bool>(false); };
     probes.connect_x = [this](int n, bool abstract) -> std::optional<bool> {
       connections.emplace_back(n, abstract);
@@ -1013,6 +1021,8 @@ protected:
   }
   std::string root;
   Sandbox::PackJailProbes probes;
+  std::vector<std::string> home_names{"host"};
+  std::vector<std::string> var_home_names;
   bool online = false;
   std::vector<std::pair<int, bool>> connections;
 };
@@ -1026,6 +1036,10 @@ TEST_F(OrcaLinuxPackJail, AllChecksPassAndOnlyOwnPathSocketConnects)
   EXPECT_EQ(result.pid1, "bwrap");
   EXPECT_EQ(result.interfaces, std::vector<std::string>{"lo"});
   EXPECT_NE(result.Status().find("interfaces=lo pid1=bwrap"), std::string::npos);
+  EXPECT_NE(result.Status().find("host-home sensitive-home HOME"), std::string::npos);
+  EXPECT_NE(result.Status().find("passwd: <present>"), std::string::npos);
+  EXPECT_EQ(result.Status().find("passwd-home"), std::string::npos);
+  EXPECT_EQ(result.Status().find("/home/host"), std::string::npos);
   EXPECT_EQ(connections.size(), 19u);
   EXPECT_EQ(std::count(connections.begin(), connections.end(), std::pair{5, false}), 1);
   EXPECT_EQ(std::count(connections.begin(), connections.end(), std::pair{5, true}), 0);
@@ -1097,27 +1111,174 @@ TEST_F(OrcaLinuxPackJail, TmpfsAndOverlayPassExt4AndStatfsFailureRefuse)
   Refuses("root-fs");
 }
 
-TEST_F(OrcaLinuxPackJail, MissingPasswdEntryRefuses)
+TEST_F(OrcaLinuxPackJail, NoPasswdPlaceholderHomesWithProfileFolderAndOverlayPass)
 {
   probes.passwd_home = [] { return std::optional<std::string>(); };
-  Refuses("passwd-home");
+  for (const char* base : {"/home", "/var/home"})
+  {
+    SCOPED_TRACE(base);
+    home_names = std::string(base) == "/home" ? std::vector<std::string>{"deck"} :
+                                              std::vector<std::string>{};
+    var_home_names = std::string(base) == "/var/home" ? std::vector<std::string>{"deck"} :
+                                                      std::vector<std::string>{};
+    const std::string home = std::string(base) + "/deck";
+    probes.exists = [=](const std::string& path) {
+      return std::optional<bool>(path == home + "/profile/orca/apps");
+    };
+    for (const long type : {0x01021994L, 0x794c7630L})
+    {
+      probes.root_type = [=] { return std::optional<long>(type); };
+      probes.directory = [=](const std::string& path) {
+        EXPECT_EQ(path, home);
+        return std::optional<Sandbox::PackJailDirectory>({7, type});
+      };
+      const auto result = Check();
+      EXPECT_TRUE(result.jailed);
+      EXPECT_NE(result.Status().find("passwd: none"), std::string::npos);
+    }
+  }
 }
 
-TEST_F(OrcaLinuxPackJail, VisibleHostHomeAndStatErrorRefuse)
+TEST_F(OrcaLinuxPackJail, EveryHomeEntryMustBeAPlaceholderOnTheRootDevice)
 {
-  probes.exists = [](const std::string& path) {
-    EXPECT_EQ(path, "/home/host");
-    return std::optional<bool>(true);
+  probes.passwd_home = [] { return std::optional<std::string>(); };
+  for (const char* base : {"/home", "/var/home"})
+  {
+    SCOPED_TRACE(base);
+    home_names = std::string(base) == "/home" ? std::vector<std::string>{"deck", "x"} :
+                                              std::vector<std::string>{};
+    var_home_names = std::string(base) == "/var/home" ? std::vector<std::string>{"deck", "x"} :
+                                                      std::vector<std::string>{};
+    for (const auto metadata : {Sandbox::PackJailDirectory{8, 0x01021994},
+                                Sandbox::PackJailDirectory{8, 0x794c7630},
+                                Sandbox::PackJailDirectory{7, 0xef53}})
+    {
+      probes.directory = [=](const std::string& path) {
+        return std::optional(path == std::string(base) + "/x" ? metadata :
+                                 Sandbox::PackJailDirectory{7, 0x01021994});
+      };
+      Refuses("host-home");
+    }
+  }
+}
+
+TEST_F(OrcaLinuxPackJail, HomeEntrySymlinkRegularFileAndProbeErrorsRefuse)
+{
+  probes.passwd_home = [] { return std::optional<std::string>(); };
+  // The OS directory probe returns nullopt for a symlink, regular file or stat/statfs error.
+  for (const char* entry : {"deck-symlink", "regular-file", "unreadable-directory"})
+  {
+    SCOPED_TRACE(entry);
+    home_names = {entry};
+    probes.directory = [](const std::string&) {
+      return std::optional<Sandbox::PackJailDirectory>();
+    };
+    Refuses("host-home");
+  }
+  probes.directory = [](const std::string&) {
+    return std::optional<Sandbox::PackJailDirectory>({7, 0x01021994});
   };
-  Refuses("host-home");
-  probes.exists = [](const std::string&) { return std::optional<bool>(); };
+  probes.root_device = [] { return std::optional<unsigned long long>(); };
   Refuses("host-home");
 }
 
-TEST_F(OrcaLinuxPackJail, HomeMustBeSetAndDifferent)
+TEST_F(OrcaLinuxPackJail, HomeRootsSymlinkAndEnumerationErrorsRefuse)
 {
+  for (const char* base : {"/home", "/var/home"})
+  {
+    SCOPED_TRACE(base);
+    probes.home_entries = [=](const std::string& path) {
+      return std::optional<Sandbox::PackJailHomeEntries>({path == base, {}});
+    };
+    Refuses("host-home symlink");
+    probes.home_entries = [=](const std::string& path) {
+      return path == base ? std::optional<Sandbox::PackJailHomeEntries>() :
+                            std::optional<Sandbox::PackJailHomeEntries>({false, {}});
+    };
+    Refuses("host-home");
+  }
+}
+
+TEST_F(OrcaLinuxPackJail, AbsentHomeRootsAndNoPasswdNeedNoDirectoryOrDeviceProbe)
+{
+  home_names.clear();
+  probes.passwd_home = [] { return std::optional<std::string>(); };
+  probes.directory = [](const std::string&) {
+    ADD_FAILURE() << "Absent homes must not need directory metadata";
+    return std::optional<Sandbox::PackJailDirectory>();
+  };
+  probes.root_device = [] {
+    ADD_FAILURE() << "Absent homes must not need a device comparison";
+    return std::optional<unsigned long long>();
+  };
+  EXPECT_TRUE(Check().jailed);
+}
+
+TEST_F(OrcaLinuxPackJail, PasswdHomeOutsideBothRootsMustBeAbsentOrAPlaceholder)
+{
+  home_names.clear();
+  for (const char* home : {"/root", "/srv/player"})
+  {
+    SCOPED_TRACE(home);
+    probes.passwd_home = [=] { return std::optional<std::string>(home); };
+    probes.exists = [](const std::string&) { return std::optional<bool>(false); };
+    EXPECT_TRUE(Check().jailed);
+    probes.exists = [=](const std::string& path) { return std::optional<bool>(path == home); };
+    probes.directory = [](const std::string&) {
+      return std::optional<Sandbox::PackJailDirectory>({7, 0x794c7630});
+    };
+    EXPECT_TRUE(Check().jailed);
+    probes.directory = [](const std::string&) {
+      return std::optional<Sandbox::PackJailDirectory>({8, 0x794c7630});
+    };
+    Refuses("host-home");
+    probes.directory = [](const std::string&) {
+      return std::optional<Sandbox::PackJailDirectory>();
+    };
+    Refuses("host-home");
+    probes.exists = [](const std::string&) { return std::optional<bool>(); };
+    Refuses("host-home");
+  }
+}
+
+TEST_F(OrcaLinuxPackJail, EverySensitivePathInEveryHomeAndLstatErrorsRefuseWithRelativeName)
+{
+  probes.passwd_home = [] { return std::optional<std::string>("/srv/player"); };
+  home_names = {"deck", "x"};
+  var_home_names = {"deck", "x"};
+  for (const char* home : {"/home/deck", "/home/x", "/var/home/deck", "/var/home/x", "/srv/player"})
+  {
+    SCOPED_TRACE(home);
+    for (const char* relative : {".ssh", ".gnupg", ".local/share/keyrings", ".mozilla",
+                                 ".config/google-chrome", ".config/chromium",
+                                 ".config/BraveSoftware", ".local/share/Steam"})
+    {
+      SCOPED_TRACE(relative);
+      for (const auto present : {std::optional<bool>(true), std::optional<bool>()})
+      {
+        probes.exists = [=](const std::string& path) {
+          return path == std::string(home) + '/' + relative ? present : std::optional<bool>(false);
+        };
+        Refuses((std::string("sensitive-home ") + relative).c_str());
+      }
+    }
+  }
+}
+
+TEST_F(OrcaLinuxPackJail, SensitiveHomeReportsFirstPathOnly)
+{
+  probes.exists = [](const std::string&) { return std::optional<bool>(true); };
+  Refuses("sensitive-home .ssh");
+}
+
+TEST_F(OrcaLinuxPackJail, HomeMustBeSetAndDifferentFromEveryHomeAndPasswdHome)
+{
+  var_home_names = {"deck"};
+  probes.passwd_home = [] { return std::optional<std::string>("/srv/player"); };
   for (const auto& home : {std::optional<std::string>(), std::optional<std::string>(""),
-                           std::optional<std::string>("/home/host")})
+                           std::optional<std::string>("/home/host"),
+                           std::optional<std::string>("/var/home/deck"),
+                           std::optional<std::string>("/srv/player")})
   {
     probes.home = home;
     Refuses("HOME");

@@ -2835,6 +2835,10 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.87
+
+- Linux: mod packs now start inside YouGame's Linux sandbox as it really runs (the 0.3.86 check refused it: the sandbox has no user list and creates empty home folders). Homes must still be empty placeholders, with no host home and no keys, browser or Steam folders visible.
+
 ### 0.3.86
 
 - Linux: mod packs now play inside YouGame's Linux sandbox. The engine checks for itself that it runs isolated (no privileges, its own user namespace, not the computer's own files or display, and no network for offline packs) and refuses a pack otherwise.

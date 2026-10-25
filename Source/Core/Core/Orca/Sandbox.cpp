@@ -33,6 +33,7 @@
 #endif
 
 #ifdef __linux__
+#include <dirent.h>
 #include <poll.h>
 #include <pwd.h>
 #include <sys/socket.h>
@@ -95,19 +96,23 @@ std::string JailLogName(std::string_view name)
 
 std::string PackJailResult::Status() const
 {
-  const std::string comm = " pid1=" + JailLogName(pid1);
+  const std::string comm = " pid1=" + JailLogName(pid1) +
+                           (passwd_present ? " passwd: <present>" : " passwd: none");
   if (!jailed)
     return "orca pack jail refused " + failed + comm;
   std::string names;
   for (const auto& name : interfaces)
     names += (names.empty() ? "" : ",") + JailLogName(name);
-  return "orca pack jail passed NoNewPrivs CapEff CapBnd CapPrm uid_map root-fs passwd-home "
-         "host-home HOME DISPLAY x11-abstract x11-path x11-own network interfaces=" + names + comm;
+  return "orca pack jail passed NoNewPrivs CapEff CapBnd CapPrm uid_map root-fs "
+         "host-home sensitive-home HOME DISPLAY x11-abstract x11-path x11-own network interfaces=" +
+         names + comm;
 }
 
 PackJailResult CheckLinuxPackJail(const std::string& root, const PackJailProbes& probes, bool online)
 {
   PackJailResult result;
+  const auto passwd_home = probes.passwd_home();
+  result.passwd_present = passwd_home.has_value();
   // PID 1 is diagnostic only: bwrap, sh and other names all qualify. Read failures fail closed.
   const auto comm = JailRead(root + "/proc/1/comm");
   if (comm)
@@ -116,7 +121,7 @@ PackJailResult CheckLinuxPackJail(const std::string& root, const PackJailProbes&
     if (!result.pid1.empty() && result.pid1.back() == '\n')
       result.pid1.pop_back();
   }
-  const auto fail = [&](const char* name) {
+  const auto fail = [&](const std::string& name) {
     result.failed = name;
     return result;
   };
@@ -170,13 +175,57 @@ PackJailResult CheckLinuxPackJail(const std::string& root, const PackJailProbes&
   const auto root_type = probes.root_type();
   if (!root_type || (*root_type != 0x01021994 && *root_type != 0x794c7630))
     return fail("root-fs");
-  const auto home = probes.passwd_home();
-  if (!home || home->empty() || home->front() != '/')
-    return fail("passwd-home");
-  const auto visible = probes.exists(*home);
-  if (!visible || *visible)
-    return fail("host-home");
-  if (!probes.home || probes.home->empty() || *probes.home == *home)
+  std::vector<std::string> homes;
+  const auto placeholder = [&](const std::string& path) {
+    // Profile binds create parents on the jail root. A host bind, symlink, regular file,
+    // or unreadable entry must never qualify as one of those placeholder directories.
+    const auto directory = probes.directory(path);
+    const auto root_device = probes.root_device();
+    return directory && root_device && directory->device == *root_device &&
+           (directory->fs_type == 0x01021994 || directory->fs_type == 0x794c7630);
+  };
+  for (const char* base : {"/home", "/var/home"})
+  {
+    const auto entries = probes.home_entries(base);
+    if (!entries)
+      return fail("host-home");
+    if (entries->symlink)
+      return fail("host-home symlink");
+    for (const auto& entry : entries->names)
+    {
+      const std::string path = std::string(base) + '/' + entry;
+      if (!placeholder(path))
+        return fail("host-home");
+      homes.push_back(path);
+    }
+  }
+  if (passwd_home)
+  {
+    if (passwd_home->empty() || passwd_home->front() != '/')
+      return fail("host-home");
+    if (*passwd_home != "/home" && passwd_home->compare(0, 6, "/home/") != 0 &&
+        *passwd_home != "/var/home" && passwd_home->compare(0, 10, "/var/home/") != 0)
+    {
+      const auto visible = probes.exists(*passwd_home);
+      if (!visible || (*visible && !placeholder(*passwd_home)))
+        return fail("host-home");
+    }
+    if (std::find(homes.begin(), homes.end(), *passwd_home) == homes.end())
+      homes.push_back(*passwd_home);
+  }
+  for (const auto& home : homes)
+  {
+    for (const char* relative : {".ssh", ".gnupg", ".local/share/keyrings", ".mozilla",
+                                 ".config/google-chrome", ".config/chromium",
+                                 ".config/BraveSoftware", ".local/share/Steam"})
+    {
+      const auto sensitive = probes.exists(home + '/' + relative);
+      if (!sensitive || *sensitive)
+        return fail(std::string("sensitive-home ") + relative);
+    }
+  }
+  if (!probes.home || probes.home->empty() ||
+      std::find(homes.begin(), homes.end(), *probes.home) != homes.end())
     return fail("HOME");
 
   if (!probes.display || probes.display->empty() || probes.display->front() != ':')
@@ -265,9 +314,63 @@ PackJailProbes LinuxPackJailProbes()
       return std::nullopt;
     return entry->pw_dir;
   };
+  probes.home_entries = [](const std::string& path) -> std::optional<PackJailHomeEntries> {
+    struct stat st{};
+    if (lstat(path.c_str(), &st) != 0)
+    {
+      if (errno == ENOENT)
+        return PackJailHomeEntries{};
+      return std::nullopt;
+    }
+    if (S_ISLNK(st.st_mode))
+      return PackJailHomeEntries{true, {}};
+    if (!S_ISDIR(st.st_mode))
+      return std::nullopt;
+    DIR* directory = opendir(path.c_str());
+    if (!directory)
+      return std::nullopt;
+    PackJailHomeEntries entries;
+    int error = 0;
+    while (true)
+    {
+      errno = 0;
+      const auto* entry = readdir(directory);
+      if (!entry)
+      {
+        error = errno;
+        break;
+      }
+      const std::string name = entry->d_name;
+      if (name != "." && name != "..")
+        entries.names.push_back(name);
+    }
+    if (closedir(directory) != 0 || error != 0)
+      return std::nullopt;
+    std::sort(entries.names.begin(), entries.names.end());
+    return entries;
+  };
+  probes.root_device = []() -> std::optional<unsigned long long> {
+    char* root = realpath("/", nullptr);
+    if (!root)
+      return std::nullopt;
+    struct stat st{};
+    const int error = stat(root, &st);
+    free(root);
+    if (error != 0)
+      return std::nullopt;
+    return st.st_dev;
+  };
+  probes.directory = [](const std::string& path) -> std::optional<PackJailDirectory> {
+    struct stat entry{}, st{};
+    struct statfs fs{};
+    if (lstat(path.c_str(), &entry) != 0 || !S_ISDIR(entry.st_mode) ||
+        stat(path.c_str(), &st) != 0 || statfs(path.c_str(), &fs) != 0)
+      return std::nullopt;
+    return PackJailDirectory{static_cast<unsigned long long>(st.st_dev), fs.f_type};
+  };
   probes.exists = [](const std::string& path) -> std::optional<bool> {
     struct stat st{};
-    if (stat(path.c_str(), &st) == 0)
+    if (lstat(path.c_str(), &st) == 0)
       return true;
     if (errno == ENOENT || errno == ENOTDIR)
       return false;

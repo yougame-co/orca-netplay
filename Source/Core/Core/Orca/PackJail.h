@@ -10,12 +10,29 @@
 
 namespace Orca::Sandbox
 {
+// Only a real directory (lstat, never a symlink) can supply this metadata.
+struct PackJailDirectory
+{
+  unsigned long long device;
+  long fs_type;
+};
+
+struct PackJailHomeEntries
+{
+  bool symlink = false;
+  std::vector<std::string> names;
+};
+
 // OS probes are separate from the policy so tests can exercise Linux on any build host.
 struct PackJailProbes
 {
   std::function<std::optional<long>()> root_type;
   std::function<std::optional<std::string>()> passwd_home;
-  // true: exists, false: absent, nullopt: stat failed for a reason other than absence.
+  // lstat the home root before listing it. Absent roots have no entries; symlinks are reported.
+  std::function<std::optional<PackJailHomeEntries>(const std::string&)> home_entries;
+  std::function<std::optional<unsigned long long>()> root_device;
+  std::function<std::optional<PackJailDirectory>(const std::string&)> directory;
+  // lstat: true for any type (including dangling symlinks), false for absence, nullopt for errors.
   std::function<std::optional<bool>(const std::string&)> exists;
   // true: connected, false: refused/unreachable, nullopt: probe could not run.
   std::function<std::optional<bool>(int, bool)> connect_x;
@@ -26,6 +43,7 @@ struct PackJailProbes
 struct PackJailResult
 {
   bool jailed = false;
+  bool passwd_present = false;
   std::string failed;
   std::string pid1;
   std::vector<std::string> interfaces;
