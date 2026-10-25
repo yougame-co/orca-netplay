@@ -9,6 +9,9 @@
 # afterwards on a Linux machine that has the disc (the Legion, or WSL2 on the PC), together with the in-app check.
 name: linux-x64 build (manual)
 
+# The run's title carries its inputs; the signing side checks it through the API (verify-ci-artifact).
+run-name: "linux-x64 ${{ inputs.version }} commit=${{ inputs.commit }} source=${{ inputs.source_commit }} flavor=${{ inputs.flavor }}"
+
 on:
   workflow_dispatch:
     inputs:
@@ -51,11 +54,12 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must be X.Y.Z"; exit 1; }
 
       - name: Check out the release commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned 2026-10-24
         with:
           ref: ${{ inputs.commit }}
           fetch-depth: 1
           submodules: false
+          persist-credentials: false
 
       - name: Submodules (as linux-release.sh does, all but Qt and FFmpeg-bin)
         run: |
@@ -75,7 +79,7 @@ jobs:
           cmake --version | head -1
 
       - name: Compiler cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4, pinned 2026-10-24
         with:
           path: ~/.cache/ccache
           key: ccache-linux-x64-${{ inputs.commit }}
@@ -103,9 +107,9 @@ jobs:
           stat -c '%s bytes' "$Z"
 
       - name: Upload the zip and its sha256
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, pinned 2026-10-24
         with:
-          name: yg-dolphin-${{ inputs.version }}-linux-x64-${{ inputs.flavor }}
+          name: yg-dolphin-${{ inputs.version }}-${{ inputs.commit }}-linux-x64-${{ inputs.flavor }}
           path: |
             ${{ runner.temp }}/out/yg-dolphin-${{ inputs.version }}-linux-x64.zip
             ${{ runner.temp }}/out/SHA256SUMS

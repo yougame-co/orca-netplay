@@ -93,19 +93,24 @@ WiimoteScannerHidapi::WiimoteScannerHidapi()
   // https://man.openbsd.org/usbhid.3
 #define hid_init hidapi_hid_init
 #endif
-  int ret = hid_init();
-  ASSERT_MSG(WIIMOTE, ret == 0, "Couldn't initialise hidapi.");
+  // Orca: a sandbox (the Linux jail, AppContainer, Seatbelt) may have no HID devices or udev.
+  // Real Wiimotes are then unavailable, which is not an error worth stopping the engine for.
+  m_hid_ready = hid_init() == 0;
+  if (!m_hid_ready)
+    NOTICE_LOG_FMT(WIIMOTE, "hidapi unavailable: no real Wiimotes");
 }
 
 WiimoteScannerHidapi::~WiimoteScannerHidapi()
 {
-  if (hid_exit() == -1)
+  if (m_hid_ready && hid_exit() == -1)
     ERROR_LOG_FMT(WIIMOTE, "Failed to clean up hidapi.");
 }
 
 auto WiimoteScannerHidapi::FindAttachedWiimotes() -> FindResults
 {
   FindResults results;
+  if (!m_hid_ready)
+    return results;
 
   hid_device_info* list = hid_enumerate(0x0, 0x0);  // FYI: 0 for all VID/PID.
   for (hid_device_info* device = list; device != nullptr; device = device->next)

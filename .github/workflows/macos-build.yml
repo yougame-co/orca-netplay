@@ -1,0 +1,167 @@
+# YG Dolphin macOS (arm64) build (linux-lead for orca-lead, 10-24). MANUAL ONLY: workflow_dispatch, never on push or
+# pull_request, never a required check, so it cannot block a merge (YouGame's "no CI" rule is about the YouGame repo).
+#
+# What it makes: YG Dolphin.app, UNSIGNED, through Tools/orca-package-macos.sh with no signing credentials (the script
+# then leaves the linker's ad-hoc signature and names the zip *-unsigned.zip), plus the unit tests' results from a
+# second job. Developer ID signing, notarization and stapling stay on the Mac (the certificate never comes here).
+#
+# No secrets: the program embeds only the PUBLIC flat-bundle key for the flavor. No game files: the frame-for-frame
+# check (a hashlog against the kit) runs afterwards on a Mac with the disc.
+name: macOS build (manual)
+
+# The run's title carries its inputs; the signing side checks it through the API (verify-ci-artifact).
+run-name: "macos-arm64 ${{ inputs.version }} commit=${{ inputs.commit }} source=${{ inputs.source_commit }} flavor=${{ inputs.flavor }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Public snapshot commit to build (full sha, on ci/<version>)"
+        required: true
+      source_commit:
+        description: "The PRIVATE release commit it was made from (full sha): goes into the compatibility key"
+        required: true
+      version:
+        description: "YG Dolphin version, X.Y.Z"
+        required: true
+      flavor:
+        description: "Bundle-key flavor (prod comes later)"
+        required: true
+        default: staging
+        type: choice
+        options: [staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: macos-14 # Apple silicon, as the Mac kit (CMAKE_OSX_ARCHITECTURES=arm64)
+    timeout-minutes: 150
+    steps:
+      - name: Check the inputs (they reach shell steps only after this)
+        env:
+          COMMIT: ${{ inputs.commit }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "commit must be a full 40-hex sha"; exit 1; }
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "source_commit must be a full 40-hex sha"; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must be X.Y.Z"; exit 1; }
+
+      - name: Check out the release commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned 2026-10-24
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      - name: Submodules (all but Qt and FFmpeg-bin)
+        run: |
+          for m in $(git config -f .gitmodules --get-regexp '\.path$' | awk '{print $2}'); do
+            case "$m" in Externals/Qt|Externals/FFmpeg-bin) continue ;; esac
+            git submodule update --init --recursive --depth 1 -- "$m" || git submodule update --init --recursive -- "$m"
+          done
+          test -z "$(git status --porcelain)" || { echo "tree not clean"; git status --short | head; exit 1; }
+
+      - name: Tools
+        run: |
+          brew list ninja >/dev/null 2>&1 || brew install ninja
+          cmake --version | head -1
+
+      - name: Build and package, unsigned (Tools/orca-package-macos.sh, staging flavor)
+        env:
+          ORCA_VERSION: ${{ inputs.version }}
+          ORCA_SOURCE_URL: https://github.com/yougame-co/orca-netplay
+          ORCA_STAGING_BUILD: "1"
+          ORCA_SOURCE_COMMIT: ${{ inputs.source_commit }}
+          ORCA_BUNDLE_PUBLIC_KEY: 8422b8b28b82aff024427d77e6c72a38d9ea75bcb6533fe706c61006f742c0ab
+        run: |
+          # No CSC_LINK / APPLE_API_* here, so the script builds a release-configured bundle and leaves it unsigned.
+          for v in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER ORCA_INTERNAL; do
+            [ -z "${!v:-}" ] || { echo "$v must not be set in CI"; exit 1; }
+          done
+          Tools/orca-package-macos.sh "$RUNNER_TEMP/build" "$RUNNER_TEMP/out"
+          Z="$RUNNER_TEMP/out/yg-dolphin-${ORCA_VERSION}-macos-arm64-unsigned.zip"
+          test -f "$Z"
+          shasum -a 256 "$Z" | tee "$RUNNER_TEMP/out/SHA256SUMS"
+          stat -f '%z bytes' "$Z"
+
+      - name: Check the program (keys and the private source commit)
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          ORCA_STAGING_BUILD: "1"
+          ORCA_BUNDLE_PUBLIC_KEY: 8422b8b28b82aff024427d77e6c72a38d9ea75bcb6533fe706c61006f742c0ab
+        run: |
+          grep -q "SCM_REV_STR \"$SOURCE_COMMIT\"" "$RUNNER_TEMP/build/Source/Core/Common/scmrev.h" ||
+            { echo "scmrev.h does not carry the private source commit"; exit 1; }
+          EXE=$(find "$RUNNER_TEMP/build" -path '*Orca.app/Contents/MacOS/Orca' -type f | head -1)
+          [ -n "$EXE" ] || { echo "no Orca.app/Contents/MacOS/Orca in the build"; exit 1; }
+          python3 Tools/orca/bundle-key-guard.py "$RUNNER_TEMP/build" "$EXE"
+          LC_ALL=C grep -qaF "$ORCA_BUNDLE_PUBLIC_KEY" "$EXE" || { echo "the program does not hold the staging bundle key"; exit 1; }
+          ! LC_ALL=C grep -qaF afb9463d5c16f0f617432d76f75f37a8c649e36d7c626088ba00b19dea115a43 "$EXE" || { echo "the program holds the TEST key"; exit 1; }
+          LC_ALL=C grep -qaF "$SOURCE_COMMIT" "$EXE" || echo "::warning::the program has no contiguous copy of the source commit (scmrev.h carries it)"
+
+      - name: Upload the unsigned app zip and its sha256
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, pinned 2026-10-24
+        with:
+          name: yg-dolphin-${{ inputs.version }}-${{ inputs.commit }}-macos-arm64-${{ inputs.flavor }}-unsigned
+          path: |
+            ${{ runner.temp }}/out/yg-dolphin-${{ inputs.version }}-macos-arm64-unsigned.zip
+            ${{ runner.temp }}/out/SHA256SUMS
+          retention-days: 14
+          if-no-files-found: error
+
+  unit-tests:
+    # The package script builds with ENABLE_TESTS=OFF; the unit tests get their own build, in parallel.
+    runs-on: macos-14
+    timeout-minutes: 150
+    steps:
+      - name: Check the inputs
+        env:
+          COMMIT: ${{ inputs.commit }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "commit must be a full 40-hex sha"; exit 1; }
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "source_commit must be a full 40-hex sha"; exit 1; }
+
+      - name: Check out the release commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned 2026-10-24
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      - name: Submodules (all but Qt and FFmpeg-bin)
+        run: |
+          for m in $(git config -f .gitmodules --get-regexp '\.path$' | awk '{print $2}'); do
+            case "$m" in Externals/Qt|Externals/FFmpeg-bin) continue ;; esac
+            git submodule update --init --recursive --depth 1 -- "$m" || git submodule update --init --recursive -- "$m"
+          done
+
+      - name: Build and run the unit tests
+        env:
+          ORCA_SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          brew list ninja >/dev/null 2>&1 || brew install ninja
+          cmake -S . -B "$RUNNER_TEMP/tests" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DENABLE_QT=OFF -DENABLE_NOGUI=ON -DUSE_SYSTEM_LIBS=OFF -DENABLE_TESTS=ON -DENABLE_ANALYTICS=OFF \
+            -DENABLE_AUTOUPDATE=OFF -DUSE_DISCORD_PRESENCE=OFF -DUSE_RETRO_ACHIEVEMENTS=OFF -DUSE_MGBA=OFF -DUSE_UPNP=OFF \
+            -DENABLE_VULKAN=OFF -DENABLE_CLI_TOOL=OFF -DORCA_BUNDLE_TRUST_TEST_KEY=OFF
+          # unittests builds the tests and runs them through ctest (Source/UnitTests/CMakeLists.txt).
+          cmake --build "$RUNNER_TEMP/tests" --target unittests 2>&1 | tee "$RUNNER_TEMP/unit-tests.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Upload the test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, pinned 2026-10-24
+        with:
+          name: yg-dolphin-${{ inputs.commit }}-macos-unit-tests
+          path: ${{ runner.temp }}/unit-tests.log
+          retention-days: 14

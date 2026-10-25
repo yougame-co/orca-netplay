@@ -40,6 +40,11 @@ public:
 
   void Update() override {}                // not needed for hidapi
   void RequestStopSearching() override {}  // not needed for hidapi
+
+private:
+  // Orca: false when hidapi couldn't start (a sandbox with no HID devices or udev): the scanner
+  // then finds nothing instead of asserting.
+  bool m_hid_ready = false;
 };
 }  // namespace WiimoteReal
 

@@ -2835,6 +2835,11 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.85
+
+- Linux: runs inside the mods sandbox (a missing USB/HID system no longer stops the engine; real Wii Remotes are simply unavailable there).
+- Release tooling: a Linux build made from the public source carries the same compatibility key as the Mac and Windows builds.
+
 ### 0.3.84
 
 - Matchmaking: the queue can now measure your real connection to the other player before game 1 and find you someone closer when it's too slow (needs both players on 0.3.84).

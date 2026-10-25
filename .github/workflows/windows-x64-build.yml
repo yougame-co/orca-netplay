@@ -1,0 +1,152 @@
+# YG Dolphin windows-x64 build (linux-lead for orca-lead, 10-24). MANUAL ONLY: workflow_dispatch, never on push or
+# pull_request, never a required check, so it cannot block a merge (YouGame's "no CI" rule is about the YouGame repo).
+#
+# What it makes: the UNSIGNED program folder (Binaries\: DolphinNoGUI.exe + Sys) of a release commit, built the way the
+# PC's release agent builds it (staging-0385/pc/release-agent-0385.ps1: the visualstudio-release-x64 preset, the PC's
+# Get-OrcaCMakeArgs switches, the bundle key pinned, TEST key off), plus the unit tests' results. Packaging, the D3D
+# shader cache and Authenticode signing stay on the PC (signing needs the certificate, which never comes here).
+#
+# No secrets: the program embeds only the PUBLIC flat-bundle key for the flavor. No game files: the frame-for-frame
+# check (a hashlog against the Mac kit) runs afterwards on the PC, which has the disc.
+name: windows-x64 build (manual)
+
+# The run's title carries its inputs; the signing side checks it through the API (verify-ci-artifact).
+run-name: "windows-x64 ${{ inputs.version }} commit=${{ inputs.commit }} source=${{ inputs.source_commit }} flavor=${{ inputs.flavor }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Public snapshot commit to build (full sha, on ci/<version>)"
+        required: true
+      source_commit:
+        description: "The PRIVATE release commit it was made from (full sha): goes into the compatibility key"
+        required: true
+      version:
+        description: "YG Dolphin version, X.Y.Z"
+        required: true
+      flavor:
+        description: "Bundle-key flavor (prod comes later)"
+        required: true
+        default: staging
+        type: choice
+        options: [staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-x64-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022 # Visual Studio 2022, as on the PC
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check the inputs (they reach shell steps only after this)
+        env:
+          COMMIT: ${{ inputs.commit }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:COMMIT -cnotmatch '^[0-9a-f]{40}$') { throw "commit must be a full 40-hex sha" }
+          if ($env:SOURCE_COMMIT -cnotmatch '^[0-9a-f]{40}$') { throw "source_commit must be a full 40-hex sha" }
+          if ($env:VERSION -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "version must be X.Y.Z" }
+
+      - name: Keep LF line endings (Data/Sys feeds the compatibility key)
+        run: git config --global core.autocrlf false
+
+      - name: Check out the release commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned 2026-10-24
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      - name: Submodules (all but Qt and FFmpeg-bin, as the Linux and PC builds)
+        shell: bash
+        run: |
+          for m in $(git config -f .gitmodules --get-regexp '\.path$' | awk '{print $2}'); do
+            case "$m" in Externals/Qt|Externals/FFmpeg-bin) continue ;; esac
+            git submodule update --init --recursive --depth 1 -- "$m" || git submodule update --init --recursive -- "$m"
+          done
+          test -z "$(git status --porcelain)" || { echo "tree not clean"; git status --short | head; exit 1; }
+
+      - name: Configure (the PC's switches, staging key pinned, TEST key off)
+        env:
+          ORCA_SOURCE_COMMIT: ${{ inputs.source_commit }}
+          ORCA_VERSION: ${{ inputs.version }}
+          ORCA_STAGING_BUILD: "1"
+          BUNDLE_KEY: 8422b8b28b82aff024427d77e6c72a38d9ea75bcb6533fe706c61006f742c0ab
+        run: |
+          # the Windows release helper's CMake switches, one for one.
+          $switches = [ordered]@{
+            ENABLE_QT = 'OFF'; ENABLE_NOGUI = 'ON'; USE_SYSTEM_LIBS = 'OFF'; ENCODE_FRAMEDUMPS = 'OFF'
+            ENABLE_LLVM = 'OFF'; ENABLE_ANALYTICS = 'OFF'; ENABLE_AUTOUPDATE = 'OFF'; USE_DISCORD_PRESENCE = 'OFF'
+            USE_RETRO_ACHIEVEMENTS = 'OFF'; USE_MGBA = 'OFF'; USE_UPNP = 'OFF'; ENABLE_VULKAN = 'OFF'
+            ENABLE_CLI_TOOL = 'OFF'; USE_SANITIZERS = 'OFF'
+          }
+          $cmakeArgs = @($switches.GetEnumerator() | ForEach-Object { "-D$($_.Key)=$($_.Value)" }) + "-DORCA_VERSION=$env:ORCA_VERSION"
+          cmake --preset visualstudio-release-x64 @cmakeArgs "-DORCA_BUNDLE_TRUST_TEST_KEY=OFF" "-DORCA_BUNDLE_PUBLIC_KEY=$env:BUNDLE_KEY"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build YG Dolphin and run the unit tests
+        env:
+          ORCA_SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          cmake --build --preset visualstudio-build-release-x64 --target dolphin-nogui --parallel 4
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # The PC builds `tests`; the Visual Studio generator is multi-config, so ctest runs with -C Release here
+          # (the `unittests` target's own ctest call names no configuration).
+          cmake --build --preset visualstudio-build-release-x64 --target tests --parallel 4
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build\release\x64 -C Release --output-on-failure 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\unit-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check the program (the release agent's checks)
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          VERSION: ${{ inputs.version }}
+          ORCA_STAGING_BUILD: "1"
+          ORCA_BUNDLE_PUBLIC_KEY: 8422b8b28b82aff024427d77e6c72a38d9ea75bcb6533fe706c61006f742c0ab
+        run: |
+          $b = "build\release\x64"
+          $scm = Get-Content "$b\Source\Core\Common\scmrev.h" -Raw
+          if ($scm -notmatch "SCM_REV_STR `"$env:SOURCE_COMMIT`"") { throw "scmrev.h does not carry the private source commit" }
+          $cache = Get-Content "$b\CMakeCache.txt" -Raw
+          if ($cache -notmatch "(?m)^ORCA_BUNDLE_TRUST_TEST_KEY:BOOL=OFF\r?$") { throw "CMake's cache trusts the TEST key" }
+          if ($cache -notmatch "(?m)^ORCA_VERSION:[A-Z]+=$([regex]::Escape($env:VERSION))\r?$") { throw "ORCA_VERSION is not $env:VERSION" }
+          $exe = "$b\Binaries\DolphinNoGUI.exe"
+          python Tools\orca\bundle-key-guard.py $b $exe
+          if ($LASTEXITCODE -ne 0) { throw "bundle-key-guard refused this build" }
+          if (-not (Select-String -Path $exe -SimpleMatch $env:ORCA_BUNDLE_PUBLIC_KEY -Quiet)) { throw "the program does not hold the staging bundle key" }
+          if (Select-String -Path $exe -SimpleMatch "afb9463d5c16f0f617432d76f75f37a8c649e36d7c626088ba00b19dea115a43" -Quiet) { throw "the program holds the TEST key" }
+          # scmrev.h above is the authority (the PC checks only it); the compiler may not keep all 40 hex digits in one piece.
+          if (-not (Select-String -Path $exe -SimpleMatch $env:SOURCE_COMMIT -Quiet)) { "::warning::the program has no contiguous copy of the source commit (scmrev.h carries it)" }
+          $vi = (Get-Item $exe).VersionInfo
+          "version resource: $($vi.FileDescription) / $($vi.ProductName) / $($vi.FileVersion) / $($vi.OriginalFilename)"
+          if ($vi.FileVersion -ne $env:VERSION) { throw "FileVersion is $($vi.FileVersion), not $env:VERSION" }
+
+      - name: Zip the unsigned program folder
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $out = "$env:RUNNER_TEMP\out"; New-Item -ItemType Directory -Force $out | Out-Null
+          $zip = "$out\yg-dolphin-$env:VERSION-windows-x64-unsigned-program.zip"
+          Compress-Archive -Path "build\release\x64\Binaries\*" -DestinationPath $zip
+          $h = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          "$h  $(Split-Path -Leaf $zip)" | Tee-Object -FilePath "$out\SHA256SUMS"
+          Copy-Item "$env:RUNNER_TEMP\unit-tests.log" $out
+
+      - name: Upload the program folder, its sha256 and the test results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, pinned 2026-10-24
+        with:
+          name: yg-dolphin-${{ inputs.version }}-${{ inputs.commit }}-windows-x64-${{ inputs.flavor }}-unsigned
+          path: ${{ runner.temp }}/out/
+          retention-days: 14
+          if-no-files-found: error
