@@ -1,11 +1,16 @@
 // Copyright 2026 YouGame
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <future>
+#include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 
 #include <gtest/gtest.h>
 
@@ -275,3 +280,73 @@ TEST(OrcaStatusDeathTest, ErrorsAndLegacyReportsBrandTheOutputAndListener)
         ::testing::ExitedWithCode(0), "");
   }
 }
+
+#if defined(__APPLE__) || defined(__linux__)
+TEST(OrcaStatus, CapabilityReadsContinueWhileStatusOutputIsBlocked)
+{
+  // Stall inside the stream's write callback: the output thread definitely holds the status
+  // output lock, without relying on pipe capacity, scheduler ordering, or a real app.
+  struct Output
+  {
+    std::mutex mutex;
+    std::condition_variable wake;
+    bool entered = false;
+    bool released = false;
+    void Write()
+    {
+      std::unique_lock lock(mutex);
+      entered = true;
+      wake.notify_all();
+      wake.wait(lock, [&] { return released; });
+    }
+  } output;
+#ifdef __APPLE__
+  auto* stream = funopen(&output, nullptr,
+      +[](void* cookie, const char*, int size) {
+        static_cast<Output*>(cookie)->Write();
+        return size;
+      }, nullptr, nullptr);
+#else
+  cookie_io_functions_t io{};
+  io.write = +[](void* cookie, const char*, size_t size) -> ssize_t {
+    static_cast<Output*>(cookie)->Write();
+    return static_cast<ssize_t>(size);
+  };
+  auto* stream = fopencookie(&output, "w", io);
+#endif
+  ASSERT_NE(stream, nullptr);
+  std::setvbuf(stream, nullptr, _IONBF, 0);
+  const auto session = Orca::GetEnv("ORCA_SESSION");
+  SetEnv("ORCA_SESSION", "1");
+  Orca::Status::ResetOnline();
+  Orca::Status::SetAppCaps("direct");
+  Orca::Status::SetOutput(stream);
+  std::thread writer([] { Orca::Status::Shaders(1, 2); });
+  const Common::ScopeGuard restore([&] {
+    {
+      std::lock_guard lock(output.mutex);
+      output.released = true;
+    }
+    output.wake.notify_all();
+    writer.join();
+    Orca::Status::SetOutput(nullptr);
+    std::fclose(stream);
+    Orca::Status::SetAppCaps("");
+    SetEnv("ORCA_SESSION", session);
+  });
+  {
+    std::unique_lock lock(output.mutex);
+    ASSERT_TRUE(output.wake.wait_for(lock, std::chrono::seconds(5), [&] { return output.entered; }));
+  }
+  auto capability = std::async(std::launch::async, [] { return Orca::Status::Cap("direct"); });
+  const auto ready = capability.wait_for(std::chrono::milliseconds(200));
+  // Release before inspecting the assertion/future, including on the old implementation.
+  {
+    std::lock_guard lock(output.mutex);
+    output.released = true;
+  }
+  output.wake.notify_all();
+  EXPECT_EQ(ready, std::future_status::ready);
+  EXPECT_TRUE(capability.get());
+}
+#endif

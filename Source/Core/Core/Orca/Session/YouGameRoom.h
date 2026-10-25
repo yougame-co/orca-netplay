@@ -518,6 +518,7 @@ struct RoomTestSnapshot
   picojson::object mirror;
   std::string published_mirror;
   unsigned mirror_serializations = 0;
+  std::vector<std::string> probe_lines;
 };
 std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions& options,
                                              const std::vector<RoomTestStep>& steps,

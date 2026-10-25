@@ -361,6 +361,37 @@ TEST(OrcaRoomPingRange, ProbeEchoIsImmediateAndPreservesTheReceivedNonce)
   }
 }
 
+TEST(OrcaRoomPingRange, ProbeDiagnosticsMeasureFromSocketReceiptWithTheInjectedClock)
+{
+  ScopedEnv session("ORCA_SESSION", "1");
+  ScopedEnv delay("ORCA_TEST_NET_DELAY_MS", "1000");
+  ScopedEnv jitter("ORCA_TEST_NET_JITTER_MS", "0");
+  const auto trace = TraceRoomForTest(QueueTraceOptions(), {
+      {RK::Message, 0, QueueRoster("welcome", "ranked")},
+      {RK::FlushHeld, 1000},
+      {RK::SocketMessage, 1100, R"({"t":"probe","n":"12345678-private-suffix"})"},
+      {RK::FlushHeld, 2100}, {RK::FlushHeld, 3099}, {RK::FlushHeld, 3100},
+  });
+  for (size_t i = 0; i < 5; ++i)
+    EXPECT_TRUE(trace[i].probe_lines.empty()) << i;
+  EXPECT_EQ(trace[5].probe_lines, (std::vector<std::string>{
+      "orca probe n=12345678 recv→ack 2000000 us write-flush 0 us read-gap 0 us read 0 us result=sent"}));
+}
+
+TEST(OrcaRoomPingRange, ProbeDiagnosticsBoundAndSanitizeTheNoncePrefix)
+{
+  ScopedEnv delay("ORCA_TEST_NET_DELAY_MS", nullptr);
+  const auto trace = TraceRoomForTest(QueueTraceOptions(), {
+      {RK::Message, 0, QueueRoster("welcome", "ranked")},
+      {RK::SocketMessage, 0, R"({"t":"probe","n":"quote\"slash\\-private"})"},
+      {RK::SocketMessage, 1000, R"({"t":"probe","n":"short"})"},
+  });
+  EXPECT_EQ(trace[1].probe_lines, (std::vector<std::string>{
+      "orca probe n=quote_sl recv→ack 0 us write-flush 0 us read-gap 0 us read 0 us result=sent"}));
+  EXPECT_EQ(trace[2].probe_lines, (std::vector<std::string>{
+      "orca probe n=- recv→ack 0 us write-flush 0 us read-gap 0 us read 0 us result=sent"}));
+}
+
 TEST(OrcaRoomPingRange, AgentDelayHoldsBothProbeAndAckForTheRoundTrip)
 {
   ScopedEnv session("ORCA_SESSION", "1");

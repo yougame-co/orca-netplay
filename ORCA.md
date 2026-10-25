@@ -2835,6 +2835,10 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.90
+
+- Ranked: the connection check before game 1 no longer waits behind the game's status messages, so a player whose app was slow to read them (seen on Linux) no longer looks far away and gets voided.
+
 ### 0.3.89
 
 - Online: the relay login (TURN) no longer fails now and then. A failed login left one side without a relay, which could make a doubles session slow down and drop.

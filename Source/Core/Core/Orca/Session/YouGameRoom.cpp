@@ -1477,11 +1477,20 @@ struct YouGameRoom::Impl
   std::array<int, MAX_SEATS> direct_seat_sent_newest{-1, -1, -1, -1};
   bool direct_malformed_logged = false;
 
+  struct ProbeReceipt
+  {
+    Clock::time_point received;
+    std::chrono::microseconds read_gap{};
+    std::chrono::microseconds read_time{};
+    std::string prefix;
+  };
+
   // Test-only network delay (Orca::TestNetDelayMs): messages wait in these queues, in order.
   struct Held
   {
     Clock::time_point due;
     std::string text;
+    std::optional<ProbeReceipt> probe = std::nullopt;
   };
   std::optional<int> net_delay = TestNetDelayMs();
   int net_jitter = TestNetJitterMs();
@@ -1556,6 +1565,7 @@ struct YouGameRoom::Impl
   std::vector<std::string> test_notices;
   std::vector<std::string> test_results;
   unsigned test_mirror_serializations = 0;
+  std::vector<std::string> test_probe_lines;
   Clock::time_point Now() const { return test_now.value_or(Clock::now()); }
 
   explicit Impl(RoomOptions room_options, bool start_thread = true) : options(std::move(room_options))
@@ -1657,24 +1667,55 @@ struct YouGameRoom::Impl
     error_code = std::move(app_code);
   }
 
-  // `held`: go through the test delay queue when configured (teardown messages skip it).
-  bool SendJson(const picojson::object& message,
-                std::chrono::milliseconds timeout = std::chrono::seconds(2), bool held = true)
+  void LogProbe(const ProbeReceipt& probe, std::chrono::microseconds write_time,
+                std::string_view result)
   {
-    if (held && net_delay)
-    {
-      held_out.push_back({HoldUntil(held_out), picojson::value(message).serialize()});
-      return true;
-    }
+    const auto elapsed = write_time.count() < 0 ? -1 :
+        std::chrono::duration_cast<std::chrono::microseconds>(Now() - probe.received).count();
+    const std::string line = fmt::format(
+        "orca probe n={} recv→ack {} us write-flush {} us read-gap {} us read {} us result={}",
+        probe.prefix, elapsed, write_time.count(), probe.read_gap.count(), probe.read_time.count(),
+        result);
+    if (test_now)
+      test_probe_lines.push_back(line);
+    // After the write, through the diagnostic logger: never the app's status-output mutex.
+    NOTICE_LOG_FMT(NETPLAY, "{}", line);
+  }
+
+  bool WriteText(const std::string& text, std::chrono::milliseconds timeout,
+                 const std::optional<ProbeReceipt>& probe = std::nullopt)
+  {
+    const auto start = probe ? Now() : Clock::time_point{};
+    bool sent;
     if (test_now)
     {
-      test_sent.push_back(picojson::value(message).serialize());
+      test_sent.push_back(text);
+      sent = true;
+    }
+    else
+    {
+      sent = ws->SendText(text, timeout);
+    }
+    if (probe)
+      LogProbe(*probe, std::chrono::duration_cast<std::chrono::microseconds>(Now() - start),
+               sent ? "sent" : "send-failed");
+    if (!sent)
+      WARN_LOG_FMT(NETPLAY, "Orca room: send failed: {}", ws->Error());
+    return sent;
+  }
+
+  // `held`: go through the test delay queue when configured (teardown messages skip it).
+  bool SendJson(const picojson::object& message,
+                std::chrono::milliseconds timeout = std::chrono::seconds(2), bool held = true,
+                const std::optional<ProbeReceipt>& probe = std::nullopt)
+  {
+    const std::string text = picojson::value(message).serialize();
+    if (held && net_delay)
+    {
+      held_out.push_back({HoldUntil(held_out), text, probe});
       return true;
     }
-    if (ws->SendText(picojson::value(message).serialize(), timeout))
-      return true;
-    WARN_LOG_FMT(NETPLAY, "Orca room: send failed: {}", ws->Error());
-    return false;
+    return WriteText(text, timeout, probe);
   }
 
   int TicketLocalSeats() const
@@ -2898,6 +2939,7 @@ struct YouGameRoom::Impl
                    net_uplink->delay_ms, net_uplink->jitter_ms, net_uplink->from_s,
                    net_uplink->to_s);
     }
+    auto last_read_end = Now();
     // The connection failed under the player (went quiet, or a test dropped it): see below.
     while (!stop && State() != RoomState::Ended)
     {
@@ -2951,10 +2993,17 @@ struct YouGameRoom::Impl
         SendPageCommands();
       if (net_delay)
         FlushHeld();
-      if (auto text = ws->ReceiveText(std::chrono::milliseconds(net_delay ? 1 : 2)))
+      const auto read_start = Now();
+      auto text = ws->ReceiveText(std::chrono::milliseconds(net_delay ? 1 : 2));
+      const auto read_end = Now();
+      const ProbeReceipt receipt{
+          read_end, std::chrono::duration_cast<std::chrono::microseconds>(read_start - last_read_end),
+          std::chrono::duration_cast<std::chrono::microseconds>(read_end - read_start), {}};
+      last_read_end = read_end;
+      if (text)
       {
         last_heard = Clock::now();
-        OnSocketMessage(std::move(*text));
+        OnSocketMessage(std::move(*text), receipt);
         continue;
       }
       // Under the test delay, what the server sent before closing is still in flight and comes
@@ -3453,17 +3502,18 @@ struct YouGameRoom::Impl
     const auto now = Now();
     while (!held_out.empty() && held_out.front().due <= now)
     {
-      if (test_now)
-        test_sent.push_back(held_out.front().text);
-      else if (ws->IsOpen() && !ws->SendText(held_out.front().text, std::chrono::seconds(2)))
-        WARN_LOG_FMT(NETPLAY, "Orca room: send failed: {}", ws->Error());
+      const auto& held = held_out.front();
+      if (test_now || ws->IsOpen())
+        WriteText(held.text, std::chrono::seconds(2), held.probe);
+      else if (held.probe)
+        LogProbe(*held.probe, std::chrono::microseconds(-1), "closed");
       held_out.pop_front();
     }
     while (!held_in.empty() && held_in.front().due <= now && State() != RoomState::Ended)
     {
-      const std::string text = std::move(held_in.front().text);
+      const Held held = std::move(held_in.front());
       held_in.pop_front();
-      OnMessage(text);
+      OnMessage(held.text, held.probe);
     }
   }
 
@@ -5040,44 +5090,61 @@ struct YouGameRoom::Impl
     Publish();
   }
 
-  // Socket-thread only: no emulator mutex. Only agent QA delay holds the probe or its reply.
-  void OnProbe(const picojson::object& m)
+  // Socket-thread only. Receipt precedes JSON parsing and any configured QA delay. Other room
+  // work can still hold up the next read; read-gap and read time distinguish that from ack writes.
+  void OnProbe(const picojson::object& m, ProbeReceipt receipt)
   {
-    if (!probe_room || probe_stopped.load() || probe_count == probe_nonces.size())
+    if (!probe_room)
       return;
     const auto n = m.find("n");
     if (n == m.end() || !n->second.is<std::string>())
       return;
     const auto& nonce = n->second.get<std::string>();
     if (nonce.empty() || nonce.size() > 64 ||
-        !std::all_of(nonce.begin(), nonce.end(), [](unsigned char c) { return c >= 0x20 && c < 0x7f; }) ||
-        std::ranges::find(probe_nonces, nonce) != probe_nonces.end())
+        !std::all_of(nonce.begin(), nonce.end(), [](unsigned char c) { return c >= 0x20 && c < 0x7f; }))
       return;
+    // Never print a whole nonce, even an unusually short one, or arbitrary log delimiters.
+    receipt.prefix = nonce.size() > 8 ? nonce.substr(0, 8) : "-";
+    for (char& c : receipt.prefix)
+      if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_'))
+        c = '_';
+    const auto skipped = [&](std::string_view result) {
+      LogProbe(receipt, std::chrono::microseconds(-1), result);
+    };
+    if (probe_stopped.load())
+      return skipped("stopped");
+    if (probe_count == probe_nonces.size())
+      return skipped("budget");
+    if (std::ranges::find(probe_nonces, nonce) != probe_nonces.end())
+      return skipped("duplicate");
     const auto now = Now();
     // Worker issues ~1/s for 5 s. A 400 ms gap tolerates jitter while bounding bursts to 3/s;
     // the room still gets at most six unique replies within this lifetime 6 s window.
-    if ((probe_started && now - *probe_started >= std::chrono::seconds(6)) ||
-        (probe_last && now - *probe_last < std::chrono::milliseconds(400)))
-      return;
+    if (probe_started && now - *probe_started >= std::chrono::seconds(6))
+      return skipped("expired");
+    if (probe_last && now - *probe_last < std::chrono::milliseconds(400))
+      return skipped("gap");
     if (!probe_started)
       probe_started = now;
     probe_last = now;
     probe_nonces[probe_count++] = nonce;
     SendJson({{"t", picojson::value("probe-ack")}, {"n", n->second}},
-             std::chrono::milliseconds(100));
+             std::chrono::milliseconds(100), true, receipt);
   }
 
-  void OnSocketMessage(std::string text)
+  void OnSocketMessage(std::string text, const std::optional<ProbeReceipt>& received = std::nullopt)
   {
+    const auto receipt = received.value_or(ProbeReceipt{Now(), {}, {}, {}});
     if (!net_delay)
     {
-      OnMessage(text);
+      OnMessage(text, receipt);
       return;
     }
-    held_in.push_back({HoldUntil(held_in), std::move(text)});
+    held_in.push_back({HoldUntil(held_in), std::move(text), receipt});
   }
 
-  void OnMessage(const std::string& text)
+  void OnMessage(const std::string& text, const std::optional<ProbeReceipt>& receipt = std::nullopt)
   {
     picojson::value value;
     if (!Json::ParseJson(text, &value) || !value.is<picojson::object>())
@@ -5091,7 +5158,7 @@ struct YouGameRoom::Impl
       return;
     if (t == "probe")
     {
-      OnProbe(m);
+      OnProbe(m, receipt.value_or(ProbeReceipt{Now(), {}, {}, {}}));
       return;
     }
     if (QueueRecovery() && State() == RoomState::Ended)
@@ -6087,6 +6154,7 @@ std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions& options,
     snapshot.mirror = room.RoomMirror(false);
     snapshot.published_mirror = room.last_published;
     snapshot.mirror_serializations = room.test_mirror_serializations;
+    snapshot.probe_lines = std::exchange(room.test_probe_lines, {});
     snapshot.host_input_deadline = owner.HostAwayDeadline();
     snapshot.seat = owner.Seat();
     snapshot.co_seats = owner.CoSeats();
