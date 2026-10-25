@@ -42,6 +42,9 @@ jobs:
   build:
     runs-on: ubuntu-22.04 # glibc 2.35, the same base as the Legion's build container
     timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash # runs as bash -eo pipefail: a failing command before a pipe fails the step
     steps:
       - name: Check the inputs (they reach shell steps only after this)
         env:
