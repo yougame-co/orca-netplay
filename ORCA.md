@@ -2835,6 +2835,10 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.86
+
+- Linux: mod packs now play inside YouGame's Linux sandbox. The engine checks for itself that it runs isolated (no privileges, its own user namespace, not the computer's own files or display, and no network for offline packs) and refuses a pack otherwise.
+
 ### 0.3.85
 
 - Linux: runs inside the mods sandbox (a missing USB/HID system no longer stops the engine; real Wii Remotes are simply unavailable there).
