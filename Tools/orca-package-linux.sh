@@ -51,7 +51,11 @@ done
 mkdir -p "$OUT_DIR"
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 
-COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+HEAD_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+# A build of the public snapshot (the public repo's manual workflow) names the private release commit:
+# ORCA_SOURCE_COMMIT (40 hex) goes into scmrev.h and so into the compatibility key (CMake/ScmRevGen.cmake).
+COMMIT="${ORCA_SOURCE_COMMIT:-$HEAD_COMMIT}"
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "ORCA_SOURCE_COMMIT must be a full 40-hex commit"
 # Changed or untracked paths. A git status that fails (a broken submodule link, say) counts as
 # dirty, never as clean.
 tree_state() {
@@ -115,7 +119,7 @@ if [ -n "$VERSION" ]; then
     "refs/tags/$TAG" >/dev/null 2>&1 ||
     echo "orca-package: WARNING: $TAG is not public yet at $PUBLIC" >&2
 else
-  VERSION=0.3.84
+  VERSION=0.3.85
   SOURCE="not published (a development build)"
 fi
 
@@ -147,7 +151,7 @@ cmake --build "$BUILD_DIR" --target dolphin-nogui
 
 if [ "$RELEASE" = 1 ]; then
   # The source must not have moved under the build.
-  [ "$(git -C "$ROOT" rev-parse HEAD)" = "$COMMIT" ] && [ -z "$(tree_state)" ] ||
+  [ "$(git -C "$ROOT" rev-parse HEAD)" = "$HEAD_COMMIT" ] && [ -z "$(tree_state)" ] ||
     fail "the tree changed during the build; start again from a clean checkout of $COMMIT"
 fi
 

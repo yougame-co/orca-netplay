@@ -6,6 +6,19 @@ if(GIT_FOUND)
   execute_process(WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
       OUTPUT_VARIABLE DOLPHIN_WC_REVISION
       OUTPUT_STRIP_TRAILING_WHITESPACE)
+  # Orca: a build of the public snapshot names the private release commit it was made from, so its
+  # compatibility key (which includes the revision) matches the Mac and Windows builds of that commit.
+  # Only an exact 40-hex value is taken; the release scripts check the result against the release.
+  if(DEFINED ENV{ORCA_SOURCE_COMMIT})
+    if(NOT "$ENV{ORCA_SOURCE_COMMIT}" MATCHES "^[0-9a-f]+$")
+      message(FATAL_ERROR "ORCA_SOURCE_COMMIT must be a full 40-hex commit")
+    endif()
+    string(LENGTH "$ENV{ORCA_SOURCE_COMMIT}" _orca_src_len)
+    if(NOT _orca_src_len EQUAL 40)
+      message(FATAL_ERROR "ORCA_SOURCE_COMMIT must be a full 40-hex commit")
+    endif()
+    set(DOLPHIN_WC_REVISION "$ENV{ORCA_SOURCE_COMMIT}")
+  endif()
   # defines DOLPHIN_WC_DESCRIBE
   execute_process(WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} COMMAND ${GIT_EXECUTABLE} describe --always --long --dirty
       OUTPUT_VARIABLE DOLPHIN_WC_DESCRIBE
