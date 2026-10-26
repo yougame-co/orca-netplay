@@ -464,7 +464,7 @@ std::optional<Layout> Parse(std::string_view json, std::string* error)
       !root.is<picojson::object>())
     return fail();
   Layout layout;
-  u64 version;
+  u64 version = 0;
   u64 disc_number = 0;
   if (root.contains("discNumber") &&
       (!ReadNumber(root.get("discNumber"), &disc_number) || disc_number > 255))
@@ -495,7 +495,7 @@ std::optional<Layout> Parse(std::string_view json, std::string* error)
         return fail();
       for (size_t i = 0; i < hash.digest.size(); ++i)
       {
-        unsigned int byte;
+        unsigned int byte = 0;
         const char* start = hex.data() + i * 2;
         if (std::from_chars(start, start + 2, byte, 16).ec != std::errc{})
           return fail();
@@ -515,7 +515,7 @@ std::optional<Layout> Parse(std::string_view json, std::string* error)
       if (std::strcmp(key, "partitions") == 0)
       {
         Partition partition;
-        u64 type;
+        u64 type = 0;
         if (!ReadNumber(value.get("offset"), &partition.offset) ||
             !ReadNumber(value.get("type"), &type) || type > 0xffffffff)
           return fail();
@@ -552,7 +552,7 @@ std::optional<Layout> Parse(std::string_view json, std::string* error)
             JunkSeed seed;
             for (size_t i = 0; i < seed.size(); ++i)
             {
-              u32 word;
+              u32 word = 0;
               const char* begin = hex.data() + i * 8;
               const auto result = std::from_chars(begin, begin + 8, word, 16);
               if (result.ec != std::errc{} || result.ptr != begin + 8)
@@ -794,7 +794,7 @@ std::optional<Layout> Generate(const DiscIO::Volume& volume, std::string* error)
   layout.fst_max_size = *max_fst;
   for (const auto& file : report->files)
   {
-    u64 offset;
+    u64 offset = 0;
     if (file.path == "sys/boot.bin")
       offset = 0;
     else if (file.path == "sys/bi2.bin")
