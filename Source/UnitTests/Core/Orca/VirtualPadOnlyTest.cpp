@@ -2,14 +2,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cstdlib>
-#include <cstdio>
 #include <optional>
 #include <string>
 
 #include <gtest/gtest.h>
 
 #include "Core/Orca/Bridge.h"
-#include "Core/Orca/Status.h"
 #include "Common/ScopeGuard.h"
 #include "Core/Orca/UX/ControllerSource.h"
 #include "InputCommon/ControlReference/ControlReference.h"
@@ -144,14 +142,6 @@ TEST_F(OrcaVirtualPadOnly, ReportsModeOnceAndIsSilentWhenUnset)
 
 TEST_F(OrcaVirtualPadOnly, ExplicitOrdinalsSurviveVirtualPadIndexShuffling)
 {
-  const ScopedEnv session("ORCA_SESSION", "1");
-  std::FILE* output = std::tmpfile();
-  ASSERT_NE(output, nullptr);
-  Orca::Status::SetOutput(output);
-  const Common::ScopeGuard restore_output([&] {
-    Orca::Status::SetOutput(nullptr);
-    std::fclose(output);
-  });
   const ScopedEnv mode("ORCA_VIRTUAL_PAD_ONLY", "1");
   const ScopedEnv stdio("YOUGAME_STDIO", "1");
   Orca::UX::SetLocalPadCount(2);
@@ -199,42 +189,4 @@ TEST_F(OrcaVirtualPadOnly, ExplicitOrdinalsSurviveVirtualPadIndexShuffling)
       ControlReference::SetInputGate(false);
     }
   }
-  std::rewind(output);
-  char buffer[256]{};
-  std::string lines;
-  while (std::fgets(buffer, sizeof(buffer), output))
-    lines += buffer;
-  EXPECT_EQ(lines, "orca seats 1=pad:0 2=pad:1 3=none 4=none\n"
-                   "orca seats 1=pad:1 2=pad:0 3=none 4=none\n"
-                   "orca seats 1=none 2=none 3=none 4=none\n");
-}
-
-TEST_F(OrcaVirtualPadOnly, CoSeatAssignmentsPrintOneCompleteLinePerChange)
-{
-  const ScopedEnv session("ORCA_SESSION", "1");
-  const ScopedEnv mode("ORCA_VIRTUAL_PAD_ONLY", "1");
-  const ScopedEnv stdio("YOUGAME_STDIO", "1");
-  std::FILE* output = std::tmpfile();
-  ASSERT_NE(output, nullptr);
-  Common::ScopeGuard restore([&] {
-    Orca::Status::SetOutput(nullptr);
-    Orca::UX::SetLocalPadCount(1);
-    std::fclose(output);
-  });
-  Orca::Status::SetOutput(output);
-  SendVirtualPad();
-  Orca::UX::SetLocalPadCount(1);
-  Orca::UX::LocalPad(0, true);
-  EXPECT_EQ(std::ftell(output), 0);
-  Orca::UX::SetLocalPadCount(2);
-  for (int repeat = 0; repeat < 3; ++repeat)
-    for (int ordinal = 0; ordinal < 2; ++ordinal)
-      Orca::UX::LocalPad(ordinal, true);
-  // This snapshot has no explicit seats: neither player borrows its legacy pad.
-  std::rewind(output);
-  char buffer[256]{};
-  std::string lines;
-  while (std::fgets(buffer, sizeof(buffer), output))
-    lines += buffer;
-  EXPECT_EQ(lines, "orca seats 1=none 2=none 3=none 4=none\n");
 }

@@ -34,7 +34,6 @@
 #include "Core/Orca/UX/SetEnd.h"
 #include "Core/Orca/UX/YgOrb.h"
 #include "Core/Rollback/OnlineMatch.h"
-#include "Core/Rollback/Harness.h"
 #include "Core/Rollback/ReplayStream.h"
 #include "Core/System.h"
 #include "VideoCommon/FrameDumper.h"
@@ -639,13 +638,6 @@ void Platform::ProcessEmbedCommands()
         Orca::UX::YgOrb::SetTalk(std::move(*talk));
       else
         Embed::Out("unsupported talk");
-    }
-    else if (cmd == "test-input" && Orca::GetEnv("ORCA_TEST_COMMANDS") == "1")
-    {
-      std::string path;
-      std::getline(in >> std::ws, path);
-      if (!Rollback::Harness::SetInputScriptForTest(path))
-        Embed::Out("unsupported test-input");
     }
     else if (cmd == "test-shot" && Orca::GetEnv("ORCA_TEST_COMMANDS") == "1")
     {

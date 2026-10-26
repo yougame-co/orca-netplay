@@ -1,16 +1,10 @@
 // Copyright 2026 YouGame
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <chrono>
-#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
-#include <future>
-#include <mutex>
 #include <sstream>
 #include <string>
-#include <thread>
 
 #include <gtest/gtest.h>
 
@@ -174,83 +168,6 @@ TEST(OrcaStatus, ReportsBrandOnlyTheSentence)
                                 "/Applications/Orca.app. Update YG Dolphin.\n");
 }
 
-TEST(OrcaStatus, CoSeatsCapsAreAppendOnlyAndFitLegacyReaders)
-{
-  const auto old_session = Orca::GetEnv("ORCA_SESSION");
-  const auto old_source = Orca::GetEnv("ORCA_REPLAY_SOURCE");
-  const auto old_switch = Orca::GetEnv("ORCA_COSEATS");
-  const auto old_profile = Orca::ActiveProfile() ? std::optional{*Orca::ActiveProfile()} : std::nullopt;
-  Common::ScopeGuard restore([&] {
-    SetEnv("ORCA_SESSION", old_session);
-    SetEnv("ORCA_REPLAY_SOURCE", old_source);
-    SetEnv("ORCA_COSEATS", old_switch);
-    Orca::SetActiveProfile(old_profile);
-    Orca::Status::SetAppCaps("");
-  });
-  SetEnv("ORCA_SESSION", "1");
-  const auto sys = (std::filesystem::path(__FILE__).parent_path() / "../../../../Data/Sys/").string();
-  for (const char* game : {"RSBE01", "PPLUS32", "PPLUS321"})
-  {
-    std::string error;
-    const auto profile = Orca::LoadProfileFrom(sys, game, std::nullopt, &error);
-    ASSERT_TRUE(profile) << error;
-    Orca::SetActiveProfile(profile);
-    for (const bool product : {false, true})
-    {
-      SCOPED_TRACE(std::string(game) + (product ? " product" : " session"));
-      SetEnv("ORCA_REPLAY_SOURCE", product ? "fixture-replay.orca" : "");
-      std::string before = product ?
-          "leave stats pause delay perf chat yougame gfx" :
-          "join leave stats pause delay perf direct host chat yougame gfx";
-      before += " music results locks queue2 pick-casual pick-ranked talk rumble";
-      if (product)
-      {
-        // Core always includes BroadcastSink.cpp; its private define is not a test define.
-        before += " replay broadcast";
-      }
-      before += " record hostui";
-      SetEnv("ORCA_COSEATS", "0");
-      EXPECT_EQ(Orca::Status::OfferedCaps(), before + " qdoubles rdoubles");
-      SetEnv("ORCA_COSEATS", "1");
-      const auto after = Orca::Status::OfferedCaps();
-      EXPECT_EQ(after, before + " coseats qdoubles rdoubles");
-      EXPECT_EQ(after.find("pick-doubles"), std::string::npos);
-      std::FILE* output = std::tmpfile();
-      ASSERT_NE(output, nullptr);
-      Orca::Status::SetOutput(output);
-      Orca::Status::PrintCaps();
-      std::rewind(output);
-      char buffer[1024]{};
-      ASSERT_NE(std::fgets(buffer, sizeof(buffer), output), nullptr);
-      EXPECT_EQ(std::string(buffer), "orca caps " + before + " coseats qdoubles rdoubles\n");
-      Orca::Status::SetOutput(nullptr);
-      std::fclose(output);
-      std::istringstream words(after);
-      unsigned count = 0;
-      for (std::string word; words >> word;)
-        ++count;
-      const unsigned expected = product ? 23 : 24;
-      EXPECT_EQ(count, expected);
-      EXPECT_LE(count, 24u);
-      Orca::Status::SetAppCaps("join");
-      EXPECT_FALSE(Orca::Status::Cap("coseats"));
-      EXPECT_FALSE(Orca::Status::Cap("qdoubles"));
-      EXPECT_FALSE(Orca::Status::Cap("rdoubles"));
-      Orca::Status::SetAppCaps("join coseats qdoubles rdoubles pick-doubles");
-      EXPECT_TRUE(Orca::Status::Cap("coseats"));
-      EXPECT_TRUE(Orca::Status::Cap("qdoubles"));
-      EXPECT_TRUE(Orca::Status::Cap("rdoubles"));
-      EXPECT_FALSE(Orca::Status::Cap("pick-doubles"));
-      SetEnv("ORCA_COSEATS", "0");
-      Orca::Status::SetAppCaps("join coseats qdoubles rdoubles pick-doubles");
-      EXPECT_FALSE(Orca::Status::Cap("coseats"));
-      EXPECT_TRUE(Orca::Status::Cap("qdoubles"));
-      EXPECT_TRUE(Orca::Status::Cap("rdoubles"));
-      EXPECT_FALSE(Orca::Status::Cap("pick-doubles"));
-    }
-  }
-}
-
 TEST(OrcaStatusDeathTest, ErrorsAndLegacyReportsBrandTheOutputAndListener)
 {
   // Error's first-failure state lasts for the process, so exercise each route in a fresh child.
@@ -283,73 +200,3 @@ TEST(OrcaStatusDeathTest, ErrorsAndLegacyReportsBrandTheOutputAndListener)
         ::testing::ExitedWithCode(0), "");
   }
 }
-
-#if defined(__APPLE__) || defined(__linux__)
-TEST(OrcaStatus, CapabilityReadsContinueWhileStatusOutputIsBlocked)
-{
-  // Stall inside the stream's write callback: the output thread definitely holds the status
-  // output lock, without relying on pipe capacity, scheduler ordering, or a real app.
-  struct Output
-  {
-    std::mutex mutex;
-    std::condition_variable wake;
-    bool entered = false;
-    bool released = false;
-    void Write()
-    {
-      std::unique_lock lock(mutex);
-      entered = true;
-      wake.notify_all();
-      wake.wait(lock, [&] { return released; });
-    }
-  } output;
-#ifdef __APPLE__
-  auto* stream = funopen(&output, nullptr,
-      +[](void* cookie, const char*, int size) {
-        static_cast<Output*>(cookie)->Write();
-        return size;
-      }, nullptr, nullptr);
-#else
-  cookie_io_functions_t io{};
-  io.write = +[](void* cookie, const char*, size_t size) -> ssize_t {
-    static_cast<Output*>(cookie)->Write();
-    return static_cast<ssize_t>(size);
-  };
-  auto* stream = fopencookie(&output, "w", io);
-#endif
-  ASSERT_NE(stream, nullptr);
-  std::setvbuf(stream, nullptr, _IONBF, 0);
-  const auto session = Orca::GetEnv("ORCA_SESSION");
-  SetEnv("ORCA_SESSION", "1");
-  Orca::Status::ResetOnline();
-  Orca::Status::SetAppCaps("direct");
-  Orca::Status::SetOutput(stream);
-  std::thread writer([] { Orca::Status::Shaders(1, 2); });
-  const Common::ScopeGuard restore([&] {
-    {
-      std::lock_guard lock(output.mutex);
-      output.released = true;
-    }
-    output.wake.notify_all();
-    writer.join();
-    Orca::Status::SetOutput(nullptr);
-    std::fclose(stream);
-    Orca::Status::SetAppCaps("");
-    SetEnv("ORCA_SESSION", session);
-  });
-  {
-    std::unique_lock lock(output.mutex);
-    ASSERT_TRUE(output.wake.wait_for(lock, std::chrono::seconds(5), [&] { return output.entered; }));
-  }
-  auto capability = std::async(std::launch::async, [] { return Orca::Status::Cap("direct"); });
-  const auto ready = capability.wait_for(std::chrono::milliseconds(200));
-  // Release before inspecting the assertion/future, including on the old implementation.
-  {
-    std::lock_guard lock(output.mutex);
-    output.released = true;
-  }
-  output.wake.notify_all();
-  EXPECT_EQ(ready, std::future_status::ready);
-  EXPECT_TRUE(capability.get());
-}
-#endif

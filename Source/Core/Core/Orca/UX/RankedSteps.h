@@ -174,9 +174,9 @@ constexpr u8 RULESET_BRAWL_SUPERNOVA_2025 = 1;
 constexpr u8 RULESET_PPLUS_2024 = 2;
 
 // The rulesets themselves are data: the builtin module's are Games/Brawl/Rulesets.h (Project+ 2024:
-// BF, PS2, SV, LM, ToT; counterpicks GHZ, BC, FH, DL; winner strikes 2. Brawl ranked Supernova
-// 2026: BF, LC, SV, YI, FD; counterpicks PS1, Delfino, Frigate; winner may ban 2; Meta Knight
-// clause. Brawl casual retains the Supernova 2025 list and Ice Climbers clause).
+// BF, PS2, SV, LM, ToT; counterpicks GHZ, BC, FH, DL; winner strikes 2. Brawl Supernova 2025: BF,
+// PS1, LC, SV, YI; counterpicks FD, Delfino; winner may ban 1; Meta Knight clause; Ice Climbers
+// never on FD).
 
 // What a game's steps depend on.
 struct SetView

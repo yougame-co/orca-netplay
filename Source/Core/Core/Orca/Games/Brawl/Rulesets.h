@@ -6,9 +6,8 @@
 #include "Common/CommonTypes.h"
 #include "Core/Orca/UX/RankedSteps.h"
 
-// The builtin module's rulesets, as data (Orca split S5): Rulesets/brawl-supernova-2025.json
-// (casual), brawl-supernova-2026.json (ranked) and pplus-2024.json, compiled in byte for byte
-// and read on first use through the engine's
+// The builtin module's rulesets, as data (Orca split S5): Rulesets/brawl-supernova-2025.json and
+// Rulesets/pplus-2024.json, compiled in byte for byte and read on first use through the engine's
 // checked reader (Engine/Ruleset.h), the same as any pack's ruleset will be. A file the reader
 // refuses is a build defect (OrcaRulesets.BuiltinsAreTheOldTables catches it): the ruleset is then
 // an empty one with no stages, the error is logged once, and the module plays no ruleset at all
@@ -19,8 +18,6 @@ namespace Orca::UX::Rulesets
 const Ranked::Ruleset& Brawl2025();
 // Brawl ranked: Supernova 2026 (MatchBlock ruleset 1).
 const Ranked::Ruleset& Brawl2026();
-// Brawl casual retains 2025; ranked follows 2026, including all timers and defaults.
-const Ranked::Ruleset& RulesFor(bool casual);
 // Project+ 2024 (MatchBlock ruleset 2).
 const Ranked::Ruleset& PPlus2024();
 // The builtin ruleset with MatchBlock ruleset byte `block`, or nullptr (0, or unknown).

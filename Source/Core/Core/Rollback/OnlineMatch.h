@@ -571,7 +571,6 @@ std::vector<Orca::Net::Pads> PumpSoloSeatsForTest(Core::System& system,
     const std::vector<int>& co_seats, int frames, bool fresh_tail,
     const std::function<Orca::Net::Pad(int)>& sample,
     std::vector<Orca::Events::PortInfo>* ports);
-Orca::Net::Pads PumpSoloRoomForTest(Core::System& system, Orca::Net::YouGameRoom& room);
 std::optional<Orca::Net::Pad> PumpSeenLocalPadForTest(int lead,
     const std::vector<int>& co_seats, const std::function<Orca::Net::Pad(int)>& sample);
 int PumpLeadSeatForTest(std::unique_ptr<Orca::Net::Session> session, int solo_seat);

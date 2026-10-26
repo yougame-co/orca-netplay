@@ -40,58 +40,19 @@ constexpr std::array<u8, 20> BRAWL_REV1_CONTENT_SHA1 = {0xab, 0x93, 0xef, 0x28, 
 constexpr u64 BRAWL_REV1_DOL_VERSION = 0x3DD00 + 0x11A1F;
 }  // namespace
 
-bool AliasRevision(DiscIO::VolumeDisc& volume, std::string* reason)
+bool AliasRevision(DiscIO::VolumeDisc& volume)
 {
-  if (reason)
-    reason->clear();
-  const auto refuse = [reason](std::string why) {
-    if (reason)
-      *reason = std::move(why);
+  if (volume.GetVolumeType() != DiscIO::Platform::WiiDisc)
     return false;
-  };
-  const auto platform = volume.GetVolumeType();
-  if (platform != DiscIO::Platform::WiiDisc)
-    return refuse(fmt::format("platform={}; expected WiiDisc", static_cast<int>(platform)));
   const DiscIO::Partition game = volume.GetGamePartition();
-  const auto id = volume.GetGameID(game);
-  if (id != BRAWL_USA_ID)
-    return refuse(fmt::format("GetGameID(game)={}; expected RSBE01", id));
-  const auto revision = volume.GetRevision(game);
-  if (revision != BRAWL_REV1)
-    return refuse(fmt::format("GetRevision(game)={}; expected 1",
-                             revision ? std::to_string(*revision) : "missing"));
-  const auto& tmd = volume.GetTMD(game);
-  if (!tmd.IsValid())
-    return refuse("TMD invalid/unparsed");
-  const std::vector<IOS::ES::Content> contents = tmd.GetContents();
-  if (contents.size() != 1)
-    return refuse(fmt::format("contents.size()={}; expected 1", contents.size()));
-  if (contents[0].sha1 != BRAWL_REV1_CONTENT_SHA1)
-  {
-    const auto& sha = contents[0].sha1;
-    return refuse(fmt::format("content[0] SHA-1={:02x}{:02x}{:02x}{:02x}; expected ab93ef28",
-                             sha[0], sha[1], sha[2], sha[3]));
-  }
-  const std::vector<DiscIO::VolumeDisc::ReadPatch> patches = {
-      {DiscIO::PARTITION_NONE, 7, 1, 2}, {game, 7, 1, 2}, {game, BRAWL_REV1_DOL_VERSION, 1, 2}};
-  DiscIO::VolumeDisc::ReadPatchFailure failure;
-  if (volume.SetReadPatches(patches, &failure))
-    return true;
-  if (failure.unsupported)
-    return refuse("SetReadPatches unsupported");
-  const auto& patch = patches.at(failure.index);
-  return refuse(fmt::format(
-      "SetReadPatches[{}]: partition={} offset=0x{:x} byte={}; expected 0x{:02x}", failure.index,
-      patch.partition == DiscIO::PARTITION_NONE ? "none" : fmt::format("0x{:x}", patch.partition.offset),
-      patch.offset, failure.actual ? fmt::format("0x{:02x}", *failure.actual) : "unreadable",
-      patch.original));
-}
-
-std::string DiscRevisionRefusal(std::string prefix, std::string_view reason)
-{
-  if (!reason.empty())
-    prefix += fmt::format(" ({})", reason);
-  return prefix;
+  if (volume.GetGameID(game) != BRAWL_USA_ID || volume.GetRevision(game) != BRAWL_REV1)
+    return false;
+  const std::vector<IOS::ES::Content> contents = volume.GetTMD(game).GetContents();
+  if (contents.size() != 1 || contents[0].sha1 != BRAWL_REV1_CONTENT_SHA1)
+    return false;
+  // Each byte is checked before it is patched.
+  return volume.SetReadPatches(
+      {{DiscIO::PARTITION_NONE, 7, 1, 2}, {game, 7, 1, 2}, {game, BRAWL_REV1_DOL_VERSION, 1, 2}});
 }
 
 bool SessionDiscReady(const DiscIO::VolumeDisc& volume)
@@ -112,8 +73,7 @@ DiscCheck CheckDisc(const std::string& path, std::string_view game_id)
   if (!volume)
     return refuse("That file isn't a disc image YG Dolphin can read.");
 
-  std::string alias_reason;
-  AliasRevision(*volume, &alias_reason);
+  AliasRevision(*volume);
   const DiscIO::Partition partition = volume->GetGamePartition();
   const std::string id = volume->GetGameID(partition);
   const u16 revision = volume->GetRevision(partition).value_or(0);
@@ -131,9 +91,8 @@ DiscCheck CheckDisc(const std::string& path, std::string_view game_id)
       return DiscCheck{false, "profile", BrandWords(error)};
     if (revision == BRAWL_REV1)
     {
-      return refuse(DiscRevisionRefusal(
-          "That Brawl disc is Rev 1 but not an unmodified copy of it. YG Dolphin plays "
-          "unmodified USA Rev 1 and Rev 2 discs, so both players have the same game.", alias_reason));
+      return refuse("That Brawl disc is Rev 1 but not an unmodified copy of it. YG Dolphin plays "
+                    "unmodified USA Rev 1 and Rev 2 discs, so both players have the same game.");
     }
     return refuse(
         fmt::format("That Brawl disc is revision {}; YG Dolphin plays the USA Rev 1 and Rev 2 "

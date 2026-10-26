@@ -48,8 +48,7 @@ constexpr Rect R(float x0, float y0, float x1, float y1)
 // ---- Brawl rev 2 (empty save), probed ----
 // Cursor range is x -30..30, y -19.5..19.5 (the game clamps to it). Rectangles come from sweeping
 // the game's cursor in 0.5 steps and recording which stage it hovers, padded by a quarter unit.
-// Stable casual Supernova 2025 indices: BF, PS1, LC, SV, YI, FD, Delfino.
-// Ranked Supernova 2026 uses the same indices and adds Frigate in kBrawlRankedTiles below.
+// Stage indices are the Brawl ruleset's (Rulesets/brawl-supernova-2025.json): BF, PS1, LC, SV, YI, FD, Delfino.
 constexpr std::array<Tile, 7> kBrawlTiles{{
     {0, 0, R(-4.75f, 13.25f, 1.25f, 19.25f)},  // Battlefield, page 0 slot 0 (item 0x02)
     {1, 1, R(18.25f, -12.75f, 26.25f, -4.75f)},  // Pokemon Stadium, Melee page slot 9 (0x0B)

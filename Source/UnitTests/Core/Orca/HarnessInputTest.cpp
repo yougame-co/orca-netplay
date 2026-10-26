@@ -12,7 +12,6 @@
 
 #include "Common/FileUtil.h"
 #include "Common/IOFile.h"
-#include "Common/ScopeGuard.h"
 #include "Core/Core.h"
 #include "Core/Orca/BootThrottle.h"
 #include "Core/Orca/Session/Online.h"
@@ -155,35 +154,4 @@ TEST_F(OrcaHarnessInput, OnlineScriptUsesSessionPacingAndDelayedLocalInput)
 TEST_F(OrcaHarnessInput, OfflineScriptKeepsUnthrottledPacing)
 {
   ASSERT_EXIT(ScriptedRun(false), testing::ExitedWithCode(0), "");
-}
-
-TEST_F(OrcaHarnessInput, StdinScriptKeepsBothLocalPortsIndependent)
-{
-  const char* commands_env = std::getenv("ORCA_TEST_COMMANDS");
-  const char* dev_env = std::getenv("ORCA_TEST_DEV_GAME");
-  const std::string commands = commands_env ? commands_env : "";
-  const std::string dev = dev_env ? dev_env : "";
-  const auto directory = File::CreateTempDir();
-  const std::string script = directory + "/co-input.txt";
-  Common::ScopeGuard restore([&] {
-    SetEnv("ORCA_TEST_COMMANDS", "1");
-    Rollback::Harness::SetInputScriptForTest("");
-    SetEnv("ORCA_TEST_COMMANDS", commands.c_str());
-    SetEnv("ORCA_TEST_DEV_GAME", dev.c_str());
-    File::DeleteDirRecursively(directory);
-  });
-  ASSERT_TRUE(File::WriteStringToFile(script, "0 999999 1 A SX=200\n0 999999 3 B SY=20\n"));
-  SetEnv("ORCA_TEST_DEV_GAME", "co-input");
-  SetEnv("ORCA_TEST_COMMANDS", "0");
-  EXPECT_FALSE(Rollback::Harness::SetInputScriptForTest(script));
-  SetEnv("ORCA_TEST_COMMANDS", "1");
-  ASSERT_TRUE(Rollback::Harness::SetInputScriptForTest(script));
-  const auto first = Rollback::Harness::InputOverride(0);
-  const auto second = Rollback::Harness::InputOverride(2);
-  ASSERT_TRUE(first);
-  ASSERT_TRUE(second);
-  EXPECT_EQ(first->button, PAD_BUTTON_A);
-  EXPECT_EQ(first->stickX, 200);
-  EXPECT_EQ(second->button, PAD_BUTTON_B);
-  EXPECT_EQ(second->stickY, 20);
 }

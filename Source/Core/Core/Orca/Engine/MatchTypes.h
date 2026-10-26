@@ -24,7 +24,7 @@ enum class Mode : u8
 enum class Ruleset : u8
 {
   None = 0,
-  Brawl = 1,  // Ranked Supernova 2026; casual Supernova 2025; 3 stocks, 8:00
+  Brawl = 1,  // Supernova 2025: 3 stocks, 8:00, BF PS1 LC SV YI + FD DP
   PPlus = 2,  // Project+ 2024 recommended procedure and proposed stage list
 };
 
@@ -67,15 +67,12 @@ struct GameResult
   int winner_port = -1;
   // Void: why ("nocontest", "ports", or a game's own, such as Brawl's "rules-<rule>").
   std::string why;
-  // Win and Draw: first results-scene frame, stage, each port's characters and stocks left
+  // Win and Draw: first results-scene frame, stage, ports 1 and 2's characters and stocks left
   // (-1 timed), and whether time ran out.
   int frame = -1;
   int stage = -1;
-  std::array<int, 4> characters{-1, -1, -1, -1};
-  std::array<int, 4> stocks{-1, -1, -1, -1};
-  // Native doubles results name the whole winning pair; zero for singles or no winning team.
-  unsigned winning_ports = 0;
-  int players = 2;
+  std::array<int, 2> characters{-1, -1};
+  std::array<int, 2> stocks{-1, -1};
   bool timeout = false;
   // The fight's first frame (the report id, same on both machines), including scene-judged games.
   int start = -1;
@@ -91,8 +88,7 @@ struct GameResult
   int set_winner = -1;
   bool operator==(const GameResult&) const = default;
 
-  // {"f":F,"st":S,"c":[c1,c2],"s":[s1,s2],"to":0|1}: integers only, port order, this key order.
-  // A native four-seat result has four characters/stocks and no two-port SetBlock fields. A
+  // {"f":F,"st":S,"c":[c1,c2],"s":[s1,s2],"to":0|1}: integers only, port order, this key order. A
   // ranked set game adds "k":how,"lg":[l1,l2],"tb":0|1 (F is then the fight's first frame).
   std::string DetailJson() const;
 };

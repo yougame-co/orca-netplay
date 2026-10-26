@@ -4,7 +4,6 @@
 #pragma once
 
 #include <array>
-#include <cstddef>
 #include <optional>
 #include <string>
 #include <vector>
@@ -50,20 +49,9 @@ public:
     u8 original = 0;
     u8 value = 0;
   };
-  struct ReadPatchFailure
-  {
-    std::size_t index = 0;
-    std::optional<u8> actual;
-    bool unsupported = false;
-  };
   // Patches every later read, if each byte holds its original. False, with nothing patched, if one
   // doesn't or this kind of volume can't patch reads.
-  virtual bool SetReadPatches(std::vector<ReadPatch> patches, ReadPatchFailure* failure = nullptr)
-  {
-    if (failure)
-      failure->unsupported = true;
-    return false;
-  }
+  virtual bool SetReadPatches(std::vector<ReadPatch> patches) { return false; }
 
   std::string GetGameID(const Partition& partition = PARTITION_NONE) const override;
   Country GetCountry(const Partition& partition = PARTITION_NONE) const override;

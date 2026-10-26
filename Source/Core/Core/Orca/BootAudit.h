@@ -13,7 +13,6 @@
 #include <string>
 #include <string_view>
 #include <thread>
-#include <utility>
 #include <vector>
 
 #include "Common/CommonTypes.h"
@@ -31,7 +30,7 @@ struct Identity
   bool operator==(const Identity&) const = default;
 };
 
-std::optional<Identity> Identify(const std::string& path, std::string* reason = nullptr);
+std::optional<Identity> Identify(const std::string& path);
 
 struct CacheRecord
 {
@@ -46,7 +45,6 @@ struct FileToVerify
   std::string path;
   std::string expected;
   std::string refusal;
-  std::optional<u64> expected_size;
 };
 
 // A cache hit permits offline boot only. Every start hashes every file on this worker, including
@@ -54,17 +52,7 @@ struct FileToVerify
 class Audit final
 {
 public:
-  struct HashResult
-  {
-    std::string hash;
-    std::string reason;
-    HashResult(std::string value, std::string why = {})
-        : hash(std::move(value)), reason(std::move(why))
-    {
-    }
-    HashResult(const char* value) : hash(value) {}
-  };
-  using Hasher = std::function<HashResult(const std::string&, const std::atomic<bool>&)>;
+  using Hasher = std::function<std::string(const std::string&, const std::atomic<bool>&)>;
   static std::shared_ptr<Audit> Start(std::vector<FileToVerify> files, std::string cache_dir,
                                      Hasher hasher = {});
   ~Audit();
@@ -84,7 +72,6 @@ private:
   void Complete(bool passed, std::string error = {}, std::optional<std::size_t> failed = {});
   std::vector<FileToVerify> m_files;
   std::vector<std::optional<Identity>> m_identities;
-  std::vector<std::string> m_identity_errors;
   std::vector<std::string> m_records;
   Hasher m_hasher;
   std::atomic<bool> m_stop{false};

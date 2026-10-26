@@ -81,13 +81,11 @@ struct Profile
   // boots a loader executable with exactly this XXH3-128 hash (32 hex digits), and the loader boots
   // the disc named by `disc` and `revision` from the DVD drive.
   std::string launcher_hash;
-  std::optional<u64> launcher_size;
   std::string disc;
   // The SD card image the loader reads its files from, next to the loader, and its XXH3-128 hash. A
   // session opens it read-only.
   std::string sd_image;
   std::string sd_image_hash;
-  std::optional<u64> sd_image_size;
   // Set at boot: the image's full path, which the session forces as the read-only SD card path.
   // A legacy launcher's audit must pass before going online. The key uses the expected hash.
   std::string sd_image_path;
@@ -259,8 +257,7 @@ std::string LauncherProfileName();
 
 // XXH3-128 of a file as 32 lowercase hex digits; empty on a read failure or cancellation.
 // Cancellation is checked before each 8 MiB read and before returning the digest.
-std::string HashFile(const std::string& path, const std::atomic<bool>* stop = nullptr,
-                     std::string* reason = nullptr);
+std::string HashFile(const std::string& path, const std::atomic<bool>* stop = nullptr);
 
 // Why DiscIO::CreateDisc gave nothing for `disc_path`, as the end of an error line: no path, a file
 // that won't open or read (with the system's own reason), one cut short, or one that isn't a disc
@@ -302,9 +299,9 @@ u64 HashSessionSave(u64 title_id);
 void SetSeedSaveHash(u64 hash);
 u64 GetSeedSaveHash();
 
-// Whether a session copies the title's save from the configured NAND into the session NAND.
-// Mod sessions never do: bundles currently have no NAND save import contract. Legacy sessions
-// keep the default (on); Orca.app turns it off so the game creates its save in-session.
+// Whether a session copies the title's save from the configured NAND into the session NAND (on by
+// default). Orca.app turns it off, so every app session starts from an empty NAND (save hash 0) and
+// the game creates its save in-session on both machines.
 void SetSeedSessionSave(bool seed);
 bool SeedSessionSave();
 

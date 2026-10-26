@@ -60,7 +60,7 @@ public:
   VolumeWii(std::unique_ptr<BlobReader> reader);
   ~VolumeWii() override;
   bool Read(u64 offset, u64 length, u8* buffer, const Partition& partition) const override;
-  bool SetReadPatches(std::vector<ReadPatch> patches, ReadPatchFailure* failure = nullptr) override;
+  bool SetReadPatches(std::vector<ReadPatch> patches) override;
   // Writes the patches of `partition` that fall in [offset, offset + length) into `buffer`.
   static void ApplyReadPatches(const std::vector<ReadPatch>& patches, u64 offset, u64 length,
                                u8* buffer, const Partition& partition);

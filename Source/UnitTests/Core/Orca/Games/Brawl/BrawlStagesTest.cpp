@@ -626,7 +626,7 @@ TEST_F(OrcaBrawlStages, ATakenStageTheStepsDontAllowIsReplaced)
   Push(m, 1, Y);
   RS::SetView view = ReadState(m)->set;
   view.characters = {0, 2};
-  const RS::Plan plan = RS::PlanGame(*Rulesets::ByBlock(1), view);
+  const RS::Plan plan = RS::PlanGame(Rulesets::Brawl2025(), view);
   ASSERT_NE(RS::Current(plan, ReadState(m)->progress), nullptr);
   ASSERT_EQ(RS::Current(plan, ReadState(m)->progress)->kind, RS::StepKind::Pick);
   // The game's cursor rests on Delfino, then A lands on Final Destination (port 1 won there: DSR).
@@ -1366,9 +1366,7 @@ TEST(OrcaStageCursors, EdgesAreSeenOnceAndTilesAreTheLayouts)
   s.cursors[0].now = StageCursors::BTN_A | StageCursors::BTN_B;
   EXPECT_EQ(StageCursors::TakePresses(&s, 0), StageCursors::BTN_B);
   // Every legal stage has a tile in each game, no two overlap, and each tile's middle reads it.
-  for (const StageCursors::Layout* l : {&StageCursors::BrawlLayout(),
-                                       &StageCursors::BrawlRankedLayout(),
-                                       &StageCursors::PPlusLayout()})
+  for (const StageCursors::Layout* l : {&StageCursors::BrawlLayout(), &StageCursors::PPlusLayout()})
   {
     for (const StageCursors::Tile& t : l->tiles)
     {
@@ -1388,13 +1386,10 @@ TEST(OrcaStageCursors, EdgesAreSeenOnceAndTilesAreTheLayouts)
     }
   }
   EXPECT_EQ(StageCursors::BrawlLayout().tiles.size(), 7u);
-  EXPECT_EQ(StageCursors::BrawlRankedLayout().tiles.size(), 8u);
   EXPECT_EQ(StageCursors::PPlusLayout().tiles.size(), 9u);
   // Each game's Random button: on every page, inside the cursor's reach, clear of the tiles and the
   // page button.
-  for (const StageCursors::Layout* l : {&StageCursors::BrawlLayout(),
-                                       &StageCursors::BrawlRankedLayout(),
-                                       &StageCursors::PPlusLayout()})
+  for (const StageCursors::Layout* l : {&StageCursors::BrawlLayout(), &StageCursors::PPlusLayout()})
   {
     const StageCursors::Rect& r = l->random_button;
     ASSERT_LT(r.x0, r.x1);
@@ -1413,9 +1408,7 @@ TEST(OrcaStageCursors, EdgesAreSeenOnceAndTilesAreTheLayouts)
   }
   // Every cursor starts on nothing on every page (no tile, Random or page button), inside the
   // cursor's reach: an A mashed into the stage select names nothing.
-  for (const StageCursors::Layout* l : {&StageCursors::BrawlLayout(),
-                                       &StageCursors::BrawlRankedLayout(),
-                                       &StageCursors::PPlusLayout()})
+  for (const StageCursors::Layout* l : {&StageCursors::BrawlLayout(), &StageCursors::PPlusLayout()})
   {
     for (const StageCursors::Point& p : l->start)
     {

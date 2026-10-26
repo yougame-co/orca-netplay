@@ -34,10 +34,7 @@ DiscCheck CheckDisc(const std::string& path, std::string_view game_id);
 // the console reads from the disc: patches those reads (VolumeDisc::SetReadPatches) so the disc
 // reads as the profile's revision and both players' consoles run the same game. True if `volume`
 // is such a dump and now reads as that revision. Sessions call it on every disc they boot.
-// On failure, reason names the first failed check and its observed value.
-bool AliasRevision(DiscIO::VolumeDisc& volume, std::string* reason = nullptr);
-// Preserve a refusal sentence and append the alias failure in parentheses.
-std::string DiscRevisionRefusal(std::string prefix, std::string_view reason);
+bool AliasRevision(DiscIO::VolumeDisc& volume);
 
 // False if `volume` is Brawl (USA) but doesn't read as Rev 2, the revision every Brawl profile
 // plays: AliasRevision didn't apply (e.g. a read failed). For a disc whose check read another

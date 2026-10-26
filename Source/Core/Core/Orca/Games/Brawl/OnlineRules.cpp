@@ -717,8 +717,8 @@ int ApplyLocks(GuestMemory& m, int frame)
     return 0;
   // A locked header names a builtin ruleset (ReadHeader); none only in a build whose ruleset files
   // don't load (OrcaRulesets.BuiltinsAreTheOldTables), which then applies no locks.
-  const Ranked::Ruleset* rules = h.ruleset == Ruleset::Brawl ?
-                                     &Rulesets::RulesFor(h.mode == Mode::Casual) :
+  const Ranked::Ruleset* rules = h.ruleset == Ruleset::Brawl && h.mode == Mode::Casual ?
+                                     &Rulesets::Brawl2025() :
                                      Rulesets::ByBlock(static_cast<u8>(h.ruleset));
   if (!rules)
     return 0;

@@ -709,20 +709,13 @@ std::optional<GCPadStatus> LocalPad(int ordinal, bool for_frame)
   const auto choice = Choose(ordinal, for_frame);
   if (for_frame)
   {
-    const bool multiple = s_local_count.load(std::memory_order_relaxed) > 1;
-    bool changed = false;
-    for (int index = 0; index < (multiple ? MAX_LOCAL : 1); ++index)
-    {
-      const auto selected = index == ordinal ? choice : Choose(index, false);
-      const int device = selected ? PackDevice(selected->source, selected->index) : NO_DEVICE;
-      const int previous = s_local_devices[index].exchange(device, std::memory_order_relaxed);
-      const bool known = s_assignment_known[index].exchange(true, std::memory_order_relaxed);
-      changed |= !known || previous != device;
-    }
-    if (multiple && changed)
+    const int device = choice ? PackDevice(choice->source, choice->index) : NO_DEVICE;
+    const int previous = s_local_devices[ordinal].exchange(device, std::memory_order_relaxed);
+    const bool known = s_assignment_known[ordinal].exchange(true, std::memory_order_relaxed);
+    if (s_local_count.load(std::memory_order_relaxed) > 1 && (!known || previous != device))
     {
       std::string line = "orca seats";
-      for (int index = 0; index < Net::MAX_SEATS; ++index)
+      for (int index = 0; index < MAX_LOCAL; ++index)
       {
         const auto selected = LastLocalDevice(index);
         line += fmt::format(" {}={}", index + 1, selected ?

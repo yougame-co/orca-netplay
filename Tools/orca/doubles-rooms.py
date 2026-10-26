@@ -80,55 +80,6 @@ def role_values(values):
     return result
 
 
-def local_counts(values):
-    counts = role_values(value for value in values if value != "server")
-    if any(count != "2" for count in counts.values()):
-        raise ValueError("--local needs ROLE=2 (at most two local players)")
-    return {int(role): 2 for role in counts}
-
-
-def role_caps(role, local, queue_mode):
-    return ("caps join leave stats" + (" coseats" if role in local else "") +
-            (" host results locks" if queue_mode else "") + "\n")
-
-
-def room_assignment(text, room, named):
-    return re.search(rf"in room {re.escape(room)} on seat (\d+)" if named else r"on seat (\d+)", text)
-
-
-class FixturePage:
-    """The local page's bridge: tickets and an explicit one-time Add request."""
-    def __init__(self, site, role, add):
-        self.site, self.role, self.add = site, role, add
-        self.requested = False
-
-    def receive(self, line):
-        if not line.startswith("yg "):
-            return []
-        request = json.loads(line[3:])
-        kind = request.get("type")
-        if kind not in {"hello", "mpTicket", "mpRoom"} or "id" not in request:
-            return []
-        result = {}
-        if kind == "mpTicket":
-            body = {key: value for key, value in request.items() if key not in {"id", "type"}}
-            body.update(dev="orca-doubles-test", player_id=f"Doubles{self.role}",
-                        name=f"Doubles{self.role}")
-            result = post_fixture(self.site, "/api/multiplayer/ticket", body)
-        messages = ["yg " + json.dumps({"re": request["id"], "ok": True, "result": result}) + "\n"]
-        mine = [p for p in request.get("participants", []) if p.get("connectionId") == request.get("me")]
-        if (kind == "mpRoom" and self.add and not self.requested and len(mine) == 1 and
-                request.get("lobby", {}).get("maxLocalPlayers") == 2):
-            self.requested = True
-            messages.append("yg " + json.dumps({"push": {"slug": "doubles-fixture", "cmd": "local-add"}}) + "\n")
-        return messages
-
-
-def file_argument(value):
-    # Preserve PATH executable names; pin real relative files before the isolated child chdir.
-    return str(Path(value).resolve()) if Path(value).is_file() else value
-
-
 def isolated_host(host):
     if host == "localhost":
         return True
@@ -197,13 +148,11 @@ class Rooms:
         self.version_events = []
         self.lock = threading.RLock()
         self.members = {}
-        self.locals = {}  # (room, connection) -> {participant id: slot}; no extra socket.
         self.sockets = {}
         self.joined = set()
         self.offers = []
         self.captures = {}
         self.hashes = {}
-        self.activity = {}
         self.frames = {}
         self.reports = {}
         self.expired = set()
@@ -236,7 +185,6 @@ class Rooms:
                 if old:
                     old[0].shutdown(socket.SHUT_RDWR)
                 self.members.pop((room, player), None)
-                self.locals.pop((room, player), None)
                 self.joined.discard((room, player))
                 self.away.discard((room, player))
                 self.lobbies.pop(room)
@@ -251,32 +199,10 @@ class Rooms:
             self.lobbies[room] = ticket.copy()
         key = (room, player)
         if key not in self.members:
-            used = self.used_slots(room)
+            used = {seat for (code, _), seat in self.members.items() if code == room}
             if len(used) == (2 if self.mode(room) else 4):
                 return {}, 409
             self.members[key] = min(set(range(2 if self.mode(room) else 4)) - used)
-        return None
-
-    def used_slots(self, room):
-        return ({seat for (code, _), seat in self.members.items() if code == room} |
-                {seat for (code, _), seats in self.locals.items() if code == room
-                 for seat in seats.values()})
-
-    def local_command(self, room, player, message):
-        if self.mode(room):
-            return "queue"
-        if not self.doubles:
-            return "not-doubles"
-        seats = self.locals.setdefault((room, player), {})
-        if message["t"] == "local-remove":
-            if message.get("id") not in seats:
-                return "in-match"
-            del seats[message["id"]]
-        else:
-            free = set(range(4)) - self.used_slots(room)
-            if seats or not free:
-                return "in-match"
-            seats[f"local:{player}:1"] = min(free)
         return None
 
     def blackout(self, room, player):
@@ -293,7 +219,6 @@ class Rooms:
         with self.lock:
             self.expired.add((room, player))
             self.members.pop((room, player), None)
-            self.locals.pop((room, player), None)
             connection = self.sockets.pop((room, player), None)
             if connection:
                 connection[0].shutdown(socket.SHUT_RDWR)
@@ -432,10 +357,6 @@ class Rooms:
         reports = {name: value for (code, name), value in self.reports.items() if code == room}
         hashes = {name: value for (code, name), value in self.hashes.items() if code == room}
         return {"active": active, "reports": reports,
-                "local_seats": {name: list(seats.values()) for (code, name), seats in self.locals.items()
-                                if code == room},
-                "input_activity": {name: sorted(seats) for (code, name), seats in self.activity.items()
-                                   if code == room},
                 "offers": list(self.offers), "version_events": list(self.version_events),
                 "commands": list(self.commands), "drops": list(self.drops),
                 "lost_receipts": list(self.lost_receipts),
@@ -448,14 +369,6 @@ class Rooms:
             if packet.get("k") == "p":
                 key = (room, player)
                 self.frames[key] = max(self.frames.get(key, 0), packet.get("c", 0))
-                inputs = [(packet.get("s", -1), packet.get("p", "")), *packet.get("co", [])]
-                for slot, pads in inputs:
-                    if not isinstance(slot, int) or slot < 0 or slot >= 4:
-                        continue
-                    samples = [bytes.fromhex(pads[index:index + 16])
-                               for index in range(0, len(pads), 16)]
-                    if any(len(pad) == 8 and not pad[0] & 0x80 and any(pad) for pad in samples):
-                        self.activity.setdefault(key, set()).add(slot)
             if packet.get("k") == "p" and "x" in packet and "h" in packet:
                 self.hashes.setdefault((room, player), {})[str(packet["x"])] = packet["h"]
 
@@ -469,11 +382,6 @@ class Rooms:
                             for _, name in members],
                 "participants": [{"id": name, "connectionId": name, "slot": seat, "name": name}
                                  for seat, name in members]}
-        for _, name in members:
-            for participant, slot in self.locals.get((room, name), {}).items():
-                result["participants"].append({"id": participant, "connectionId": name,
-                    "localIndex": 1, "slot": slot, "name": name + " · Player 2"})
-        result["participants"].sort(key=lambda participant: participant["slot"])
         if self.mode(room) and self.recovery and kind == "welcome":
             result["room"]["recovery"] = True
         if self.mode(room) and self.recovery and self.hold_ms is not None:
@@ -601,7 +509,7 @@ class Handler(BaseHTTPRequestHandler):
             if key in self.server.rooms.expired:
                 return self.reply({"error": "room-hold-expired"}, 409)
             if key not in members and not self.server.rooms.version_refusals:
-                used = self.server.rooms.used_slots(room)
+                used = {seat for (code, _), seat in members.items() if code == room}
                 size = 2 if self.server.rooms.mode(room) else 4
                 if len(used) == size:
                     return self.reply({}, 409)
@@ -696,17 +604,8 @@ class Handler(BaseHTTPRequestHandler):
                             rooms.broadcast(room, player, outgoing)
                     elif rooms.mode(room) and message.get("t") in {"begin", "game-start", "game-report", "finish"}:
                         rooms.match_command(room, player, message)
-                    elif message.get("t") in {"local-add", "local-remove"}:
-                        error = rooms.local_command(room, player, message)
-                        if error:
-                            rooms.send(connection, {"t": "command-error", "action": message["t"], "error": error})
-                        else:
-                            for (code, name), other in list(rooms.sockets.items()):
-                                if code == room:
-                                    rooms.send(other, rooms.roster(room, name, "lobby", player))
                     elif message.get("t") == "leave":
                         rooms.members.pop((room, player), None)
-                        rooms.locals.pop((room, player), None)
                         for (code, name), other in list(rooms.sockets.items()):
                             if code == room and name != player:
                                 rooms.send(other, rooms.roster(room, name, "leave", player))
@@ -1237,30 +1136,12 @@ def verify_queue_run(args, work, diagnostics, errors):
 
 
 def run(args):
-    # Preserve callers of this runner that predate the optional queue/version fields.
-    for name, default in {"role_binary": [], "expect_version_refusal": [], "queue": None,
-                          "expect_queue_ending": None, "expect_report_replay": False,
-                          "expect_ranked_reconciliation": False, "expect_fight": [],
-                          "local": [], "scratch": None, "friend_from_queue": None}.items():
-        if not hasattr(args, name):
-            setattr(args, name, default)
     address = urllib.parse.urlsplit(args.site)
     if address.scheme != "http" or not isolated_host(address.hostname) or address.username or address.password:
         raise ValueError("--site must be a loopback or isolated LAN dev fixture")
     if args.hold_expiry and args.seconds < 120:
         raise ValueError("--hold-expiry needs at least 120 seconds for the 90-second hold")
     roles = [int(role) for role in args.roles.split(",")]
-    local = local_counts(args.local if isinstance(args.local, list) else [])
-    if args.friend_from_queue is not None and (args.friend_from_queue not in roles or args.queue or local):
-        raise ValueError("--friend-from-queue needs a single-seat friends joiner in this run")
-    if (args.queue or getattr(args, "ordinary", False)) and local:
-        raise ValueError("local players require friends doubles")
-    if not set(local) <= set(roles) or sum(local.get(role, 1) for role in roles) > 4:
-        raise ValueError("local players must belong to this run and fit its four seats")
-    if local and len(roles) > 3:
-        raise ValueError("co-seat runs use at most three headless instances")
-    ports_by_role = {role: role + 1 + sum(count - 1 for owner, count in local.items() if owner < role)
-                     for role in roles}
     if len(set(roles)) != len(roles) or not set(roles) <= set(range(4)):
         raise ValueError("roles must be distinct values from 0..3")
     binaries = role_values(args.role_binary)
@@ -1312,10 +1193,7 @@ def run(args):
                                "ORCA_ROOM": args.room, "ORCA_JOIN": "0" if role == 0 else "1",
                                "ORCA_TEST_PLAYER": f"Doubles{role}", "ORCA_NAME": f"Doubles{role}",
                                "ORCA_DIRECT": "1", "ORCA_DIRECT_LOOPBACK": "1", "ORCA_DIRECT_STUN": "0"}
-                if role in local:
-                    environment["YOUGAME_STDIO"] = "1"
-                    environment["YOUGAME_GAME"] = "doubles-fixture"
-                if args.queue or role == args.friend_from_queue:
+                if args.queue:
                     # Public matchmaking is entered by host/join from the game's own lobby.
                     # ORCA_ROOM's startup shortcut intentionally does not arm the queue header.
                     environment["ORCA_ROOM"] = f"qhome{role}"
@@ -1339,7 +1217,7 @@ def run(args):
                 if args.probe:
                     environment["ORCA_UX_PROBE"] = str(Path(args.probe).resolve())
                 input_path = role_inputs.get(str(role), args.input)
-                if input_path and not local:
+                if input_path:
                     environment["YG_INPUT"] = str(Path(input_path).resolve())
                 if args.profile or args.pplus:
                     environment["ORCA_PROFILE"] = "PPLUS32" if args.pplus else args.profile
@@ -1349,38 +1227,26 @@ def run(args):
                 stderr = open(Path(work) / f"peer-{role}.log", "w")
                 binary = binaries.get(str(role), args.binary)
                 print(f"peer {role} binary: {binary}", flush=True)
-                command = [file_argument(binary), "-p", "headless", "-u", str(user), "-v", "Null",
+                command = [binary, "-p", "headless", "-u", str(user), "-v", "Null",
                            "-C", "Dolphin.DSP.Backend=No Audio Output",
                            "-C", "Dolphin.Input.BackgroundInput=True", "-C", "Logger.Logs.ROLLBACK=True",
                            "-C", "Logger.Logs.NETPLAY=True", "-C", "Logger.Options.Verbosity=3"]
                 if args.pplus:
-                    command += ["-C", f"Dolphin.Core.DefaultISO={file_argument(args.disc)}", "-e", file_argument(args.pplus)]
+                    command += ["-C", f"Dolphin.Core.DefaultISO={args.disc}", "-e", args.pplus]
                 else:
-                    command += ["-e", file_argument(args.disc)]
-                process = subprocess.Popen(command, env=environment, cwd=user, stdin=subprocess.PIPE,
+                    command += ["-e", args.disc]
+                process = subprocess.Popen(command, env=environment, stdin=subprocess.PIPE,
                                            stdout=subprocess.PIPE, stderr=stderr, text=True, bufsize=1)
                 lines = queue.Queue()
-                page = FixturePage(args.site, role, role in local)
-                def read_output(proc=process, output=lines, role_number=role, page=page):
+                def read_output(proc=process, output=lines, role_number=role):
                     with open(Path(work) / f"peer-{role_number}.stdout.log", "w") as log:
                         for line in proc.stdout:
                             log.write(line)
                             log.flush()
                             output.put(line.rstrip())
-                            if role_number in local:
-                                replies = page.receive(line)
-                                if replies:
-                                    proc.stdin.write("".join(replies))
-                                    proc.stdin.flush()
                 threading.Thread(target=read_output, daemon=True).start()
                 players.append((role, process, stderr, lines))
-                caps = role_caps(role, local, args.queue)
-                if role == args.friend_from_queue:
-                    caps = caps.rstrip() + " host queue2 pick-casual\n"
-                process.stdin.write(caps)
-                if input_path and local:
-                    # One script may contain independent rules for both of this role's ports.
-                    process.stdin.write("test-input " + str(Path(input_path).resolve()) + "\n")
+                process.stdin.write("caps join leave stats" + (" host results locks" if args.queue else "") + "\n")
                 process.stdin.flush()
                 # Tickets assign seats in arrival order. Wait for every role, since a slow
                 # ticket for role 1 must not let role 2 claim its port and invalidate pad scripts.
@@ -1397,24 +1263,11 @@ def run(args):
                         process.stdin.write(f"{'host' if role == 0 else 'join'} {args.room}\n")
                         process.stdin.flush()
                         queue_commanded = True
-                    if (role == args.friend_from_queue and not queue_commanded and
-                            "Online menu: exit code 30: orca menu online casual" in text and
-                            re.search(r"Scene frame .* -> scSelctCharacter", text)):
-                        process.stdin.write(f"join {args.room}\n")
-                        process.stdin.flush()
-                        queue_commanded = True
-                        print(f"peer {role}: joining friend from the casual queue select", flush=True)
-                    assignment = room_assignment(text, args.room,
-                                                 args.queue or role == args.friend_from_queue)
+                    assignment = re.search((rf"in room {re.escape(args.room)} on seat (\d+)" if args.queue
+                                            else r"on seat (\d+)"), text)
                     if assignment:
-                        if int(assignment[1]) != ports_by_role[role]:
+                        if int(assignment[1]) != role + 1:
                             raise RuntimeError(f"peer {role} owns unexpected seat {assignment[1]}")
-                        if role in local:
-                            with urllib.request.urlopen(args.site + "/diagnostics/" + args.room, timeout=3) as response:
-                                roster = json.load(response)
-                            if len(roster.get("local_seats", {}).get(f"Doubles{role}", [])) != 1:
-                                time.sleep(0.1)
-                                continue
                         break
                     if process.poll() is not None:
                         raise RuntimeError(f"peer {role} exited before owning its room seat")
@@ -1534,8 +1387,8 @@ def run(args):
                     continue
                 if role:
                     text = (Path(work) / f"peer-{role}.log").read_text()
-                    assignment = room_assignment(text, args.room,
-                                                 args.queue or role == args.friend_from_queue)
+                    assignment = re.search((rf"in room {re.escape(args.room)} on seat (\d+)" if args.queue
+                                            else r"on seat (\d+)"), text)
                     match = re.search(r"plugged into port (\d+) at frame (\d+)", text)
                     if (not assignment or not match or int(match[1]) not in (2, 3, 4) or
                             match[1] != assignment[1]):
@@ -1561,13 +1414,6 @@ def run(args):
             if refused:
                 diagnostics["active"] = [name for name in diagnostics["active"]
                                          if name not in {f"Doubles{role}" for role in refused}]
-            for role in local:
-                if not role_inputs.get(str(role), args.input):
-                    continue
-                name = f"Doubles{role}"
-                expected_ports = {ports_by_role[role] - 1, *diagnostics["local_seats"].get(name, [])}
-                if not expected_ports <= set(diagnostics["input_activity"].get(name, [])):
-                    raise RuntimeError(f"peer {role} did not drive both scripted local ports")
             if args.queue:
                 verify_queue_run(args, work, diagnostics, queue_errors)
             if args.expect_queue_ending or args.expect_report_replay or args.expect_ranked_reconciliation:
@@ -1582,9 +1428,7 @@ def run(args):
             else:
                 final_frame = verify_diagnostics(diagnostics, expected=args.expected)
             verify_gameplay(work, args.expect_fight)
-            samples = [diagnostics["hashes"].get(name, {}) for name in diagnostics["active"]]
-            common = set.intersection(*(set(sample) for sample in samples)) if samples else set()
-            print(f"PASS: all machines agree on plug {frames}, {len(common)} common confirmed hashes through frame {final_frame}; "
+            print(f"PASS: all machines agree on plug {frames}, confirmed hashes through frame {final_frame}; "
                   f"0 desyncs; {len(args.expect_fight)} requested fights returned to CSS")
         finally:
             if args.keep_logs:
@@ -1664,16 +1508,13 @@ def main():
     parser.add_argument("--expect-queue-ending", choices=("network", "forfeit"),
                         help="verify legacy network ending or the fixture's ranked forfeit after a 90 s hold")
     parser.add_argument("--scratch", help="directory for isolated temporary users/logs")
-    parser.add_argument("--friend-from-queue", type=int, choices=range(1, 4),
-                        help="join the friend's room only after this role reaches the casual queue select")
     parser.add_argument("--defer-role", action="append", default=[], type=int, choices=range(4))
     parser.add_argument("--refused-role", action="append", default=[], type=int, choices=range(1, 4),
                         help="require room_full for only this newcomer, which must never plug in")
     parser.add_argument("--expected", type=int, default=4, choices=(2, 3, 4))
     parser.add_argument("--doubles", action="store_true", help="accepted for dropin-rooms compatibility")
     parser.add_argument("--ordinary", action="store_true", help="serve an ordinary friends room")
-    parser.add_argument("--local", nargs="?", const="server", action="append", default=[], metavar="ROLE=2",
-                        help="own a loopback server; optionally add and script a role's second local seat")
+    parser.add_argument("--local", action="store_true", help="own a loopback server for this run")
     game = parser.add_mutually_exclusive_group()
     game.add_argument("--profile", help="launcher profile, e.g. PPLUS32")
     game.add_argument("--pplus", help="legacy P+ launcher DOL with sd.raw beside it; --disc is Brawl")
@@ -1688,8 +1529,6 @@ def main():
     if any(not clean_version(version) for version in versions.values()):
         parser.error("--role-version needs X.Y.Z versions")
     if args.queue:
-        if local_counts(args.local):
-            parser.error("--local ROLE=2 requires friends doubles")
         if args.roles not in {"0,1", "0,1,2,3"}:
             parser.error("--queue runs exactly roles 0,1")
         args.roles = "0,1"

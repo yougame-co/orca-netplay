@@ -2835,48 +2835,9 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
-### 0.3.91
+### 0.3.92
 
-- Online: ranked doubles. Four players on four computers, two teams, rated per player and per pair; a team that leaves mid-set loses it. The room's host picks Team battle and the colours.
-- Ranked: the connection check before game 1 answers every check it receives, even when the network delivers two at once.
-- When a game can't start, the message now says why: a file that couldn't be opened (with the reason), the wrong size, or the wrong card; for Brawl (USA) Rev 1, which check failed.
-
-### 0.3.90
-
-- Ranked: the connection check before game 1 no longer waits behind the game's status messages, so a player whose app was slow to read them (seen on Linux) no longer looks far away and gets voided.
-
-### 0.3.89
-
-- Online: the relay login (TURN) no longer fails now and then. A failed login left one side without a relay, which could make a doubles session slow down and drop.
-
-### 0.3.88
-
-- Pack sessions start clean, with no shared save and only the pack's textures.
-- Online doubles: play casual 2v2 rooms the queue makes, with one or two players per computer.
-- A disc check tool helps check rebuilt Brawl discs.
-- Windows crash reports name where the crash happened.
-
-### 0.3.87
-
-- Linux: mod packs now start inside YouGame's Linux sandbox as it really runs (the 0.3.86 check refused it: the sandbox has no user list and creates empty home folders). Homes must still be empty placeholders, with no host home and no keys, browser or Steam folders visible.
-
-### 0.3.86
-
-- Linux: mod packs now play inside YouGame's Linux sandbox. The engine checks for itself that it runs isolated (no privileges, its own user namespace, not the computer's own files or display, and no network for offline packs) and refuses a pack otherwise.
-
-### 0.3.85
-
-- Linux: runs inside the mods sandbox (a missing USB/HID system no longer stops the engine; real Wii Remotes are simply unavailable there).
-- Release tooling: a Linux build made from the public source carries the same compatibility key as the Mac and Windows builds.
-
-### 0.3.84
-
-- Matchmaking: the queue can now measure your real connection to the other player before game 1 and find you someone closer when it's too slow (needs both players on 0.3.84).
-
-### 0.3.83
-
-- Groundwork for two players on one computer in friends rooms (needs the next desktop app; nothing changes until then).
-- Small rules cleanups (no change to play).
+- Production fix release on 0.3.82: a broken controller library no longer stops the game from starting; friends rooms behind strict networks connect through the relay more reliably; Windows crash reports name where the crash happened.
 
 ### 0.3.82
 

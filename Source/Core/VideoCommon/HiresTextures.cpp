@@ -31,7 +31,6 @@ static std::unordered_map<std::string, std::shared_ptr<HiresTexture>> s_hires_te
 static std::unordered_map<std::string, bool> s_hires_texture_id_to_arbmipmap;
 
 static auto s_file_library = std::make_shared<VideoCommon::DirectFilesystemAssetLibrary>();
-static bool s_isolation_reported = false;
 
 namespace
 {
@@ -75,11 +74,6 @@ std::pair<std::string, bool> GetNameArbPair(const TextureInfo& texture_info)
 
 namespace
 {
-bool IsModSession()
-{
-  return Orca::SessionActive() && (Orca::Mod::Requested() || Orca::Mod::ActiveMod());
-}
-
 // True for a mip level file (<name>_mip<N>). It loads together with <name>, so it is not a
 // texture of its own.
 bool IsMipLevelFile(std::string_view filename)
@@ -142,46 +136,18 @@ CollectHiresTextureFiles(const std::vector<std::string>& player_directories,
   };
   for (const std::string& texture_directory : orca_directories)
     collect(texture_directory, true);
-  if (!IsModSession())
-  {
-    for (const std::string& texture_directory : player_directories)
-      collect(texture_directory, false);
-  }
+  for (const std::string& texture_directory : player_directories)
+    collect(texture_directory, false);
   return files;
 }
 
 void HiresTexture::Shutdown()
 {
   Clear();
-  s_isolation_reported = false;
 }
 
 void HiresTexture::Update()
 {
-  const bool mod_session = IsModSession();
-  if (mod_session && Orca::Mod::ActiveMod() && !s_isolation_reported)
-  {
-    // Count candidate files without loading or watching the player's packs. Log once even if
-    // replacements are disabled; Clear() on a config change must not repeat the session report.
-    const auto directories = GetTextureDirectoriesForFirstMatchingGameId(
-        File::GetUserPath(D_HIRESTEXTURES_IDX), SConfig::GetInstance().GetGameIDsForTextures());
-    constexpr auto extensions = std::to_array<std::string_view>({".png", ".dds"});
-    size_t ignored = 0;
-    for (const std::string& directory : directories)
-    {
-      for (const std::string& path : Common::DoFileSearch(directory, extensions, true))
-      {
-        std::string filename;
-        SplitPath(path, nullptr, &filename, nullptr);
-        if (filename.starts_with(s_format_prefix) && !IsMipLevelFile(filename))
-          ++ignored;
-      }
-    }
-    INFO_LOG_FMT(VIDEO,
-                 "orca isolation save=clean textures=bundle-only ignored-user-textures={}", ignored);
-    s_isolation_reported = true;
-  }
-
   if (!g_ActiveConfig.bHiresTextures)
   {
     Clear();
@@ -190,23 +156,20 @@ void HiresTexture::Update()
 
   const std::vector<std::string> game_ids = SConfig::GetInstance().GetGameIDsForTextures();
   const std::set<std::string> user_directories =
-      mod_session ? std::set<std::string>{} :
-                    GetTextureDirectoriesForFirstMatchingGameId(
-                        File::GetUserPath(D_HIRESTEXTURES_IDX), game_ids);
+      GetTextureDirectoriesForFirstMatchingGameId(File::GetUserPath(D_HIRESTEXTURES_IDX), game_ids);
   // Orca: in a session, also load Orca's own pack (Data/Sys/Orca/Textures/<game ID>), which
   // replaces the Online menu's labels.
   std::set<std::string> orca_directories;
   if (const Orca::Profile* profile = Orca::ActiveProfile();
       profile && profile->mod && !profile->mod->EngineTextures())
   {
-    // Mod mode: only the bundle's orca/textures/. A flat bundle uses the engine's own
-    // pack below. Player directories are neither registered nor watched in a mod session.
+    // Mod mode: the bundle's orca/textures/ (with the same priority over the player's pack). A flat
+    // bundle's are the engine's own, as in legacy (below).
     if (!profile->mod->tree.Under("orca/textures/").empty())
       orca_directories.insert(profile->mod->dir + "orca/textures/");
   }
-  else if (Orca::SessionActive() && (!mod_session || Orca::Mod::ActiveMod()))
+  else if (Orca::SessionActive())
   {
-    // A requested mod waits for its profile before choosing any texture source.
     orca_directories = GetTextureDirectoriesForFirstMatchingGameId(
         File::GetSysDirectory() + "Orca/Textures/", game_ids);
   }

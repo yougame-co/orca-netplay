@@ -15,7 +15,6 @@
 #include <map>
 #include <set>
 #include <memory>
-#include <mutex>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -42,7 +41,6 @@
 #include "Core/Orca/Session/Online.h"
 #include "Core/Orca/Session/PadCodec.h"
 #include "Core/Orca/UX/OrbCombo.h"
-#include "Core/Orca/UX/Probe.h"
 #include "Core/Orca/UX/QueueApp.h"
 #include "Core/Orca/UX/UX.h"
 #include "Core/PowerPC/JitInterface.h"
@@ -239,19 +237,14 @@ struct InputRule
   int sx = -1, sy = -1, cx = -1, cy = -1;
 };
 
-std::mutex s_stdin_rules_mutex;
-std::shared_ptr<const std::vector<InputRule>> s_stdin_rules;
-std::atomic<bool> s_stdin_active{false};
-
-std::vector<InputRule> LoadInputScript(const std::string& path, bool* loaded = nullptr)
+std::vector<InputRule> LoadInputScript()
 {
   std::vector<InputRule> rules;
+  const std::string path = Orca::GetEnv("YG_INPUT");
   if (path.empty())
     return rules;
   std::ifstream in;
   File::OpenFStream(in, path, std::ios_base::in);
-  if (loaded)
-    *loaded = in.is_open();
   std::string line;
   while (std::getline(in, line))
   {
@@ -312,7 +305,7 @@ std::vector<InputRule> LoadInputScript(const std::string& path, bool* loaded = n
 // Loaded on first use, after logging is up, so a bad path shows in the log.
 const std::vector<InputRule>& Input()
 {
-  static const std::vector<InputRule> s_rules = LoadInputScript(Orca::GetEnv("YG_INPUT"));
+  static const std::vector<InputRule> s_rules = LoadInputScript();
   return s_rules;
 }
 
@@ -1132,44 +1125,12 @@ bool TestPortUnplugged(int port, int frame)
 }
 }  // namespace
 
-bool SetInputScriptForTest(const std::string& path)
-{
-  if (Orca::GetEnv("ORCA_TEST_COMMANDS") != "1" || !Orca::UX::TestKnobsAllowed())
-    return false;
-  if (path.empty())
-  {
-    s_stdin_active.store(false);
-    std::lock_guard lock(s_stdin_rules_mutex);
-    s_stdin_rules.reset();
-    return true;
-  }
-  bool loaded = false;
-  auto rules = LoadInputScript(path, &loaded);
-  if (!loaded)
-    return false;
-  {
-    std::lock_guard lock(s_stdin_rules_mutex);
-    s_stdin_rules = std::make_shared<const std::vector<InputRule>>(std::move(rules));
-  }
-  s_stdin_active.store(true);
-  return true;
-}
-
 std::optional<GCPadStatus> InputOverride(int port)
 {
-  if (port < 0 || port >= Orca::Net::MAX_SEATS)
-    return std::nullopt;
   // A test port nobody plugged in reports no controller, scripted or not.
   if (TestPortUnplugged(port, s_frame))
     return Orca::Net::DecodePad(Orca::Net::UNPLUGGED_PAD);
-  std::shared_ptr<const std::vector<InputRule>> stdin_rules;
-  if (s_stdin_active.load(std::memory_order_relaxed))
-  {
-    std::lock_guard lock(s_stdin_rules_mutex);
-    stdin_rules = s_stdin_rules;
-  }
-  const auto& rules = stdin_rules ? *stdin_rules : Input();
-  if (rules.empty())
+  if (Input().empty())
     return std::nullopt;
   const int f = s_frame;
   // ORCA_UX_TEST_RESEAT_AT: port 1's rules play the player's port; the other reports no controller.
@@ -1182,7 +1143,7 @@ std::optional<GCPadStatus> InputOverride(int port)
   }
   u16 buttons = 0;
   int sx = 128, sy = 128, cx = 128, cy = 128;
-  for (const InputRule& r : rules)
+  for (const InputRule& r : Input())
   {
     if (r.port != rules_port)
       continue;

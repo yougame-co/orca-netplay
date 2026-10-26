@@ -264,30 +264,4 @@ TEST(OrcaRulesets, CompiledInRanked2026IsTheFile)
   EXPECT_EQ(r->counterpicks, builtin.counterpicks);
   EXPECT_EQ(r->later_count, builtin.later_count);
   EXPECT_EQ(r->ledge, builtin.ledge);
-  EXPECT_EQ(r->casual_seconds, 15);
-  EXPECT_EQ(r->casual_grace_frames, 30);
-  EXPECT_EQ(r->grace_frames, 180);
-  EXPECT_EQ(r->queue_ready_seconds, 30);
-  EXPECT_EQ(r->queue_skip_frames, 90);
-  EXPECT_EQ(r->casual_seconds, builtin.casual_seconds);
-  EXPECT_EQ(r->casual_grace_frames, builtin.casual_grace_frames);
-  EXPECT_EQ(r->grace_frames, builtin.grace_frames);
-  EXPECT_EQ(r->queue_ready_seconds, builtin.queue_ready_seconds);
-  EXPECT_EQ(r->queue_skip_frames, builtin.queue_skip_frames);
-}
-
-TEST(OrcaRulesets, CasualBrawlSelectsOnly2025Rules)
-{
-  const auto& casual = Orca::UX::Rulesets::RulesFor(true);
-  const auto& ranked = Orca::UX::Rulesets::RulesFor(false);
-  EXPECT_EQ(&casual, &Orca::UX::Rulesets::Brawl2025());
-  EXPECT_EQ(&ranked, Orca::UX::Rulesets::ByBlock(1));
-  EXPECT_EQ(casual.casual_seconds, ranked.casual_seconds);
-  EXPECT_EQ(casual.casual_grace_frames, ranked.casual_grace_frames);
-  EXPECT_EQ(casual.grace_frames, ranked.grace_frames);
-  EXPECT_EQ(casual.queue_ready_seconds, ranked.queue_ready_seconds);
-  EXPECT_EQ(casual.queue_skip_frames, ranked.queue_skip_frames);
-  EXPECT_EQ(Orca::UX::BrawlStages::StageForStageId(0x0C, true), -1);
-  EXPECT_EQ(Orca::UX::BrawlStages::StageForStageId(0x0C),
-            Orca::UX::BrawlStages::FrigateOrpheon);
 }

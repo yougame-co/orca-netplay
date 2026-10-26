@@ -30,7 +30,6 @@ constexpr u32 RESULT_PORTS = 0x24;
 constexpr u32 RESULT_PORT_SIZE = 0x2AC;
 constexpr u32 PORT_CHARACTER = 0x00;
 constexpr u32 PORT_TYPE = 0x01;
-constexpr u32 PORT_TEAM = 0x06;
 constexpr u32 PORT_STOCKS = 0x0A;
 constexpr u32 PORT_PLACE = 0x0E;
 constexpr u8 TYPE_HUMAN = 0;
@@ -174,7 +173,6 @@ Reading ReadResults(const GuestMemory& m, const std::optional<Orca::Mod::RankedR
     if (!p.present)
       continue;
     p.character = m.Read8(rec + PORT_CHARACTER);
-    p.team = m.Read8(rec + PORT_TEAM);
     const u8 stocks = m.Read8(rec + PORT_STOCKS);
     p.stocks = stocks == 0xFF ? -1 : stocks;
     p.place = m.Read8(rec + PORT_PLACE);
@@ -200,62 +198,6 @@ GameResult Judge(const ResultBlock& block, int frame)
     return g;
   }
   const auto& p = block.ports;
-  // Retained four-machine result dumps (friendlies-0348 case 3) identify +0x06 as the
-  // native team colour. Placement names the surviving winner, not necessarily their partner.
-  if (p[2].present || p[3].present)
-  {
-    g.players = 4;
-    std::array<int, 3> teams{};
-    int first = -1, winning_team = -1;
-    bool tied = false;
-    for (int port = 0; port < 4; ++port)
-    {
-      if (!p[port].present || !p[port].human)
-      {
-        g.why = "ports";
-        return g;
-      }
-      if (p[port].team < 0 || p[port].team > 2)
-      {
-        g.why = "teams";
-        return g;
-      }
-      ++teams[p[port].team];
-      g.characters[port] = p[port].character;
-      g.stocks[port] = p[port].stocks;
-      if (p[port].place == 0)
-      {
-        if (first < 0)
-        {
-          first = port;
-          winning_team = p[port].team;
-        }
-        else
-          tied |= winning_team != p[port].team;
-      }
-    }
-    int pairs = 0;
-    for (int count : teams)
-      pairs += count == 2;
-    if (pairs != 2 || first < 0)
-    {
-      g.why = "teams";
-      return g;
-    }
-    g.stage = block.stage;
-    g.timeout = block.mode == 0 || block.decision == 1;
-    if (tied)
-      g.kind = GameResult::Kind::Draw;
-    else
-    {
-      g.kind = GameResult::Kind::Win;
-      g.winner_port = first;
-      for (int port = 0; port < 4; ++port)
-        if (p[port].team == winning_team)
-          g.winning_ports |= 1u << port;
-    }
-    return g;
-  }
   if (!p[0].present || !p[1].present || !p[0].human || !p[1].human || p[2].present || p[3].present)
   {
     g.why = "ports";

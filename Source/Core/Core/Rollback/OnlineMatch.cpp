@@ -923,7 +923,6 @@ void GoSolo(Match& match, const char* why, const char* state = "playing")
   NOTICE_LOG_FMT(ROLLBACK, "Drop-in: back to solo play at frame {} ({}): {} rollbacks, {} checksums matched",
                  match.running + 1, why, stats.rollbacks, stats.checksums_matched);
   match.session.reset();
-  Orca::Online::SetSessionActive(false);
   match.plugging.clear();
   match.idle_frames = 0;
   match.port->SetCatchingUp(false);
@@ -1457,7 +1456,7 @@ void RetireReassignedCoSeats(Match& match, Orca::Net::YouGameRoom* test_room = n
     return;
   for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
   {
-    if (match.session->IsLocal(seat) || match.session->LeadOf(seat) == seat)
+    if (match.session->LeadOf(seat) == seat)
       continue;
     const auto group = test_room ? test_room->GroupOf(seat) : Orca::Online::GroupOf(seat);
     if (!group.empty() && group.front() != match.session->LeadOf(seat))
@@ -1473,18 +1472,13 @@ void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test
 {
   ++match.host_boundaries;
   match.doubles = test_room ? test_room->Doubles() : Orca::Online::RoomDoubles();
-  bool locals_changed = false;
   if (!match.session && (test_room || Orca::Online::InRoom()))
   {
-    if (const auto locals = test_room ? test_room->CoSeatsForSolo() : Orca::Online::CoSeatsForSolo())
-    {
-      locals_changed = *locals != match.co_seats;
-      match.co_seats = *locals;
-      Orca::UX::SetLocalPadCount(match.co_seats.empty() ? 1 : 2);
-    }
+    match.co_seats = test_room ? test_room->CoSeats() : Orca::Online::CoSeats();
+    Orca::UX::SetLocalPadCount(match.co_seats.empty() ? 1 : 2);
   }
   const bool in_room = test_room ? test_room->Connected() : Orca::Online::InRoom();
-  const bool in_queue_room = test_room ? QueueMode(test_room->PlayQueue()) != Orca::Engine::Mode::None :
+  const bool in_queue_room = test_room ? QueueMode(test_room->Queue()) != Orca::Engine::Mode::None :
                                          InQueueRoom();
   // `host` also opens private/tournament rooms. Only a confirmed welcome can disarm the queue
   // start: before it, "private" is also the default for a queue room still connecting.
@@ -1876,11 +1870,6 @@ void HostEvents(Core::System& system, Match& match, Orca::Net::YouGameRoom* test
     return;
   }
   if (match.keyframe->frame < match.recovery_keyframe_from)
-    return;
-  if (!match.session && (locals_changed ||
-      (match.keyframe->frame >= match.log_base &&
-       !(test_room ? test_room->TryStartSession(match.co_seats) :
-                     Orca::Online::TryStartSession(match.co_seats)))))
     return;
   int live_from = next;
   if (match.doubles && match.session)
@@ -2557,7 +2546,6 @@ void FinishReplay(Match& match)
   std::array<Orca::Net::SeatPlan, Orca::Net::MAX_SEATS> plan{};
   plan[match.host_seat] = {0, Orca::Net::NEVER, 0};
   config.plan = plan;
-  Orca::Online::SetSessionActive(true);
   match.session =
       std::make_unique<Orca::Net::Session>(config, *match.port, *Orca::Online::Transport());
   match.stall_budget.Clear();
@@ -3731,7 +3719,7 @@ void ConfirmResults(Match& match)
       ++plugged;
       latest = std::max(latest, plan.plug_from);
     }
-    if (plugged >= (Orca::Online::RoomDoubles() ? Orca::Net::MAX_SEATS : 2))
+    if (plugged >= 2)
       plug = latest;
   }
   // The casual ready timer ran out (UX/QueueApp.h), at the same final frame on both machines.
@@ -3780,8 +3768,19 @@ void ConfirmResults(Match& match)
     Orca::UX::SetEnd::Current().GameBegan(Orca::UX::SetEnd::NowMs());
   for (const Orca::Engine::GameResult& r : results)
   {
-    const auto report = Orca::Net::FromGameResult(r, Orca::Online::RoomDoubles() ?
-        std::optional(Orca::Online::RoomTeams()) : std::nullopt);
+    Orca::Net::GameReport report;
+    report.kind = r.kind == Orca::Engine::GameResult::Kind::Win  ? Orca::Net::GameReport::Kind::Win :
+                  r.kind == Orca::Engine::GameResult::Kind::Draw ? Orca::Net::GameReport::Kind::Draw :
+                                                               Orca::Net::GameReport::Kind::Void;
+    report.winner_seat = r.winner_port;
+    report.why = r.why;
+    if (report.kind != Orca::Net::GameReport::Kind::Void)
+      report.detail = r.DetailJson();
+    report.start = r.start;
+    report.from_set_block = r.from_set_block;
+    report.number = r.number;
+    report.set_done = r.set_done;
+    report.set_winner_seat = r.set_winner;
     if (r.set_done)
     {
       NOTICE_LOG_FMT(ROLLBACK, "Matchmaking: the set ended with game {}: {}", r.number,
@@ -4008,7 +4007,6 @@ std::optional<int> Boundary(Core::System& system,
     if (match.store)
       match.store->Cancel();
     match.session.reset();
-    Orca::Online::SetSessionActive(false);
     match.port.reset();
     match.job.reset();
     match.download.reset();
@@ -4632,11 +4630,7 @@ static std::optional<int> SessionBoundary(
           Orca::Status::State("friend-joined");
           match.friend_left_told = false;
           // A matchmade room's match may begin (YouGameRoom), and the search is over.
-          bool all_seats = true;
-          if (match.doubles)
-            for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
-              all_seats &= match.session->Plugged(seat, step.frame);
-          Orca::Online::SetOpponentPlugged(all_seats);
+          Orca::Online::SetOpponentPlugged(true);
           Orca::UX::Search::End();
           for (const auto& shared : match.shared_keyframes)
             DeleteStored(match, shared);
@@ -5041,7 +5035,6 @@ void End(const char* reason)
   if (match.store)
     match.store->Cancel();
   match.session.reset();
-  Orca::Online::SetSessionActive(false);
   match.port.reset();
   match.download.reset();
   match.replaying.reset();
@@ -5394,17 +5387,6 @@ std::vector<Pads> PumpSoloSeatsForTest(Core::System& system, const std::vector<i
   if (ports)
     *ports = PortsAt(match, frames);
   return match.log;
-}
-
-Pads PumpSoloRoomForTest(Core::System& system, Orca::Net::YouGameRoom& room)
-{
-  const Common::ScopeGuard reset_count([] { Orca::UX::SetLocalPadCount(1); });
-  Match match;
-  match.port = std::make_unique<RingPort>(system, MAX_ROLLBACK);
-  match.origin_frame = 0;
-  HostEvents(system, match, &room, true);
-  RunSolo(match, [](int) { return Pad{}; });
-  return match.log.back();
 }
 
 std::optional<Pad> PumpSeenLocalPadForTest(int lead, const std::vector<int>& co_seats,

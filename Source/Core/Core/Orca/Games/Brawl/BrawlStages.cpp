@@ -29,7 +29,6 @@ static_assert(kRegion >= FreeSpace::kMatchBlock.begin &&
 static_assert(kResultsSet + 0x80 <= FreeSpace::kMatchBlockLimit);
 
 namespace RS = Ranked;
-using Rulesets::RulesFor;
 
 namespace
 {
@@ -284,13 +283,18 @@ u8 HoverKey(const GuestMemory& m, const View& v)
   return static_cast<u8>((m.Read32(v.task + TASK_PAGE) & 3) << 6 | v.hovered_item);
 }
 
+const RS::Ruleset& Rules()
+{
+  return Rulesets::Brawl2026();
+}
+
 // `casual` plans the two preferred-stage turns instead of the ranked steps.
 RS::Plan PlanOf(const State& s, const RS::SetView& set, bool casual)
 {
   RS::SetView v = set;
   v.coin = s.coin == 0xFF ? 0 : (s.coin & 1);
   v.characters = {s.characters[0], s.characters[1]};
-  return casual ? RS::PlanCasual(RulesFor(casual), v, s.seed) : RS::PlanGame(RulesFor(casual), v);
+  return casual ? RS::PlanCasual(Rulesets::Brawl2025(), v, s.seed) : RS::PlanGame(Rules(), v);
 }
 
 // The port whose turn it is, or the last step's port once done (it drives the game's cursor while
@@ -373,7 +377,7 @@ void CursorPresses(const RS::Plan& plan, State* s, StageCursors::State* c, u32 p
     if (on >= 0 && my_turn && (pressed & StageCursors::BTN_X) &&
         (step->kind == RS::StepKind::Strike || step->kind == RS::StepKind::Ban))
     {
-      RS::Strike(RulesFor(plan.casual), plan, &s->progress, on);
+      RS::Strike(Rules(), plan, &s->progress, on);
     }
     else if (on >= 0 && (pressed & StageCursors::BTN_A))
     {
@@ -387,7 +391,7 @@ void CursorPresses(const RS::Plan& plan, State* s, StageCursors::State* c, u32 p
       RS::Propose(plan, &s->progress, port, RS::PREF_RANDOM);
     }
     if (my_turn && step->optional && (pressed & StageCursors::BTN_Y) && s->progress.picked < 0)
-      RS::Skip(RulesFor(plan.casual), plan, &s->progress);
+      RS::Skip(Rules(), plan, &s->progress);
     if (pressed & StageCursors::BTN_B)
       RS::Withdraw(&s->progress, port);
   }
@@ -414,7 +418,7 @@ void SelectFrame(GuestMemory& m, const View& v, State* s, bool casual)
                   RS::CasualSeed(m.Read32(MatchBlock::ROOM), s->coin, s->set.game) :
                   0;
     const RS::Plan plan = PlanOf(*s, set, casual);
-    s->progress = RS::Begin(RulesFor(casual), plan);
+    s->progress = RS::Begin(Rules(), plan);
     s->phase = Phase::Select;
     s->clock = v.clock;
     s->buttons = {};
@@ -439,7 +443,7 @@ void SelectFrame(GuestMemory& m, const View& v, State* s, bool casual)
     {
       if (const RS::Step* step = RS::Current(plan, s->progress))
       {
-        const int taken = StageForStageId(static_cast<int>(m.Read32(v.task + TASK_TAKEN_KIND)), casual);
+        const int taken = StageForStageId(static_cast<int>(m.Read32(v.task + TASK_TAKEN_KIND)));
         if (step->kind == RS::StepKind::Pick)
         {
           const u16 allowed = RS::Allowed(plan, s->progress);
@@ -454,13 +458,13 @@ void SelectFrame(GuestMemory& m, const View& v, State* s, bool casual)
           for (int i = 0; i < 16 && s->progress.picked < 0 && RS::Current(plan, s->progress); ++i)
           {
             s->progress.frames = 1;
-            RS::Tick(RulesFor(casual), plan, &s->progress);
+            RS::Tick(Rules(), plan, &s->progress);
           }
         }
       }
       if (s->progress.picked >= 0)
       {
-        const u32 kind = RulesFor(casual).stage_kinds[static_cast<size_t>(s->progress.picked)];
+        const u32 kind = Rules().stage_kinds[static_cast<size_t>(s->progress.picked)];
         if (m.Read32(v.task + TASK_TAKEN_KIND) != kind)
           m.Write32(v.task + TASK_TAKEN_KIND, kind);
       }
@@ -477,7 +481,7 @@ void SelectFrame(GuestMemory& m, const View& v, State* s, bool casual)
   if (v.clock != s->clock)
   {
     s->clock = v.clock;
-    RS::Tick(RulesFor(casual), plan, &s->progress);
+    RS::Tick(Rules(), plan, &s->progress);
     if (key == s->hover_key)
       s->hovered_for = static_cast<u8>(std::min(s->hovered_for + 1, 255));
     else
@@ -553,10 +557,10 @@ void SelectFrame(GuestMemory& m, const View& v, State* s, bool casual)
 }
 }  // namespace
 
-int StageForStageId(int stage_id, bool casual)
+int StageForStageId(int stage_id)
 {
   // The ruleset's stage ids (srStageKind), in its order.
-  const RS::Ruleset& rules = RulesFor(casual);
+  const RS::Ruleset& rules = Rules();
   for (int stage = 0; stage < rules.stage_count; ++stage)
   {
     if (rules.stage_kinds[static_cast<size_t>(stage)] == stage_id)
@@ -864,7 +868,7 @@ std::pair<std::string, std::string> Lines(const GuestMemory& m,
       return {};
     if (step && step->kind == RS::StepKind::Prefer)
     {
-      const int seconds = RS::SecondsShown(RulesFor(casual), *step, s->progress.frames);
+      const int seconds = RS::SecondsShown(Rules(), *step, s->progress.frames);
       std::string note;
       if (me >= 0 && !PrefName(s->progress.prefs[me]).empty())
         note = fmt::format("You want {}", PrefName(s->progress.prefs[me]));
@@ -898,7 +902,7 @@ std::pair<std::string, std::string> Lines(const GuestMemory& m,
     const bool you = local(step->port);
     const int left = step->count - s->progress.done;
     const std::string clock =
-        fmt::format("0:{:02}", RS::SecondsShown(RulesFor(casual), *step, s->progress.frames));
+        fmt::format("0:{:02}", RS::SecondsShown(Rules(), *step, s->progress.frames));
     std::string turn, keys;
     switch (step->kind)
     {
@@ -968,7 +972,7 @@ StageCursors::View CursorView(const GuestMemory& m,
     view.left = static_cast<u8>(std::max(1, step->count - s->progress.done));
     view.optional = step->optional;
     view.both = step->port == RS::BOTH;
-    view.seconds = static_cast<s16>(RS::SecondsShown(RulesFor(casual), *step, s->progress.frames));
+    view.seconds = static_cast<s16>(RS::SecondsShown(Rules(), *step, s->progress.frames));
   }
   for (int port = 0; port < 2; ++port)
   {
