@@ -2835,6 +2835,10 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.95
+
+- Discs: YG Dolphin can now tell how a Brawl copy made with disc tools differs from the standard disc, and rebuild it into the standard layout, so the app can offer to fix a copy it refuses. The engine plays every disc exactly as before.
+
 ### 0.3.94
 
 - Online: fixes the game closing when a friend joined after YG Dolphin's first connection to its own room had been refused (the fix production got in 0.3.93).

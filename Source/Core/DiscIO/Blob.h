@@ -25,6 +25,7 @@
 
 namespace DiscIO
 {
+class VolumeDisc;
 enum class WIARVZCompressionType : u32;
 
 // Increment CACHE_REVISION (GameFileCache.cpp) if the enum below is modified
@@ -193,7 +194,8 @@ private:
 };
 
 // Factory function - examines the path to choose the right type of BlobReader, and returns one.
-std::unique_ptr<BlobReader> CreateBlobReader(const std::string& filename);
+std::unique_ptr<BlobReader> CreateBlobReader(const std::string& filename,
+                                           bool load_console_keys = true);
 
 using CompressCB = std::function<bool(const std::string& text, float percent)>;
 
@@ -205,6 +207,7 @@ bool ConvertToPlain(BlobReader* infile, const std::string& infile_path,
 bool ConvertToWIAOrRVZ(BlobReader* infile, const std::string& infile_path,
                        const std::string& outfile_path, bool rvz,
                        WIARVZCompressionType compression_type, int compression_level,
-                       int chunk_size, const CompressCB& callback);
+                       int chunk_size, const CompressCB& callback,
+                       const VolumeDisc* volume = nullptr);
 
 }  // namespace DiscIO

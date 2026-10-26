@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstring>
 #include <future>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -35,35 +36,65 @@
 
 namespace DiscIO
 {
-VolumeWii::VolumeWii(std::unique_ptr<BlobReader> reader)
+bool VolumeWii::CheckPartitionTable(BlobReader& reader)
+{
+  const u64 size = reader.GetDataSize();
+  u64 total = 0;
+  for (u64 group = 0; group < 4; ++group)
+  {
+    const auto count = reader.ReadSwapped<u32>(0x40000 + group * 8);
+    const auto table_word = reader.ReadSwapped<u32>(0x40004 + group * 8);
+    // Bound work as well as byte ranges. Retail tables contain only a handful of entries.
+    if (!count || !table_word || *count > 256 - total)
+      return false;
+    total += *count;
+    const u64 table = u64{*table_word} << 2;
+    if (*count != 0 && (table > size || u64{*count} * 8 > size - table))
+      return false;
+  }
+  return true;
+}
+
+VolumeWii::VolumeWii(std::unique_ptr<BlobReader> reader, bool load_console_keys)
     : m_reader(std::move(reader)), m_game_partition(PARTITION_NONE),
-      m_last_decrypted_block(UINT64_MAX)
+      m_load_console_keys(load_console_keys), m_last_decrypted_block(UINT64_MAX)
 {
   ASSERT(m_reader);
 
   m_has_hashes = m_reader->ReadSwapped<u8>(0x60) == u8(0);
   m_has_encryption = m_reader->ReadSwapped<u8>(0x61) == u8(0);
+  if (!CheckPartitionTable(*m_reader))
+    return;
 
   if (m_has_encryption && !m_has_hashes)
     ERROR_LOG_FMT(DISCIO, "Wii disc has encryption but no hashes! This probably won't work well");
 
+  u64 total_partitions = 0;
   for (u32 partition_group = 0; partition_group < 4; ++partition_group)
   {
     const std::optional<u32> number_of_partitions =
         m_reader->ReadSwapped<u32>(0x40000 + (partition_group * 8));
-    if (!number_of_partitions)
-      continue;
+    if (!number_of_partitions || *number_of_partitions > 256 - total_partitions)
+      return;
+    total_partitions += *number_of_partitions;
 
     const std::optional<u64> partition_table_offset =
         ReadSwappedAndShifted(0x40000 + (partition_group * 8) + 4, PARTITION_NONE);
     if (!partition_table_offset)
-      continue;
+      return;
+    // Recheck the values actually used by this loop, even if the reader changed after preflight.
+    const u64 image_size = m_reader->GetDataSize();
+    if (*number_of_partitions != 0 &&
+        (*partition_table_offset > image_size ||
+         u64{*number_of_partitions} * 8 > image_size - *partition_table_offset))
+      return;
 
-    for (u32 i = 0; i < number_of_partitions; i++)
+    for (u64 i = 0; i < *number_of_partitions; ++i)
     {
       const std::optional<u64> partition_offset =
           ReadSwappedAndShifted(*partition_table_offset + (i * 8), PARTITION_NONE);
-      if (!partition_offset)
+      if (!partition_offset || *partition_offset > m_reader->GetDataSize() ||
+          0x2c0 > m_reader->GetDataSize() - *partition_offset)
         continue;
 
       const Partition partition(*partition_offset);
@@ -109,7 +140,8 @@ VolumeWii::VolumeWii(std::unique_ptr<BlobReader> reader)
             m_reader->ReadSwapped<u32>(partition.offset + WII_PARTITION_CERT_CHAIN_SIZE_ADDRESS);
         const std::optional<u64> address = ReadSwappedAndShifted(
             partition.offset + WII_PARTITION_CERT_CHAIN_OFFSET_ADDRESS, PARTITION_NONE);
-        if (!size || !address)
+        if (!size || !address || *address > m_reader->GetDataSize() - partition.offset ||
+            *size > m_reader->GetDataSize() - partition.offset - *address)
           return {};
         std::vector<u8> cert_chain(*size);
         if (!m_reader->Read(partition.offset + *address, *size, cert_chain.data()))
@@ -135,7 +167,7 @@ VolumeWii::VolumeWii(std::unique_ptr<BlobReader> reader)
         const IOS::ES::TicketReader& ticket = *m_partitions[partition].ticket;
         if (!ticket.IsValid())
           return nullptr;
-        return Common::AES::CreateContextDecrypt(ticket.GetTitleKey().data());
+        return Common::AES::CreateContextDecrypt(GetTitleKey(partition).data());
       };
 
       auto get_file_system = [this, partition]() -> std::unique_ptr<FileSystem> {
@@ -207,7 +239,20 @@ bool VolumeWii::ReadUnpatched(u64 offset, u64 length, u8* buffer, const Partitio
     return false;
   const PartitionDetails& partition_details = it->second;
 
-  const u64 partition_data_offset = partition.offset + *partition_details.data_offset;
+  // LowerBound readers synthesize blank data past GetDataSize(), so it isn't an end-of-disc
+  // limit. Use only the address-space limit there; accurate/upper bounds remain finite.
+  const u64 image_size = m_reader->GetDataSizeType() == DataSizeType::LowerBound ?
+                             std::numeric_limits<u64>::max() :
+                             m_reader->GetDataSize();
+  const u64 data_offset = *partition_details.data_offset;
+  if (partition.offset > image_size || data_offset > image_size - partition.offset)
+    return false;
+  const u64 partition_data_offset = partition.offset + data_offset;
+  const u64 raw_size = image_size - partition_data_offset;
+  // Check before multiplication/addition. This also bounds offset + length below.
+  const u64 logical_size = m_has_hashes ? raw_size / BLOCK_TOTAL_SIZE * BLOCK_DATA_SIZE : raw_size;
+  if (offset > logical_size || length > logical_size - offset)
+    return false;
   if (m_has_hashes && m_has_encryption &&
       m_reader->SupportsReadWiiDecrypted(offset, length, partition_data_offset))
   {
@@ -321,6 +366,12 @@ const IOS::ES::TMDReader& VolumeWii::GetTMD(const Partition& partition) const
 {
   auto it = m_partitions.find(partition);
   return it != m_partitions.end() ? *it->second.tmd : INVALID_TMD;
+}
+
+std::array<u8, 16> VolumeWii::GetTitleKey(const Partition& partition) const
+{
+  const auto& ticket = GetTicket(partition);
+  return ticket.GetTitleKey(IOS::HLE::IOSC{ticket.GetConsoleType(), m_load_console_keys});
 }
 
 const std::vector<u8>& VolumeWii::GetCertificateChain(const Partition& partition) const

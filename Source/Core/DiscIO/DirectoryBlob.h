@@ -245,7 +245,8 @@ class DirectoryBlobReader final : public BlobReader
   friend DiscContent;
 
 public:
-  static std::unique_ptr<DirectoryBlobReader> Create(const std::string& dol_path);
+  static std::unique_ptr<DirectoryBlobReader> Create(const std::string& dol_path,
+                                                     bool load_console_keys = true);
   static std::unique_ptr<DirectoryBlobReader> Create(
       std::unique_ptr<VolumeDisc> volume,
       const std::function<void(std::vector<FSTBuilderNode>* fst_nodes)>& sys_callback,
@@ -283,8 +284,8 @@ private:
     PartitionType type;
   };
 
-  explicit DirectoryBlobReader(const std::string& game_partition_root,
-                               const std::string& true_root);
+  explicit DirectoryBlobReader(const std::string& game_partition_root, const std::string& true_root,
+                               bool load_console_keys);
   explicit DirectoryBlobReader(
       std::unique_ptr<VolumeDisc> volume,
       const std::function<void(std::vector<FSTBuilderNode>* fst_nodes)>& sys_callback,
@@ -317,6 +318,7 @@ private:
 
   bool m_is_wii;
   bool m_encrypted;
+  bool m_load_console_keys = true;
 
   u64 m_data_size;
 

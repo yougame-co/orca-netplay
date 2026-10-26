@@ -91,7 +91,8 @@ bool CollectFiles(const DiscIO::FileInfo& directory, const std::string& parent,
 
 std::optional<std::string> Detail::HashRange(const DiscIO::Volume& volume,
                                           const DiscIO::Partition& partition, std::string_view path,
-                                          u64 offset, u64 size)
+                                          u64 offset, u64 size,
+                                          const std::function<bool()>& cancelled)
 {
   if (offset > MAX_JSON_INTEGER || size > MAX_JSON_INTEGER - offset)
     return std::nullopt;
@@ -99,12 +100,15 @@ std::optional<std::string> Detail::HashRange(const DiscIO::Volume& volume,
   std::vector<u8> buffer(static_cast<size_t>(std::min<u64>(1024 * 1024, size)));
   for (u64 position = 0; position < size;)
   {
+    if (cancelled && cancelled())
+      return std::nullopt;
     const size_t length = static_cast<size_t>(std::min<u64>(buffer.size(), size - position));
     if (!volume.Read(offset + position, length, buffer.data(), partition))
       return std::nullopt;
     // Disc tools can rename a title without changing the game. Mask only that field.
-    if (path == "sys/boot.bin" && position == 0 && length >= 0x60)
-      std::fill(buffer.begin() + 0x20, buffer.begin() + 0x60, 0);
+    if (path == "sys/boot.bin" && position == 0)
+      std::fill(buffer.begin() + std::min<size_t>(0x20, length),
+                buffer.begin() + std::min<size_t>(0x60, length), 0);
     context->Update(buffer.data(), length);
     position += length;
   }
@@ -161,13 +165,32 @@ std::string LowerSha1(std::string sha1)
 
 std::optional<Report> Generate(const std::string& image, std::string* error)
 {
+  const auto volume = DiscIO::CreateVolume(image, false);
+  if (!volume)
+  {
+    *error = "cannot open a GameCube or Wii disc image";
+    return std::nullopt;
+  }
+  return Generate(*volume, error);
+}
+
+std::optional<std::string> HashFile(const DiscIO::Volume& volume,
+                                    const DiscIO::Partition& partition, std::string_view path,
+                                    u64 offset, u64 size, const std::function<bool()>& cancelled)
+{
+  return Detail::HashRange(volume, partition, path, offset, size, cancelled);
+}
+
+std::optional<Report> Generate(const DiscIO::Volume& source, std::string* error,
+                               const std::function<bool()>& cancelled)
+{
   error->clear();
   const auto fail = [&](std::string reason) -> std::optional<Report> {
     *error = std::move(reason);
     return std::nullopt;
   };
-  const auto volume = DiscIO::CreateVolume(image);
-  if (!volume || !DiscIO::IsDisc(volume->GetVolumeType()))
+  const auto* volume = &source;
+  if (!DiscIO::IsDisc(volume->GetVolumeType()))
     return fail("cannot open a GameCube or Wii disc image");
 
   const bool wii = volume->GetVolumeType() == DiscIO::Platform::WiiDisc;
@@ -197,7 +220,7 @@ std::optional<Report> Generate(const std::string& image, std::string* error)
       return fail("cannot read game partition H3 offset");
     report.header.h3_sha1 =
         Detail::HashRange(*volume, DiscIO::PARTITION_NONE, "h3", partition.offset + *h3_offset,
-                          DiscIO::WII_PARTITION_H3_SIZE);
+                          DiscIO::WII_PARTITION_H3_SIZE, cancelled);
     if (!report.header.h3_sha1)
       return fail("cannot read game partition H3 table");
   }
@@ -232,7 +255,7 @@ std::optional<Report> Generate(const std::string& image, std::string* error)
             [](const FileRange& a, const FileRange& b) { return a.offset < b.offset; });
   for (const auto& file : files)
   {
-    const auto sha1 = Detail::HashRange(*volume, partition, file.path, file.offset, file.size);
+    const auto sha1 = Detail::HashRange(*volume, partition, file.path, file.offset, file.size, cancelled);
     if (!sha1)
       return fail("cannot read " + file.path);
     report.files.push_back({file.path, file.size, *sha1});

@@ -74,6 +74,10 @@ public:
     return INVALID_TICKET;
   }
   virtual const IOS::ES::TMDReader& GetTMD(const Partition& partition) const { return INVALID_TMD; }
+  virtual std::array<u8, 16> GetTitleKey(const Partition& partition) const
+  {
+    return GetTicket(partition).GetTitleKey();
+  }
   virtual const std::vector<u8>& GetCertificateChain(const Partition& partition) const
   {
     return INVALID_CERT_CHAIN;
@@ -164,14 +168,17 @@ protected:
   static const std::vector<u8> INVALID_CERT_CHAIN;
 };
 
-std::unique_ptr<VolumeDisc> CreateDisc(std::unique_ptr<BlobReader> reader);
-std::unique_ptr<VolumeDisc> CreateDisc(const std::string& path);
+// Standalone tools can opt out of loading console keys, including during RVZ conversion.
+std::unique_ptr<VolumeDisc> CreateDisc(std::unique_ptr<BlobReader> reader,
+                                       bool load_console_keys = true);
+std::unique_ptr<VolumeDisc> CreateDisc(const std::string& path, bool load_console_keys = true);
 // This version enables caching when the "Load Games into Memory" setting is enabled.
 std::unique_ptr<VolumeDisc> CreateDiscForCore(const std::string& path);
 
 std::unique_ptr<VolumeWAD> CreateWAD(std::unique_ptr<BlobReader> reader);
 std::unique_ptr<VolumeWAD> CreateWAD(const std::string& path);
-std::unique_ptr<Volume> CreateVolume(std::unique_ptr<BlobReader> reader);
-std::unique_ptr<Volume> CreateVolume(const std::string& path);
+std::unique_ptr<Volume> CreateVolume(std::unique_ptr<BlobReader> reader,
+                                     bool load_console_keys = true);
+std::unique_ptr<Volume> CreateVolume(const std::string& path, bool load_console_keys = true);
 
 }  // namespace DiscIO

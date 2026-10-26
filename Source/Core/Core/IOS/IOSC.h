@@ -185,7 +185,7 @@ public:
     Version = 6
   };
 
-  IOSC(ConsoleType console_type = ConsoleType::Retail);
+  IOSC(ConsoleType console_type = ConsoleType::Retail, bool load_console_keys = true);
   ~IOSC();
 
   // Create an object for use with the other functions that operate on objects.

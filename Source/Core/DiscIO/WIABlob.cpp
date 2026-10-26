@@ -1028,7 +1028,7 @@ ConversionResultCode WIARVZFileReader<RVZ>::SetUpDataEntriesForWriting(
         data_end, Common::AlignUp(fst_end - data_start, VolumeWii::GROUP_TOTAL_SIZE) + data_start);
 
     PartitionEntry partition_entry;
-    partition_entry.partition_key = ticket.GetTitleKey();
+    partition_entry.partition_key = volume->GetTitleKey(partition);
     partition_entry.data_entries[0] =
         create_partition_data_entry(data_start, split_point - data_start, 0);
     partition_entry.data_entries[1] =
@@ -2042,7 +2042,7 @@ WIARVZFileReader<RVZ>::Convert(BlobReader* infile, const VolumeDisc* infile_volu
 bool ConvertToWIAOrRVZ(BlobReader* infile, const std::string& infile_path,
                        const std::string& outfile_path, bool rvz,
                        WIARVZCompressionType compression_type, int compression_level,
-                       int chunk_size, const CompressCB& callback)
+                       int chunk_size, const CompressCB& callback, const VolumeDisc* volume)
 {
   File::DirectIOFile outfile(outfile_path, File::AccessMode::Write);
   if (!outfile.IsOpen())
@@ -2055,12 +2055,12 @@ bool ConvertToWIAOrRVZ(BlobReader* infile, const std::string& infile_path,
     return false;
   }
 
-  std::unique_ptr<VolumeDisc> infile_volume = CreateDisc(infile_path);
+  std::unique_ptr<VolumeDisc> infile_volume = volume ? nullptr : CreateDisc(infile_path);
 
   const auto convert = rvz ? RVZFileReader::Convert : WIAFileReader::Convert;
   const ConversionResultCode result =
-      convert(infile, infile_volume.get(), &outfile, compression_type, compression_level,
-              chunk_size, callback);
+      convert(infile, volume ? volume : infile_volume.get(), &outfile, compression_type,
+              compression_level, chunk_size, callback);
 
   if (result == ConversionResultCode::ReadFailed)
     PanicAlertFmtT("Failed to read from the input file \"{0}\".", infile_path);

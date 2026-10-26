@@ -27,7 +27,8 @@
 
 namespace DiscIO
 {
-VolumeWAD::VolumeWAD(std::unique_ptr<BlobReader> reader) : m_reader(std::move(reader))
+VolumeWAD::VolumeWAD(std::unique_ptr<BlobReader> reader, bool load_console_keys)
+    : m_reader(std::move(reader)), m_load_console_keys(load_console_keys)
 {
   ASSERT(m_reader);
 
@@ -156,7 +157,8 @@ bool VolumeWAD::CheckContentIntegrity(const IOS::ES::Content& content,
   if (encrypted_data.size() != Common::AlignUp(content.size, 0x40))
     return false;
 
-  auto context = Common::AES::CreateContextDecrypt(ticket.GetTitleKey().data());
+  const auto key = ticket.GetTitleKey(IOS::HLE::IOSC{ticket.GetConsoleType(), m_load_console_keys});
+  auto context = Common::AES::CreateContextDecrypt(key.data());
 
   std::array<u8, 16> iv{};
   iv[0] = static_cast<u8>(content.index >> 8);

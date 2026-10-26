@@ -27,7 +27,7 @@ enum class Platform;
 class VolumeWAD final : public Volume
 {
 public:
-  VolumeWAD(std::unique_ptr<BlobReader> reader);
+  VolumeWAD(std::unique_ptr<BlobReader> reader, bool load_console_keys = true);
   bool Read(u64 offset, u64 length, u8* buffer,
             const Partition& partition = PARTITION_NONE) const override;
   const FileSystem* GetFileSystem(const Partition& partition = PARTITION_NONE) const override;
@@ -73,6 +73,7 @@ public:
 
 private:
   std::unique_ptr<BlobReader> m_reader;
+  bool m_load_console_keys;
   IOS::ES::TicketReader m_ticket;
   IOS::ES::TMDReader m_tmd;
   std::vector<u8> m_cert_chain;

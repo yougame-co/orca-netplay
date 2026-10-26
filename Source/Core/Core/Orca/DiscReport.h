@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdio>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -15,7 +16,7 @@ namespace DiscIO
 {
 class Volume;
 struct Partition;
-}
+}  // namespace DiscIO
 
 namespace Orca::DiscReport
 {
@@ -24,7 +25,8 @@ namespace Detail
 // Shared range reader for report generation and focused tests.
 std::optional<std::string> HashRange(const DiscIO::Volume& volume,
                                      const DiscIO::Partition& partition, std::string_view path,
-                                     u64 offset, u64 size);
+                                     u64 offset, u64 size,
+                                     const std::function<bool()>& cancelled = {});
 }  // namespace Detail
 
 struct FileEntry
@@ -59,6 +61,12 @@ struct Reference
 // Uses an independent DiscIO volume, never the mounted disc or session configuration.
 // Only metadata and digests leave this function; file data stays in a bounded memory buffer.
 std::optional<Report> Generate(const std::string& image, std::string* error);
+std::optional<Report> Generate(const DiscIO::Volume& volume, std::string* error,
+                               const std::function<bool()>& cancelled = {});
+std::optional<std::string> HashFile(const DiscIO::Volume& volume,
+                                    const DiscIO::Partition& partition, std::string_view path,
+                                    u64 offset, u64 size,
+                                    const std::function<bool()>& cancelled = {});
 std::optional<Reference> ParseReference(std::string_view json, std::string* error);
 
 // Sorted, distinct paths. A requested partition offset mismatch is named "partitionOffset".

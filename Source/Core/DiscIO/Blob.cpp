@@ -210,7 +210,7 @@ u32 SectorReader::ReadChunk(u8* buffer, u64 chunk_num)
   return 0;
 }
 
-std::unique_ptr<BlobReader> CreateBlobReader(const std::string& filename)
+std::unique_ptr<BlobReader> CreateBlobReader(const std::string& filename, bool load_console_keys)
 {
   File::DirectIOFile file(filename, File::AccessMode::Read);
   u32 magic;
@@ -242,7 +242,7 @@ std::unique_ptr<BlobReader> CreateBlobReader(const std::string& filename)
   case NFS_MAGIC:
     return NFSFileReader::Create(std::move(file), filename);
   default:
-    if (auto directory_blob = DirectoryBlobReader::Create(filename))
+    if (auto directory_blob = DirectoryBlobReader::Create(filename, load_console_keys))
       return std::move(directory_blob);
     if (auto split_blob = SplitPlainFileReader::Create(filename))
       return std::move(split_blob);

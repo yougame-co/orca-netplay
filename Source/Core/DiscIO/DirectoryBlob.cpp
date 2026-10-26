@@ -360,13 +360,15 @@ bool ShouldHideFromGameList(const std::string& volume_path)
          IsBootBin(volume_path) || IsHeaderBin(volume_path);
 }
 
-std::unique_ptr<DirectoryBlobReader> DirectoryBlobReader::Create(const std::string& dol_path)
+std::unique_ptr<DirectoryBlobReader> DirectoryBlobReader::Create(const std::string& dol_path,
+                                                                 bool load_console_keys)
 {
   std::string partition_root, true_root;
   if (!IsValidDirectoryBlob(dol_path, &partition_root, &true_root))
     return nullptr;
 
-  return std::unique_ptr<DirectoryBlobReader>(new DirectoryBlobReader(partition_root, true_root));
+  return std::unique_ptr<DirectoryBlobReader>(
+      new DirectoryBlobReader(partition_root, true_root, load_console_keys));
 }
 
 std::unique_ptr<DirectoryBlobReader> DirectoryBlobReader::Create(
@@ -383,8 +385,8 @@ std::unique_ptr<DirectoryBlobReader> DirectoryBlobReader::Create(
 }
 
 DirectoryBlobReader::DirectoryBlobReader(const std::string& game_partition_root,
-                                         const std::string& true_root)
-    : m_encryption_cache(this)
+                                         const std::string& true_root, bool load_console_keys)
+    : m_encryption_cache(this), m_load_console_keys(load_console_keys)
 {
   DirectoryBlobPartition game_partition(game_partition_root, {});
   m_is_wii = game_partition.IsWii();
@@ -494,7 +496,7 @@ DirectoryBlobReader::DirectoryBlobReader(const DirectoryBlobReader& rhs)
     : m_gamecube_pseudopartition(rhs.m_gamecube_pseudopartition),
       m_nonpartition_contents(rhs.m_nonpartition_contents), m_partitions(rhs.m_partitions),
       m_encryption_cache(this), m_is_wii(rhs.m_is_wii), m_encrypted(rhs.m_encrypted),
-      m_data_size(rhs.m_data_size),
+      m_load_console_keys(rhs.m_load_console_keys), m_data_size(rhs.m_data_size),
       m_wrapped_volume(rhs.m_wrapped_volume ?
                            CreateDisc(rhs.m_wrapped_volume->GetBlobReader().CopyReader()) :
                            nullptr)
@@ -810,7 +812,8 @@ void DirectoryBlobReader::SetPartitionHeader(DirectoryBlobPartition* partition,
                                ticket_buffer.data(), this);
   IOS::ES::TicketReader ticket(std::move(ticket_buffer));
   if (ticket.IsValid())
-    partition->SetKey(ticket.GetTitleKey());
+    partition->SetKey(
+        ticket.GetTitleKey(IOS::HLE::IOSC{ticket.GetConsoleType(), m_load_console_keys}));
 }
 
 static void GenerateBuilderNodesFromFileSystem(const VolumeDisc& volume, const Partition& partition,

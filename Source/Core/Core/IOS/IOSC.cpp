@@ -205,10 +205,11 @@ static size_t GetSizeForType(IOSC::ObjectType type, IOSC::ObjectSubType subtype)
   return iterator != s_type_to_size_map.end() ? iterator->second : 0;
 }
 
-IOSC::IOSC(ConsoleType console_type) : m_console_type(console_type)
+IOSC::IOSC(ConsoleType console_type, bool load_console_keys) : m_console_type(console_type)
 {
   LoadDefaultEntries();
-  LoadEntries();
+  if (load_console_keys)
+    LoadEntries();
 }
 
 IOSC::~IOSC() = default;

@@ -1,4 +1,11 @@
 enable_testing()
+if(ORCA_BUILD_DISC_TOOLS)
+  add_test(NAME OrcaDiscToolVersion
+    COMMAND ${CMAKE_COMMAND}
+      -DTOOL=$<TARGET_FILE:orca-disc-tool> -DVERSION=${ORCA_VERSION}
+      -DSOURCE=${CMAKE_SOURCE_DIR}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/OrcaDiscToolVersion.cmake)
+endif()
 add_custom_target(unittests)
 add_custom_command(TARGET unittests POST_BUILD COMMAND ${CMAKE_CTEST_COMMAND} "--output-on-failure")
 

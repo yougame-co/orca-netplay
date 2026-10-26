@@ -182,7 +182,7 @@ int Run(const std::string& path, std::FILE* out)
     std::fflush(out);
   };
 
-  const std::unique_ptr<DiscIO::Volume> volume = DiscIO::CreateVolume(path);
+  const std::unique_ptr<DiscIO::Volume> volume = DiscIO::CreateVolume(path, false);
   if (!volume)
   {
     print(UnreadableLine(path));

@@ -4,7 +4,8 @@
 # and the program inside stays
 # Contents/MacOS/Orca: installed YouGame apps let only that path run in their sandbox.
 #
-#   Tools/orca-package-macos.sh [build-dir] [out-dir]
+#   ORCA_UNSIGNED_ONLY=1 Tools/orca-package-macos.sh [build-dir] [out-dir]
+#     ORCA_UNSIGNED_ONLY=1 skips all signing and notarization (local development).
 #     build-dir  default <repo>/build-orca-release (configured for a release on every run)
 #     out-dir    default <build-dir>/package
 #
@@ -76,6 +77,8 @@ fi
 
 RELEASE=0
 INTERNAL=0
+# Force a development package without consulting or using signing credentials.
+if [ "${ORCA_UNSIGNED_ONLY:-0}" != 1 ]; then
 case "${ORCA_INTERNAL:-}" in
 "" | 0) ;;
 1) INTERNAL=1 ;;
@@ -92,6 +95,8 @@ elif [ -n "${CSC_LINK:-}${CSC_KEY_PASSWORD:-}${APPLE_API_KEY:-}${APPLE_API_KEY_I
     [ -n "${!var:-}" ] || fail "a signed build is a release and also needs $var"
   done
   RELEASE=1
+fi
+
 fi
 
 COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
@@ -118,10 +123,10 @@ TAG_VERSION="${TAG#yg-dolphin-}"
 TAG_VERSION="${TAG_VERSION#yg-baiji-}"
 TAG_VERSION="${TAG_VERSION#orca-}"
 VERSION="${ORCA_VERSION:-$TAG_VERSION}"
-VERSION="${VERSION:-0.3.94}"
+VERSION="${VERSION:-0.3.95}"
 # Info.plist versions are one to three integers: 0.2.0-rc1 shows as 0.2.0.
 PLIST_VERSION="$(echo "$VERSION" | grep -Eo '^[0-9]+(\.[0-9]+){0,2}' || true)"
-PLIST_VERSION="${PLIST_VERSION:-0.3.94}"
+PLIST_VERSION="${PLIST_VERSION:-0.3.95}"
 
 if [ "$RELEASE" = 1 ]; then
   [ -z "$DIRTY" ] || fail "a signed build needs a clean tree (untracked files included)$DIRTY"
@@ -148,6 +153,7 @@ cmake -S "$ROOT" -B "$BUILD_DIR" -G Ninja \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \
   -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
   -DENABLE_QT=OFF -DENABLE_NOGUI=ON -DORCA_MACOS_BUNDLE=ON -DORCA_VERSION="$PLIST_VERSION" \
+  -DORCA_BUILD_DISC_TOOLS=ON \
   -DUSE_SYSTEM_LIBS=OFF -DUSE_SYSTEM_ICONV=ON -DENCODE_FRAMEDUMPS=OFF -DENABLE_LLVM=OFF \
   -DENABLE_ANALYTICS=OFF -DENABLE_AUTOUPDATE=OFF -DUSE_DISCORD_PRESENCE=OFF \
   -DUSE_RETRO_ACHIEVEMENTS=OFF -DUSE_MGBA=OFF -DUSE_UPNP=OFF -DENABLE_VULKAN=OFF \
@@ -157,7 +163,7 @@ cmake -S "$ROOT" -B "$BUILD_DIR" -G Ninja \
   -DCMAKE_OBJC_FLAGS="$PREFIX_MAP" -DCMAKE_OBJCXX_FLAGS="$PREFIX_MAP" >/dev/null
 grep -q '^ORCA_BUNDLE_TRUST_TEST_KEY:BOOL=OFF$' "$BUILD_DIR/CMakeCache.txt" ||
   fail "CMake's cache still trusts the bundle-flat TEST key"
-cmake --build "$BUILD_DIR" --target dolphin-nogui
+cmake --build "$BUILD_DIR" --target dolphin-nogui orca-disc-tool --parallel 2
 
 if [ "$RELEASE" = 1 ]; then
   # The source must not have moved under the build.
@@ -169,6 +175,7 @@ fi
 mkdir -p "$BUILD_DIR/stage"
 ditto "$BUILT" "$APP"
 [ -x "$EXE" ] || fail "no $EXE"
+install -m 755 "$BUILD_DIR/Binaries/orca-disc-tool" "$APP/Contents/MacOS/orca-disc-tool"
 # strings on its own, so a strings that fails can't read as "no leaks".
 STRINGS_OUT="$(mktemp)"
 strings -a "$EXE" > "$STRINGS_OUT" || { rm -f "$STRINGS_OUT"; fail "strings could not read $EXE"; }
@@ -274,6 +281,13 @@ IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" |
   awk '/Developer ID Application/ {print $2; exit}')"
 [ -n "$IDENTITY" ] || fail "no valid Developer ID Application identity in CSC_LINK (is Apple's \
 Developer ID Certification Authority G2 certificate in a keychain on this Mac?)"
+# Sign each helper beside the engine (orca-disc-tool) before sealing the bundle: hardened runtime,
+# but none of the engine's entitlements (it needs no JIT). The bundle's own signature covers Orca.
+for executable in "$APP"/Contents/MacOS/*; do
+  [ -f "$executable" ] && [ -x "$executable" ] && [ "$executable" != "$EXE" ] || continue
+  codesign --force --options runtime --timestamp \
+    --keychain "$KEYCHAIN" --sign "$IDENTITY" "$executable"
+done
 codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" \
   --keychain "$KEYCHAIN" --sign "$IDENTITY" "$APP"
 codesign --verify --strict --verbose=2 "$APP"
