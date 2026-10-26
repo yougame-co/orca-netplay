@@ -17,6 +17,7 @@
 #include <fmt/format.h>
 #include <xxh3.h>
 
+#include "Common/CommonFuncs.h"
 #include "Common/FileUtil.h"
 #include "Common/IniFile.h"
 #include "Common/StringUtil.h"
@@ -79,12 +80,25 @@ void Drop(const std::string& path)
 }
 }  // namespace
 
-std::optional<Identity> Identify(const std::string& path)
+std::optional<Identity> Identify(const std::string& path, std::string* reason)
 {
+  if (reason)
+    reason->clear();
+  const auto fail = [reason](std::string why) -> std::optional<Identity> {
+    if (reason)
+      *reason = std::move(why);
+    return std::nullopt;
+  };
   std::error_code ec;
   const auto canonical = std::filesystem::canonical(StringToPath(path), ec);
   if (ec)
-    return std::nullopt;
+    return fail(ec == std::errc::no_such_file_or_directory ? "missing" :
+                "file status failed: " + ec.message());
+  const bool regular = std::filesystem::is_regular_file(canonical, ec);
+  if (ec)
+    return fail("file status failed: " + ec.message());
+  if (!regular)
+    return fail("not a regular file");
   Identity identity;
   identity.path = PathToString(canonical);
 #ifdef _WIN32
@@ -92,7 +106,11 @@ std::optional<Identity> Identify(const std::string& path)
                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                                   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (file == INVALID_HANDLE_VALUE)
-    return std::nullopt;
+  {
+    const DWORD code = GetLastError();
+    return fail(fmt::format("open failed: {} (error {})",
+                           StripWhitespace(Common::GetWin32ErrorString(code)), code));
+  }
   FILE_BASIC_INFO basic{};
   FILE_STANDARD_INFO standard{};
   FILE_ID_INFO id{};
@@ -100,9 +118,13 @@ std::optional<Identity> Identify(const std::string& path)
       GetFileInformationByHandleEx(file, FileBasicInfo, &basic, sizeof(basic)) &&
       GetFileInformationByHandleEx(file, FileStandardInfo, &standard, sizeof(standard)) &&
       GetFileInformationByHandleEx(file, FileIdInfo, &id, sizeof(id));
+  const DWORD code = ok ? ERROR_SUCCESS : GetLastError();
   CloseHandle(file);
-  if (!ok || standard.Directory || standard.EndOfFile.QuadPart < 0)
-    return std::nullopt;
+  if (!ok)
+    return fail(fmt::format("file status failed: {} (error {})",
+                           StripWhitespace(Common::GetWin32ErrorString(code)), code));
+  if (standard.Directory || standard.EndOfFile.QuadPart < 0)
+    return fail("not a regular file");
   identity.size = static_cast<u64>(standard.EndOfFile.QuadPart);
   identity.modified = fmt::format("{}", basic.LastWriteTime.QuadPart);
   identity.changed = fmt::format("{}", basic.ChangeTime.QuadPart);
@@ -111,8 +133,10 @@ std::optional<Identity> Identify(const std::string& path)
     identity.file_id += fmt::format("{:02x}", byte);
 #else
   struct stat info{};
-  if (stat(identity.path.c_str(), &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0)
-    return std::nullopt;
+  if (stat(identity.path.c_str(), &info) != 0)
+    return fail("file status failed: " + Common::LastStrerrorString());
+  if (!S_ISREG(info.st_mode) || info.st_size < 0)
+    return fail("not a regular file");
   identity.size = static_cast<u64>(info.st_size);
 #ifdef __APPLE__
   const auto modified = info.st_mtimespec;
@@ -139,17 +163,22 @@ Audit::Audit(std::vector<FileToVerify> files, std::string cache_dir, Hasher hash
     : m_files(std::move(files)),
       m_hasher(hasher ? std::move(hasher) :
                         [](const std::string& path, const std::atomic<bool>& stop) {
-                          return HashFile(path, &stop);
+                          std::string reason;
+                          auto hash = HashFile(path, &stop, &reason);
+                          return HashResult{std::move(hash), std::move(reason)};
                         })
 {
   for (const auto& file : m_files)
   {
-    auto identity = Identify(file.path);
+    std::string reason;
+    auto identity = Identify(file.path, &reason);
+    m_identity_errors.push_back(std::move(reason));
     const std::string key = (identity ? identity->path : file.path) + '\n' + file.expected;
     const std::string record =
         cache_dir + "/" + fmt::format("{:016x}.ini", XXH3_64bits(key.data(), key.size()));
     const auto cached = identity ? Load(record) : std::nullopt;
-    m_cache_hit &= cached && cached->Matches(*identity, file.expected);
+    m_cache_hit &= cached && cached->Matches(*identity, file.expected) &&
+                   (!file.expected_size || identity->size == *file.expected_size);
     m_identities.push_back(std::move(identity));
     m_records.push_back(record);
   }
@@ -179,13 +208,33 @@ void Audit::Run()
       return;
     }
     const auto& file = m_files[i];
-    const std::string hash = m_hasher(file.path, m_stop);
+    if (!m_identities[i])
+    {
+      Complete(false, file.refusal + " (" + m_identity_errors[i] + ")", i);
+      return;
+    }
+    if (file.expected_size && m_identities[i]->size != *file.expected_size)
+    {
+      Complete(false, fmt::format("{} (size differs: actual {} bytes, expected {} bytes)",
+                                  file.refusal, m_identities[i]->size, *file.expected_size), i);
+      return;
+    }
+    const HashResult result = m_hasher(file.path, m_stop);
     const auto after = Identify(file.path);
     // A file replaced or edited during verification never supplies a cache record or goes online.
-    const bool changed = m_identities[i] && after != m_identities[i];
-    if (hash.empty() || hash != file.expected || changed)
+    std::string reason;
+    if (after != m_identities[i])
+      reason = "changed while being verified";
+    else if (!result.reason.empty())
+      reason = result.reason;
+    else if (result.hash.empty())
+      reason = "hash failed";
+    else if (result.hash != file.expected)
+      reason = fmt::format("hash differs: actual {}, expected {}", result.hash.substr(0, 8),
+                           file.expected.substr(0, 8));
+    if (!reason.empty())
     {
-      Complete(false, file.refusal, i);
+      Complete(false, file.refusal + " (" + reason + ")", i);
       return;
     }
   }

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -15,6 +16,11 @@
 
 #include "Common/CommonTypes.h"
 #include "Core/Orca/Session/Session.h"
+
+namespace Orca::Engine
+{
+struct GameResult;
+}
 
 // A private YouGame room carrying an Orca drop-in session. The host plays from boot and friends
 // join by room code (up to four players). Each player's seat is its room slot (seat 0, the host, is
@@ -190,6 +196,11 @@ struct GameReport
   int set_winner_seat = -1;
 };
 
+// Translate a confirmed native result. A supplied map means doubles (even when invalid/empty).
+// Joint native winners must be exactly one assigned pair; otherwise the game is void "teams".
+GameReport FromGameResult(const Engine::GameResult& result,
+                          const std::optional<std::map<int, int>>& doubles_teams = std::nullopt);
+
 enum class RoomState
 {
   Connecting,
@@ -212,6 +223,11 @@ public:
   int Seat() const;
   // Our other seats, ordered by localIndex. Empty until the roster names any.
   std::vector<int> CoSeats() const;
+  // Unresolved/cancelling adds cannot supply local ports to solo emulation.
+  std::optional<std::vector<int>> CoSeatsForSolo() const;
+  // CPU thread: published before constructing/after releasing the rollback session.
+  void SetSessionActive(bool active);
+  bool TryStartSession(const std::vector<int>& co_seats);
   // The roster's local ordinal (-1 for an absent/invalid seat).
   int LocalIndex(int seat, bool only_mine = false) const;
   // A seat's machine group, lead first then co-seats by localIndex (empty if absent).
@@ -288,7 +304,11 @@ public:
   // The room's queue from its welcome: "private" (a friends room, and until the welcome), "casual"
   // or "ranked".
   std::string Queue() const;
+  // Gameplay policy: doubles uses the friends four-seat select until team rules/results ship.
+  std::string PlayQueue() const;
   bool Doubles() const;
+  // Complete seat-to-team assignment from the room, otherwise empty. No guest writes.
+  std::map<int, int> Teams() const;
   // Friends policy before welcome, or a casual/ranked welcome with room.recovery:true.
   bool RoomRecovery() const;
   // A room match is running and its result isn't in yet (for ranked, the whole set).
@@ -348,7 +368,8 @@ public:
 private:
   YouGameRoom(RoomOptions options, bool start_io);
   friend std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions&,
-                                                      const std::vector<RoomTestStep>&);
+                                                      const std::vector<RoomTestStep>&,
+                                                      const std::function<void(YouGameRoom&)>&);
   struct Impl;
   std::unique_ptr<Impl> m_impl;
 };
@@ -463,6 +484,13 @@ struct RoomTestStep
     ReportGame,
     GameStart,
     Stall,
+    PageEvent,
+    SessionActive,
+    Tournament,
+    OfferKeyframe,
+    AppCaps,
+    SocketMessage,
+    FlushHeld,
   };
   Kind kind;
   int milliseconds = 0;
@@ -495,7 +523,14 @@ struct RoomTestSnapshot
   std::array<std::vector<int>, MAX_SEATS> groups;
   std::vector<int> linked_seats;
   std::optional<std::chrono::steady_clock::time_point> host_input_deadline;
+  std::map<int, int> teams;
+  std::optional<int> ticket_local_seats = 1;
+  picojson::object mirror;
+  std::string published_mirror;
+  unsigned mirror_serializations = 0;
+  std::vector<std::string> probe_lines;
 };
 std::vector<RoomTestSnapshot> TraceRoomForTest(const RoomOptions& options,
-                                             const std::vector<RoomTestStep>& steps);
+                                             const std::vector<RoomTestStep>& steps,
+                                             const std::function<void(YouGameRoom&)>& observe = {});
 }  // namespace Orca::Net

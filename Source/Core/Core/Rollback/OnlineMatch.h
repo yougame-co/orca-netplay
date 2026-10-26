@@ -124,9 +124,11 @@ struct ReseatResult
   int log_base;
   std::vector<Orca::Net::Pads> log;
   bool queued_local_empty;
+  std::vector<int> co_seats;
 };
 // Runs the actual reseat with queued inputs and a supplied history, without clearing the history.
-ReseatResult PumpReseatForTest(int seat, const std::vector<Orca::Net::Pads>& log);
+ReseatResult PumpReseatForTest(int seat, const std::vector<Orca::Net::Pads>& log,
+                             const std::vector<int>& co_seats = {});
 
 // Refused joins whose host or match ended use the app's existing state events.
 void ReportJoinFailure(std::string_view code, std::string_view sentence);
@@ -586,6 +588,7 @@ std::vector<Orca::Net::Pads> PumpSoloSeatsForTest(Core::System& system,
     const std::vector<int>& co_seats, int frames, bool fresh_tail,
     const std::function<Orca::Net::Pad(int)>& sample,
     std::vector<Orca::Events::PortInfo>* ports);
+Orca::Net::Pads PumpSoloRoomForTest(Core::System& system, Orca::Net::YouGameRoom& room);
 std::optional<Orca::Net::Pad> PumpSeenLocalPadForTest(int lead,
     const std::vector<int>& co_seats, const std::function<Orca::Net::Pad(int)>& sample);
 int PumpLeadSeatForTest(std::unique_ptr<Orca::Net::Session> session, int solo_seat);

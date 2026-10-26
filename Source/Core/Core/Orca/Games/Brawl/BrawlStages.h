@@ -52,7 +52,7 @@ class GuestMemory;
 
 namespace Orca::UX::BrawlStages
 {
-// Supernova 2025's legal stages, in the Brawl ruleset's order (Rulesets/brawl-supernova-2025.json).
+// Stable casual Supernova 2025 stage indices; ranked Supernova 2026 adds Frigate below.
 enum Stage : u8
 {
   Battlefield,
@@ -151,7 +151,7 @@ struct Tile
 const Tile& TileFor(int stage);
 
 // Maps the game's stage id (result info +0x0C) to a legal Stage, or -1.
-int StageForStageId(int stage_id);
+int StageForStageId(int stage_id, bool casual = false);
 
 // The stage select as seen this frame.
 struct View

@@ -51,6 +51,7 @@
 #pragma once
 
 #include <optional>
+#include <string>
 
 #include "Core/Rollback/Rollback.h"
 
@@ -63,6 +64,8 @@ namespace Rollback::Harness
 {
 bool Active();
 std::optional<GCPadStatus> InputOverride(int port);
+// Isolated command harness only: replace the per-port script from stdin; empty resets it.
+bool SetInputScriptForTest(const std::string& path);
 // Tells the harness a session rolled back to the start of `frame` at this boundary.
 void RewindTo(int frame);
 // Tells the harness this boundary's rewind (RewindTo) put back this game's own earlier state as a

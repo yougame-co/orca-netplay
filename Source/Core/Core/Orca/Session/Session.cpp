@@ -438,8 +438,12 @@ bool Session::ApplyGroups(const Packet& packet)
       return false;
     }
   }
+  unsigned ended_leads = 0;
   for (int seat = 0; seat < MAX_SEATS; ++seat)
   {
+    if (m_group_known[seat] && LeadOf(seat) == seat &&
+        (groups[seat] != seat || m_plan[seat].live_from != (*packet.roster)[seat].live_from))
+      ended_leads |= 1u << seat;
     if (m_group_known[seat] && LeadOf(seat) != seat &&
         (groups[seat] != LeadOf(seat) ||
          m_plan[seat].live_from != (*packet.roster)[seat].live_from))
@@ -455,6 +459,9 @@ bool Session::ApplyGroups(const Packet& packet)
       m_group_known[seat] = false;
     }
   }
+  // Retired copies belong to one lead stay, never a replacement connection in its port.
+  for (auto& retired : m_retired_co_leads)
+    retired &= ~ended_leads;
   return true;
 }
 
@@ -603,6 +610,9 @@ void Session::AdmitSeat(int seat, int live_from, int history_from)
 {
   if (m_config.per_peer_inputs && InPlay(seat))
     DropSeat(seat);
+  if (LeadOf(seat) == seat)
+    for (auto& retired : m_retired_co_leads)
+      retired &= ~(1u << seat);
   SeatPlan& plan = m_plan[seat];
   plan = {NEVER, NEVER, live_from};
   m_peer_ack[seat].fill(-1);
@@ -734,6 +744,9 @@ void Session::RetireSeat(int seat, bool preserve_unplug)
   const int lead = LeadOf(seat);
   if (lead != seat)
     m_retired_co_leads[seat] |= 1u << lead;
+  else
+    for (auto& retired : m_retired_co_leads)
+      retired &= ~(1u << lead);
   const bool local_co = IsLocal(seat) && seat != m_config.local_seat;
   m_plug_batch.erase(seat);
   CloseEmptyBatch();

@@ -20,7 +20,7 @@ namespace Orca::UX::CharOrder
 enum class Ruleset : u8
 {
   None = 0,
-  Brawl = 1,  // Supernova 2025
+  Brawl = 1,  // Supernova 2026
   PPlus = 2,  // Project+ 2024 Recommended
 };
 
@@ -128,7 +128,7 @@ u8 LockedPorts(const SetView& set, const CssView& css, const State& state);
 // that player out of the set as one who didn't pick in time (Rollback/OnlineMatch.cpp). Pure.
 int NoShow(const SetView& set, const CssView& css, const State& state);
 
-// Supernova 2025's Meta Knight rule: if exactly one player is Meta Knight, the other port may pick
+// Supernova 2026's Meta Knight rule: if exactly one player is Meta Knight, the other port may pick
 // any legal stage. Returns that port, or -1. `meta_knight` is Meta Knight's id in the same id space
 // as `characters`.
 int MkFreePicker(const std::array<int, 2>& characters, int meta_knight);

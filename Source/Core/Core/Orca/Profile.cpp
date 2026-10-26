@@ -672,7 +672,10 @@ void SetSeedSessionSave(bool seed)
 
 bool SeedSessionSave()
 {
-  return s_seed_session_save;
+  // Bundles have no NAND save import contract. A listed file or saveTitle alone cannot
+  // supply a seed; mod sessions start clean, including before their profile is selected.
+  return s_seed_session_save &&
+         !(SessionActive() && (Mod::Requested() || Mod::ActiveMod()));
 }
 
 std::optional<Profile> LoadProfile(const std::string& game_id, std::optional<u16> revision,
@@ -741,6 +744,14 @@ std::optional<Profile> LoadProfileFrom(const std::string& sys_directory, const s
         return fail(fmt::format("{} must be 32 lowercase hex digits (XXH3-128)", key));
       }
       (key == "Launcher" ? profile.launcher_hash : profile.sd_image_hash) = value;
+    }
+    else if (section == "Profile" && (key == "LauncherSize" || key == "SDImageSize"))
+    {
+      u64 size = 0;
+      const auto [end, code] = std::from_chars(value.data(), value.data() + value.size(), size);
+      if (code != std::errc{} || end != value.data() + value.size())
+        return fail("file size must be an unsigned byte count");
+      (key == "LauncherSize" ? profile.launcher_size : profile.sd_image_size) = size;
     }
     else if (section == "Profile" && (key == "Disc" || key == "SDImage"))
     {
@@ -872,14 +883,37 @@ std::string LauncherProfileName()
   return value;
 }
 
-std::string HashFile(const std::string& path, const std::atomic<bool>* stop)
+// The system's reason for the last failed open or read. On Windows that's its own code and words
+// (a full disk, OneDrive not running, a sharing violation), which the C library folds into one
+// errno; the number keeps a report readable when Windows answers in the player's language.
+static std::string LastFileError()
 {
+#ifdef _WIN32
+  const unsigned long code = _doserrno;
+  if (code != 0)
+    return fmt::format("{} (error {})", StripWhitespace(Common::GetWin32ErrorString(code)), code);
+#endif
+  return Common::LastStrerrorString();
+}
+
+std::string HashFile(const std::string& path, const std::atomic<bool>* stop, std::string* reason)
+{
+  if (reason)
+    reason->clear();
+  const auto fail = [reason](std::string why) {
+    if (reason)
+      *reason = std::move(why);
+    return std::string{};
+  };
+#ifdef _WIN32
+  _doserrno = 0;
+#endif
   File::IOFile file(path, "rb");
   if (!file)
-    return {};
+    return fail("open failed: " + LastFileError());
   XXH3_state_t* state = XXH3_createState();
   if (!state)
-    return {};
+    return fail("hash failed: could not allocate state");
   XXH3_128bits_reset(state);
   std::vector<u8> buffer(8 << 20);
   u64 remaining = file.GetSize();
@@ -894,6 +928,8 @@ std::string HashFile(const std::string& path, const std::atomic<bool>* stop)
     const size_t n = static_cast<size_t>(std::min<u64>(remaining, buffer.size()));
     if (!file.ReadBytes(buffer.data(), n))
     {
+      fail(std::feof(file.GetHandle()) ? "read failed: unexpected end of file" :
+                                       "read failed: " + LastFileError());
       ok = false;
       break;
     }
@@ -905,19 +941,6 @@ std::string HashFile(const std::string& path, const std::atomic<bool>* stop)
   return ok && (!stop || !stop->load(std::memory_order_relaxed)) ?
              fmt::format("{:016x}{:016x}", hash.high64, hash.low64) :
              std::string{};
-}
-
-// The system's reason for the last failed open or read. On Windows that's its own code and words
-// (a full disk, OneDrive not running, a sharing violation), which the C library folds into one
-// errno; the number keeps a report readable when Windows answers in the player's language.
-static std::string LastFileError()
-{
-#ifdef _WIN32
-  const unsigned long code = _doserrno;
-  if (code != 0)
-    return fmt::format("{} (error {})", StripWhitespace(Common::GetWin32ErrorString(code)), code);
-#endif
-  return Common::LastStrerrorString();
 }
 
 std::string DiscOpenProblem(const std::string& disc_path)
@@ -969,20 +992,24 @@ bool PrepareLauncherBoot(Profile* profile, const std::string& executable_path,
     return false;
   }
   // The boot inserts the disc with the same alias (Boot.cpp).
-  AliasRevision(*disc);
+  std::string alias_reason;
+  AliasRevision(*disc, &alias_reason);
   const u16 disc_revision = disc->GetRevision().value_or(0);
   if (disc->GetGameID() != profile->disc || disc_revision != profile->revision)
   {
     *error = fmt::format("Orca: profile {} needs {} revision {}; the disc is {} revision {}",
                          profile->game_id, profile->disc, profile->revision, disc->GetGameID(),
                          disc_revision);
+    if (disc->GetGameID() == "RSBE01" && disc_revision == 1)
+      *error = DiscRevisionRefusal(std::move(*error), alias_reason);
     return false;
   }
 
   BootPhase::Mark(BootPhase::Phase::Disc);
   std::vector<BootAudit::FileToVerify> files{{
       executable_path, profile->launcher_hash,
-      fmt::format("Orca: {} is not the loader profile {} names", executable_path, profile->game_id)}};
+      fmt::format("Orca: {} is not the loader profile {} names", executable_path, profile->game_id),
+      profile->launcher_size}};
   if (!profile->sd_image.empty())
   {
     std::string folder;
@@ -990,7 +1017,7 @@ bool PrepareLauncherBoot(Profile* profile, const std::string& executable_path,
     const std::string image = folder + profile->sd_image;
     files.push_back({image, profile->sd_image_hash,
                      fmt::format("Orca: {} is missing or is not the SD card profile {} names", image,
-                                 profile->game_id)});
+                                 profile->game_id), profile->sd_image_size});
     // Read-only, as before; a cache hit can run offline while its audit is pending.
     profile->sd_image_path = image;
   }

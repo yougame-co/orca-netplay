@@ -43,6 +43,7 @@
 #include "Core/Orca/BootPhase.h"
 #include "Core/Orca/Branding.h"
 #include "Core/Orca/Bundle.h"
+#include "Core/Orca/Disc.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Status.h"
 #include "Core/Orca/UX/UX.h"
@@ -175,6 +176,11 @@ bool BootCore(Core::System& system, std::unique_ptr<BootParameters> boot,
     else
     {
       orca_profile = Orca::LoadProfile(StartUp.GetGameID(), StartUp.GetRevision(), &error);
+      if (!orca_profile && StartUp.GetGameID() == "RSBE01" && StartUp.GetRevision() == 1)
+      {
+        if (const auto* disc = std::get_if<BootParameters::Disc>(&boot->parameters))
+          error = Orca::DiscRevisionRefusal(std::move(error), disc->alias_revision_reason);
+      }
       if (orca_profile && orca_profile->IsLauncher())
       {
         error = fmt::format("Orca: profile {} boots through its loader, not the disc",

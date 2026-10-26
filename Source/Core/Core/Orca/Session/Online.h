@@ -4,6 +4,7 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <string>
 #include <optional>
 #include <string_view>
@@ -49,9 +50,12 @@ void RequestHost(const std::string& code);
 std::optional<std::string> TakeHostRequest();
 
 // ---- Matchmade rooms ----
-// The room's queue: "private" (a friends room, or no room), "casual" or "ranked".
+// Gameplay policy: "private" for friends/doubles (or no room), otherwise "casual" or "ranked".
+// YouGameRoom::Queue keeps the room service's queue for the mirror and tickets.
 std::string RoomQueue();
 bool RoomDoubles();
+// Complete room team assignment; metadata only until frame-synchronized team rules ship.
+std::map<int, int> RoomTeams();
 // A room match is running and its result isn't in yet.
 bool MatchLive();
 // A ranked set's room after its verdict, still open: the players stay together on the results
@@ -117,6 +121,9 @@ std::optional<bool> Joining();
 Net::Transport* Transport();
 int Seat();
 std::vector<int> CoSeats();
+std::optional<std::vector<int>> CoSeatsForSolo();
+void SetSessionActive(bool active);
+bool TryStartSession(const std::vector<int>& co_seats);
 int LocalIndex(int seat);
 std::vector<int> GroupOf(int seat);
 std::vector<Net::PeerEvent> TakePeerEvents();

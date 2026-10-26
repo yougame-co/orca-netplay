@@ -148,8 +148,8 @@ static void InitializeDeterministicWiiSaves(FS::FileSystem* session_fs,
     }
   }
 
-  // Orca: both players start from the save prepared in the session's user directory (or, in
-  // Orca.app, none), never from anything else on their own NANDs.
+  // Orca: mod sessions start clean. Legacy sessions keep the save prepared in the session's
+  // user directory (or, in Orca.app, none). Hash the resulting seed exactly as before.
   if (Orca::SessionActive())
   {
     if (Orca::SeedSessionSave())

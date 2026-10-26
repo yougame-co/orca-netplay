@@ -46,7 +46,6 @@ constexpr u32 AREA_IN_HAND = 0x1F8;  // u8: 1 the token is in the hand, 0 down
 constexpr u32 AREA_FLYING = 0x1F9;   // u8: 1 while the token flies
 constexpr u32 KIND_HUMAN = 1;
 
-constexpr u16 BUTTON_START = PAD_BUTTON_START;
 constexpr u16 BUTTON_B = PAD_BUTTON_B;
 
 bool Pointer(const GuestMemory& m, u32 p)
@@ -326,7 +325,9 @@ View ReadView(const GuestMemory& m, const std::vector<Events::PortInfo>& ports)
     return v;
   // The ruleset's queue timers. A queue header is locked, so it names a builtin ruleset; none only
   // in a build whose ruleset files don't load (OrcaRulesets.BuiltinsAreTheOldTables).
-  const Ranked::Ruleset* rules = Rulesets::ByBlock(static_cast<u8>(h.ruleset));
+  const Ranked::Ruleset* rules = h.ruleset == Rules::Ruleset::Brawl ?
+                                     &Rulesets::RulesFor(h.mode == Rules::Mode::Casual) :
+                                     Rulesets::ByBlock(static_cast<u8>(h.ruleset));
   if (!rules)
     return v;
   v.ready_frames = static_cast<u16>(rules->queue_ready_seconds * 60);

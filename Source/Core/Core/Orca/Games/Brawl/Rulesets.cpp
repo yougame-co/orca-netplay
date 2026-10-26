@@ -51,6 +51,11 @@ const Ranked::Ruleset& Brawl2026()
   return r;
 }
 
+const Ranked::Ruleset& RulesFor(bool casual)
+{
+  return casual ? Brawl2025() : Brawl2026();
+}
+
 const Ranked::Ruleset& PPlus2024()
 {
   static const Ranked::Ruleset r = Load("pplus-2024", std::string_view(PPLUS_2024, sizeof(PPLUS_2024)));

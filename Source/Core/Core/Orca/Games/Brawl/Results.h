@@ -34,6 +34,7 @@ class CPUThreadGuard;
 //         +0x0C u16 stage id, +0x0E u16 how the fight ended, +0x1378 u8 decision (1 time up,
 //         2 win, 9 no contest)
 //         per port at +0x24 + port * 0x2AC: +0x00 u8 character, +0x01 u8 player type,
+//         +0x06 u8 team colour (0 red, 1 blue, 2 green),
 //         +0x0A u8 stocks left (0xFF timed), +0x0E u8 place (0 winner), +0x10 u32 KOs,
 //         +0x14 u32 falls, +0x18 u16 self-destructs
 //   +0x1C rules (0x9017F360): +0x02 u8 mode, +0x03 u8 timed minutes, +0x04 u8 stocks,
@@ -54,6 +55,7 @@ struct PortResult
   int character = -1;
   int stocks = -1;  // stocks left; -1 in a timed match
   int place = -1;   // 0 the winner
+  int team = -1;    // native team colour, 0 red / 1 blue / 2 green
   bool operator==(const PortResult&) const = default;
 };
 
@@ -97,7 +99,10 @@ GameResult FromRecord(const SetBlock::SetState& set, int index);
 
 // Judges a results screen. Void "rules-<rule>" when the match differed from mod.json's
 // rankedRules, void "ports" unless exactly two humans are on ports 1 and 2, void "nocontest" unless
-// the fight ended normally. One player first is a win, both first a draw.
+// the fight ended normally. One player first is a win, both first a draw. Four humans require
+// two native teams of two: first-place players on one native team name its whole pair, including
+// an eliminated teammate. First-place players on both teams draw. The session must match the
+// native winning pair to the room's assigned pair before reporting a team win.
 GameResult Judge(const ResultBlock& block, int frame);
 
 // Turns per-frame readings into game results once those frames are final, identically on every

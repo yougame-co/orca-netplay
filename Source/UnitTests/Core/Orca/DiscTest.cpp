@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
+#include <algorithm>
+#include <cstddef>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -17,6 +19,8 @@
 #include "Common/CommonTypes.h"
 #include "Common/FileUtil.h"
 #include "Core/Orca/Disc.h"
+#include "Core/IOS/ES/Formats.h"
+#include "DiscIO/Blob.h"
 #include "Core/Orca/Profile.h"
 #include "DiscIO/Volume.h"
 #include "DiscIO/VolumeDisc.h"
@@ -266,4 +270,126 @@ TEST(OrcaInput, AnyNameMatchesSourceAndId)
   exact.FromString("SDL/0/DualSense");
   const auto xbox = std::make_unique<FakeDevice>("SDL", "Xbox Wireless Controller", 0);
   EXPECT_FALSE(exact == static_cast<const ciface::Core::Device*>(xbox.get()));
+}
+
+namespace
+{
+class AliasDisc final : public DiscIO::VolumeDisc
+{
+public:
+  DiscIO::Platform platform = DiscIO::Platform::WiiDisc;
+  std::string id = "RSBE01";
+  std::optional<u16> revision = 1;
+  IOS::ES::TMDReader tmd;
+  int wrong_patch = -1;
+  bool unreadable = false;
+  bool patched = false;
+  AliasDisc() { SetContents(1); }
+  void SetContents(size_t count, bool right_hash = true)
+  {
+    std::vector<u8> data(sizeof(IOS::ES::TMDHeader) + count * sizeof(IOS::ES::Content));
+    // RSA-2048 signature type and big-endian num_contents. The parser checks structure, not trust.
+    data[1] = 1; data[3] = 1;
+    data[offsetof(IOS::ES::TMDHeader, num_contents) + 1] = static_cast<u8>(count);
+    const std::array<u8, 20> sha = {0xab,0x93,0xef,0x28,0x0b,0x83,0x45,0x72,0x52,0x3f,
+                                  0x64,0xc5,0x5c,0x6a,0x32,0x05,0xea,0xd6,0x6d,0x04};
+    if (count && right_hash)
+      std::copy(sha.begin(), sha.end(), data.begin() + sizeof(IOS::ES::TMDHeader) + 16);
+    tmd = IOS::ES::TMDReader(std::move(data));
+  }
+  bool Read(u64 offset, u64 length, u8* buffer, const DiscIO::Partition& partition) const override
+  {
+    int index = partition == DiscIO::PARTITION_NONE ? 0 : offset == 7 ? 1 : 2;
+    if (index == wrong_patch && unreadable)
+      return false;
+    std::fill_n(buffer, length, index == wrong_patch ? 9 : 1);
+    return true;
+  }
+  bool SetReadPatches(std::vector<ReadPatch> patches, ReadPatchFailure* failure = nullptr) override
+  {
+    for (size_t i = 0; i < patches.size(); ++i)
+    {
+      const auto& patch = patches[i];
+      u8 byte = 0;
+      const bool read = Read(patch.offset, 1, &byte, patch.partition);
+      if (!read || byte != patch.original)
+      {
+        if (failure)
+          *failure = {i, read ? std::optional<u8>(byte) : std::nullopt, false};
+        return false;
+      }
+    }
+    patched = true;
+    return true;
+  }
+  DiscIO::Partition GetGamePartition() const override { return DiscIO::Partition(0xf800000); }
+  const IOS::ES::TMDReader& GetTMD(const DiscIO::Partition&) const override { return tmd; }
+  std::string GetGameID(const DiscIO::Partition& = DiscIO::PARTITION_NONE) const override { return id; }
+  std::string GetGameTDBID(const DiscIO::Partition&) const override { return id; }
+  std::optional<u16> GetRevision(const DiscIO::Partition& = DiscIO::PARTITION_NONE) const override { return revision; }
+  const DiscIO::FileSystem* GetFileSystem(const DiscIO::Partition&) const override { return nullptr; }
+  std::vector<u32> GetBanner(u32*, u32*) const override { return {}; }
+  DiscIO::Platform GetVolumeType() const override { return platform; }
+  bool IsDatelDisc() const override { return false; }
+  DiscIO::Region GetRegion() const override { return DiscIO::Region::NTSC_U; }
+  DiscIO::BlobType GetBlobType() const override { return DiscIO::BlobType::PLAIN; }
+  u64 GetDataSize() const override { return 0; }
+  DiscIO::DataSizeType GetDataSizeType() const override { return DiscIO::DataSizeType::Accurate; }
+  u64 GetRawSize() const override { return 0; }
+  const DiscIO::BlobReader& GetBlobReader() const override { std::abort(); }
+  std::array<u8, 20> GetSyncHash() const override { return {}; }
+};
+}
+
+TEST(OrcaDisc, AliasRefusalNamesEachFailedCheck)
+{
+  const std::vector<std::string> reasons = {
+      "platform=0; expected WiiDisc",
+      "GetGameID(game)=OTHER; expected RSBE01",
+      "GetRevision(game)=2; expected 1",
+      "GetRevision(game)=missing; expected 1",
+      "TMD invalid/unparsed",
+      "contents.size()=0; expected 1",
+      "contents.size()=2; expected 1",
+      "content[0] SHA-1=00000000; expected ab93ef28",
+      "SetReadPatches[0]: partition=none offset=0x7 byte=0x09; expected 0x01",
+      "SetReadPatches[1]: partition=0xf800000 offset=0x7 byte=0x09; expected 0x01",
+      "SetReadPatches[2]: partition=0xf800000 offset=0x4f71f byte=0x09; expected 0x01",
+      "SetReadPatches[2]: partition=0xf800000 offset=0x4f71f byte=unreadable; expected 0x01"};
+  for (size_t test = 0; test < reasons.size(); ++test)
+  {
+    SCOPED_TRACE(test);
+    AliasDisc volume;
+    if (test == 0) volume.platform = DiscIO::Platform::GameCubeDisc;
+    if (test == 1) volume.id = "OTHER";
+    if (test == 2) volume.revision = 2;
+    if (test == 3) volume.revision.reset();
+    if (test == 4) volume.tmd = IOS::ES::TMDReader{};
+    if (test == 5) volume.SetContents(0);
+    if (test == 6) volume.SetContents(2);
+    if (test == 7) volume.SetContents(1, false);
+    if (test >= 8) volume.wrong_patch = std::min<int>(test - 8, 2);
+    volume.unreadable = test == 11;
+    std::string reason;
+    EXPECT_FALSE(Orca::AliasRevision(volume, &reason));
+    EXPECT_EQ(reason, reasons[test]);
+    EXPECT_FALSE(volume.patched);
+  }
+  AliasDisc volume;
+  std::string reason = "stale";
+  EXPECT_TRUE(Orca::AliasRevision(volume, &reason));
+  EXPECT_TRUE(reason.empty());
+  EXPECT_TRUE(volume.patched);
+}
+
+TEST(OrcaDisc, RevisionRefusalKeepsTheProfileSentencePrefix)
+{
+  const std::string prefix = "This disc is RSBE01 revision 1; YG Dolphin's profile is for revision 2";
+  AliasDisc volume;
+  volume.SetContents(1, false);
+  std::string reason;
+  EXPECT_FALSE(Orca::AliasRevision(volume, &reason));
+  EXPECT_EQ(Orca::DiscRevisionRefusal(prefix, reason), prefix +
+      " (content[0] SHA-1=00000000; expected ab93ef28)");
+  EXPECT_EQ(Orca::DiscRevisionRefusal(prefix, ""), prefix);
 }

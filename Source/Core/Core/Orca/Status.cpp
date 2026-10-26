@@ -11,6 +11,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <utility>
 
 #include <fmt/format.h>
 
@@ -35,6 +36,8 @@ std::atomic<bool> s_started{false};
 std::atomic<bool> s_online_withdrawn{false};
 std::atomic<bool> s_stopping{false};
 std::FILE* s_out = nullptr;
+// Capability readers run on the room/controller threads. Never keep this lock during output.
+std::mutex s_caps_mutex;
 std::set<std::string, std::less<>> s_app_caps;
 // The last `orca caps` list printed (nullopt: none yet), under s_mutex.
 std::optional<std::string> s_printed_caps;
@@ -58,6 +61,16 @@ std::set<std::string, std::less<>> Agreed(std::string_view offered, std::string_
   }
   return both;
 }
+
+// Called under s_mutex to preserve agreement ordering; publish without holding the capability
+// lock across Print, whose stream can wait for the desktop app to drain its pipe.
+void AgreeCaps(std::string_view offered, std::string_view app)
+{
+  auto agreed = Agreed(offered, app);
+  std::lock_guard lock(s_caps_mutex);
+  s_app_caps = std::move(agreed);
+}
+
 // When CapsSettled was first asked (host clock: when "ready" waits, never what the game computes).
 std::optional<std::chrono::steady_clock::time_point> s_settle_asked;
 void (*s_error_listener)(std::string_view, std::string_view) = nullptr;
@@ -201,6 +214,12 @@ std::string OfferedCaps()
 #endif
   }
   caps += fmt::format(" {} {}", RECORD_CAP, HOSTUI_CAP);
+  // Append-only: old desktop builds read at most 24 words.
+  if (SessionActive() && GetEnv("ORCA_COSEATS") != "0")
+    caps += " coseats";
+  // Casual queue doubles also works with one seat per computer, without co-seats.
+  if (SessionActive())
+    caps += " qdoubles rdoubles";
   return caps;
 }
 
@@ -237,7 +256,7 @@ void UpdateCaps()
   s_offer_seen = caps;
   // What is on follows the offer at once (a withdrawn cap off, a cap the app already listed on),
   // before any new answer from the app.
-  s_app_caps = Agreed(caps, s_app_list);
+  AgreeCaps(caps, s_app_list);
   if (s_printed_caps && *s_printed_caps != caps)
   {
     s_printed_caps = caps;
@@ -258,7 +277,7 @@ void ResetOnline()
   std::lock_guard lock(s_mutex);
   // Legacy profiles do not pass through UpdateCaps after a reboot. Restore the agreement here
   // against the app's existing list, without waiting for another caps command.
-  s_app_caps = Agreed(caps, s_app_list);
+  AgreeCaps(caps, s_app_list);
   s_offer_seen.clear();
 }
 
@@ -267,12 +286,12 @@ void SetAppCaps(std::string_view list)
   const std::string offered = OfferedCaps();
   std::lock_guard lock(s_mutex);
   s_app_list = std::string(list);
-  s_app_caps = Agreed(offered, list);
+  AgreeCaps(offered, list);
 }
 
 bool Cap(std::string_view name)
 {
-  std::lock_guard lock(s_mutex);
+  std::lock_guard lock(s_caps_mutex);
   return s_app_caps.find(name) != s_app_caps.end();
 }
 
