@@ -1143,11 +1143,22 @@ void Reseat(Match& match)
 {
   if (match.local_seat == 0)
     return;
-  NOTICE_LOG_FMT(ROLLBACK, "Drop-in: port {} moves to port 1 from frame {}", match.local_seat + 1,
-                 match.running + 1);
-  auto pending = std::move(match.queued_local[match.local_seat]);
-  ClearQueuedLocal(match);
-  match.queued_local[0] = std::move(pending);
+  if (match.local_seat < 0 || match.local_seat >= Orca::Net::MAX_SEATS)
+  {
+    // A joiner whose room ended before it was seated (its first connect refused) has no seat and
+    // no queued input to carry.
+    NOTICE_LOG_FMT(ROLLBACK, "Drop-in: no seat was assigned; playing on port 1 from frame {}",
+                   match.running + 1);
+    ClearQueuedLocal(match);
+  }
+  else
+  {
+    NOTICE_LOG_FMT(ROLLBACK, "Drop-in: port {} moves to port 1 from frame {}",
+                   match.local_seat + 1, match.running + 1);
+    auto pending = std::move(match.queued_local[match.local_seat]);
+    ClearQueuedLocal(match);
+    match.queued_local[0] = std::move(pending);
+  }
   match.local_seat = 0;
   match.co_seats.clear();
   Orca::UX::SetLocalPadCount(1);
@@ -5434,12 +5445,28 @@ LaunchJoinBoundaryResult PumpLaunchJoinBoundaryForTest()
   const Common::ScopeGuard cleanup([&] { match = {}; });
   match.started = true;
   match.joining = true;
-  match.local_seat = 1;
+  match.local_seat = Orca::Online::Seat();
   match.boot_time = Clock::now();
   match.port = std::make_unique<RingPort>(system, MAX_ROLLBACK, true);
   match.port->SetCatchingUp(true);
   Boundary(system, [](int) { return Pad{}; }, [](int, bool, const auto&, bool) {}, {});
-  return {match.finished, match.joining, match.port != nullptr, match.running};
+  return {match.finished, match.joining, match.port != nullptr, match.running, match.local_seat,
+          match.log.empty(), std::ranges::all_of(match.queued_local,
+                                               [](const auto& queue) { return queue.empty(); })};
+}
+
+ReseatResult PumpReseatForTest(int seat, const std::vector<Pads>& log)
+{
+  Match match;
+  match.local_seat = seat;
+  match.log = log;
+  match.log_base = 17;
+  for (auto& queue : match.queued_local)
+    queue.push_back(Pad{});
+  Reseat(match);
+  return {match.local_seat, match.running, match.origin_frame, match.log_base, match.log,
+          std::ranges::all_of(match.queued_local,
+                              [](const auto& queue) { return queue.empty(); })};
 }
 
 int PumpRoomReopenFailureForTest(const std::function<void()>& wait_for_failure)

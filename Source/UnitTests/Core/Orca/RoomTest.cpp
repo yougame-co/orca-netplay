@@ -5011,6 +5011,53 @@ TEST_F(OrcaRoomRuntime, LaunchJoinHostGoneBeforeCapsEndsAtTheBoundary)
   }
 }
 
+TEST_F(OrcaRoomRuntime, LaunchJoinWithoutAssignedSeatFallsBackToPortOne)
+{
+  FriendsHeadlessCore core;
+  const ScopedEnv session("ORCA_SESSION", "1");
+  Orca::Status::SetAppCaps("join");
+  const Common::ScopeGuard cleanup([] {
+    Orca::Online::Shutdown();
+    Orca::Status::SetAppCaps("");
+  });
+  Request("/configure/noseat393",
+          R"({"refuse":{"code":"host_gone"},"refuse_status":410})");
+  Orca::Online::StartRoom("noseat393", true, true);
+  ASSERT_TRUE(Wait([] { return Orca::Online::RoomEnded(); }));
+  ASSERT_EQ(Orca::Online::Joining(), true);
+  ASSERT_EQ(Orca::Online::RoomErrorCode(), "host_gone");
+  ASSERT_EQ(Orca::Online::Seat(), -1);
+  // Boundary -> FailJoin -> BecomeSolo(own_boot) -> Reseat, using the unassigned room seat.
+  const auto result = Rollback::OnlineMatch::PumpLaunchJoinBoundaryForTest();
+  EXPECT_FALSE(result.finished);
+  EXPECT_FALSE(result.joining);
+  EXPECT_TRUE(result.has_port);
+  EXPECT_EQ(result.local_seat, 0);
+  EXPECT_EQ(result.frame, -1);
+  EXPECT_TRUE(result.log_empty);
+  EXPECT_TRUE(result.queued_local_empty);
+  EXPECT_EQ(Connections("noseat393"), 1);
+}
+
+TEST(OrcaReseat, UnassignedAndOutOfRangeSeatsDiscardQueuesAndPreserveHistory)
+{
+  Pads pads{};
+  pads[0][0] = 0x12;
+  pads[1][1] = 0x34;
+  const std::vector<Pads> history{pads, Rollback::OnlineMatch::CanonicalBootPads()};
+  for (const int seat : {-1, MAX_SEATS})
+  {
+    SCOPED_TRACE(seat);
+    const auto result = Rollback::OnlineMatch::PumpReseatForTest(seat, history);
+    EXPECT_EQ(result.local_seat, 0);
+    EXPECT_EQ(result.running, -1);
+    EXPECT_EQ(result.origin_frame, -1);
+    EXPECT_EQ(result.log_base, 17);
+    EXPECT_EQ(result.log, history);
+    EXPECT_TRUE(result.queued_local_empty);
+  }
+}
+
 TEST_F(OrcaRoomRuntime, FriendsReopenJoinsTheFriendWhoReturnedFirst)
 {
   FriendsHeadlessCore core;

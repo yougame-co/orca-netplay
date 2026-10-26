@@ -2835,6 +2835,10 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.93
+
+- Production fix release: fixes the game closing when a friend joined, after YG Dolphin's first connection to its own room had been refused.
+
 ### 0.3.92
 
 - Production fix release on 0.3.82: a broken controller library no longer stops the game from starting; friends rooms behind strict networks connect through the relay more reliably; Windows crash reports name where the crash happened.
