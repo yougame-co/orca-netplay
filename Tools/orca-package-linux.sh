@@ -212,6 +212,10 @@ DEBUG="$OUT_DIR/yg-dolphin-$VERSION-linux-x64.debug"
 objcopy --only-keep-debug "$PROGRAM" "$DEBUG"
 strip --strip-unneeded "$PROGRAM"
 objcopy --add-gnu-debuglink="$DEBUG" "$PROGRAM"
+TOOL_DEBUG="$OUT_DIR/orca-disc-tool-$VERSION-linux-x64.debug"
+objcopy --only-keep-debug "$PKG/orca-disc-tool" "$TOOL_DEBUG"
+strip --strip-unneeded "$PKG/orca-disc-tool"
+objcopy --add-gnu-debuglink="$TOOL_DEBUG" "$PKG/orca-disc-tool"
 # Real files only (cp -L): a link would unpack differently from one player to the next. Minus what
 # only the Qt UI shows, as in the macOS bundle (DolphinNoGUI/CMakeLists.txt): the themes and the
 # Resources images, never the on-screen font.
