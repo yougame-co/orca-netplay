@@ -111,6 +111,7 @@ struct BootParameters
     std::string path;
     std::unique_ptr<DiscIO::VolumeDisc> volume;
     std::vector<std::string> auto_disc_change_paths;
+    std::string alias_revision_reason;
   };
 
   struct Executable

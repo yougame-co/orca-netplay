@@ -3731,7 +3731,7 @@ void ConfirmResults(Match& match)
       ++plugged;
       latest = std::max(latest, plan.plug_from);
     }
-    if (plugged >= 2)
+    if (plugged >= (Orca::Online::RoomDoubles() ? Orca::Net::MAX_SEATS : 2))
       plug = latest;
   }
   // The casual ready timer ran out (UX/QueueApp.h), at the same final frame on both machines.
@@ -3780,19 +3780,8 @@ void ConfirmResults(Match& match)
     Orca::UX::SetEnd::Current().GameBegan(Orca::UX::SetEnd::NowMs());
   for (const Orca::Engine::GameResult& r : results)
   {
-    Orca::Net::GameReport report;
-    report.kind = r.kind == Orca::Engine::GameResult::Kind::Win  ? Orca::Net::GameReport::Kind::Win :
-                  r.kind == Orca::Engine::GameResult::Kind::Draw ? Orca::Net::GameReport::Kind::Draw :
-                                                               Orca::Net::GameReport::Kind::Void;
-    report.winner_seat = r.winner_port;
-    report.why = r.why;
-    if (report.kind != Orca::Net::GameReport::Kind::Void)
-      report.detail = r.DetailJson();
-    report.start = r.start;
-    report.from_set_block = r.from_set_block;
-    report.number = r.number;
-    report.set_done = r.set_done;
-    report.set_winner_seat = r.set_winner;
+    const auto report = Orca::Net::FromGameResult(r, Orca::Online::RoomDoubles() ?
+        std::optional(Orca::Online::RoomTeams()) : std::nullopt);
     if (r.set_done)
     {
       NOTICE_LOG_FMT(ROLLBACK, "Matchmaking: the set ended with game {}: {}", r.number,
@@ -4643,7 +4632,11 @@ static std::optional<int> SessionBoundary(
           Orca::Status::State("friend-joined");
           match.friend_left_told = false;
           // A matchmade room's match may begin (YouGameRoom), and the search is over.
-          Orca::Online::SetOpponentPlugged(true);
+          bool all_seats = true;
+          if (match.doubles)
+            for (int seat = 0; seat < Orca::Net::MAX_SEATS; ++seat)
+              all_seats &= match.session->Plugged(seat, step.frame);
+          Orca::Online::SetOpponentPlugged(all_seats);
           Orca::UX::Search::End();
           for (const auto& shared : match.shared_keyframes)
             DeleteStored(match, shared);

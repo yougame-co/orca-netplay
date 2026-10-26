@@ -2835,6 +2835,12 @@ STUN and TURN are internet traffic and work in every mode.
 
 What each release changed for players, in plain words.
 
+### 0.3.91
+
+- Online: ranked doubles. Four players on four computers, two teams, rated per player and per pair; a team that leaves mid-set loses it. The room's host picks Team battle and the colours.
+- Ranked: the connection check before game 1 answers every check it receives, even when the network delivers two at once.
+- When a game can't start, the message now says why: a file that couldn't be opened (with the reason), the wrong size, or the wrong card; for Brawl (USA) Rev 1, which check failed.
+
 ### 0.3.90
 
 - Ranked: the connection check before game 1 no longer waits behind the game's status messages, so a player whose app was slow to read them (seen on Linux) no longer looks far away and gets voided.

@@ -12,7 +12,11 @@ std::string GameResult::DetailJson() const
   std::string out =
       fmt::format("{{\"f\":{},\"st\":{},\"c\":[{},{}],\"s\":[{},{}],\"to\":{}", frame, stage,
                   characters[0], characters[1], stocks[0], stocks[1], timeout ? 1 : 0);
-  if (start >= 0)
+  if (players == 4)
+    out = fmt::format("{{\"f\":{},\"st\":{},\"c\":[{},{},{},{}],\"s\":[{},{},{},{}],\"to\":{}",
+                      frame, stage, characters[0], characters[1], characters[2], characters[3],
+                      stocks[0], stocks[1], stocks[2], stocks[3], timeout ? 1 : 0);
+  if (start >= 0 && players != 4)
   {
     out += fmt::format(",\"k\":{},\"lg\":[{},{}],\"tb\":{}", how, ledge[0], ledge[1],
                        tiebreak ? 1 : 0);

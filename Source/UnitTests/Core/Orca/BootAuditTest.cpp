@@ -3,6 +3,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <cerrno>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -364,7 +366,8 @@ TEST_F(OrcaBootAudit, FailedWarmAuditDropsTheRecord)
   const auto warm = Start([](const std::string&, const std::atomic<bool>&) { return "mismatch"; });
   EXPECT_TRUE(warm->CacheHit());
   EXPECT_FALSE(warm->Wait());
-  EXPECT_EQ(warm->Error(), Entry().refusal);
+  EXPECT_EQ(warm->Error(), Entry().refusal + " (hash differs: actual mismatch, expected " +
+      expected.substr(0, 8) + ")");
   const auto next = Start();
   EXPECT_FALSE(next->CacheHit());
   EXPECT_TRUE(next->Wait());
@@ -420,7 +423,7 @@ TEST_F(OrcaBootAudit, ChangingAFileDuringTheAuditRefusesIt)
     return expected;
   });
   EXPECT_FALSE(audit->Wait());
-  EXPECT_EQ(audit->Error(), Entry().refusal);
+  EXPECT_EQ(audit->Error(), Entry().refusal + " (changed while being verified)");
 }
 
 using OrcaBootAuditDeathTest = OrcaBootAudit;
@@ -507,9 +510,11 @@ TEST_F(OrcaBootAuditDeathTest, FailedAuditRefusesStartAndStartRoomWithoutARoom)
         while (std::fgets(buffer, sizeof(buffer), output))
           lines += buffer;
         std::_Exit(!Orca::Online::Transport() && Orca::Status::ExitCode() == 1 &&
-                          failed->Error() == Entry().refusal &&
+                          failed->Error() == Entry().refusal + " (hash differs: actual mismatch, expected " +
+                              expected.substr(0, 8) + ")" &&
                           lines == "orca error profile YG Dolphin: " + path +
-                                       " is not the loader profile PPLUS32 names\n"
+                                       " is not the loader profile PPLUS32 names (hash differs: actual mismatch, expected " +
+                                       expected.substr(0, 8) + ")\n"
                       ? 0
                       : 1);
       },
@@ -598,7 +603,8 @@ protected:
       const auto refused = Request("/state/auditpass");
       EXPECT_EQ(refused.get("tickets").get<double>(), 0);
       EXPECT_EQ(refused.get("connects").get<double>(), 0);
-      EXPECT_EQ(audit->Error(), Entry().refusal);
+      EXPECT_EQ(audit->Error(), Entry().refusal + " (hash differs: actual differen, expected " +
+          expected.substr(0, 8) + ")");
       return;
     }
     EXPECT_NE(Orca::Online::Transport(), nullptr);
@@ -683,7 +689,8 @@ protected:
     if (!pass)
     {
       EXPECT_TRUE(player->Over());
-      EXPECT_EQ(stopped, "The replay couldn't be played: " + Entry().refusal);
+      EXPECT_EQ(stopped, "The replay couldn't be played: " + Entry().refusal +
+          " (hash differs: actual differen, expected " + expected.substr(0, 8) + ")");
       const auto refused = Request("/state/auditpass");
       EXPECT_EQ(refused.get("tickets").get<double>(), 0);
       EXPECT_EQ(refused.get("connects").get<double>(), 0);
@@ -753,7 +760,8 @@ TEST_F(OrcaBootAuditRoomDeathTest, FailedWatchAuditReportsTheProfileRefusalOnce)
         while (std::fgets(buffer, sizeof(buffer), output))
           lines += buffer;
         const std::string refusal = "orca error profile YG Dolphin: " + path +
-                                    " is not the loader profile PPLUS32 names\n";
+                                    " is not the loader profile PPLUS32 names (hash differs: actual differen, expected " +
+                                    expected.substr(0, 8) + ")\n";
         const auto first = lines.find(refusal);
         std::_Exit(!HasFailure() && Orca::Status::ExitCode() == 1 &&
                           first != std::string::npos &&
@@ -794,7 +802,9 @@ TEST_F(OrcaBootAuditRoomDeathTest, ChangedBytesWithMatchingCacheIdentityRefuseBe
         Core::HostDispatchJobs(Core::System::GetInstance());
         const auto refused = Request("/state/auditpass");
         const bool dropped = !File::Exists(record);
-        std::_Exit(!audit->Wait() && audit->Error() == Entry().refusal &&
+        std::_Exit(!audit->Wait() && audit->Error() == Entry().refusal +
+                          " (hash differs: actual " + Orca::HashFile(path).substr(0, 8) +
+                          ", expected " + expected.substr(0, 8) + ")" &&
                           Orca::Status::ExitCode() == 1 && !Orca::Online::Transport() && dropped &&
                           refused.get("tickets").get<double>() == 0 &&
                           refused.get("connects").get<double>() == 0
@@ -802,4 +812,81 @@ TEST_F(OrcaBootAuditRoomDeathTest, ChangedBytesWithMatchingCacheIdentityRefuseBe
                       : 1);
       },
       testing::ExitedWithCode(0), "");
+}
+
+
+TEST_F(OrcaBootAudit, MissingFileReasonKeepsTheRefusalPrefix)
+{
+  ASSERT_TRUE(File::Delete(path));
+  const auto audit = Start();
+  EXPECT_FALSE(audit->Wait());
+  EXPECT_EQ(audit->Error(), Entry().refusal + " (missing)");
+}
+
+TEST_F(OrcaBootAudit, NonRegularFileReasonKeepsTheRefusalPrefix)
+{
+  ASSERT_TRUE(File::Delete(path));
+  ASSERT_TRUE(File::CreateDir(path));
+  const auto audit = Start();
+  EXPECT_FALSE(audit->Wait());
+  EXPECT_EQ(audit->Error(), Entry().refusal + " (not a regular file)");
+}
+
+#ifndef _WIN32
+TEST_F(OrcaBootAudit, OpenFailureReasonKeepsTheRefusalPrefixAndOsError)
+{
+  const auto file = StringToPath(path);
+  const auto permissions = std::filesystem::status(file).permissions();
+  const Common::ScopeGuard restore([&] { std::filesystem::permissions(file, permissions); });
+  std::filesystem::permissions(file, std::filesystem::perms::none);
+  const auto audit = Start();
+  EXPECT_FALSE(audit->Wait());
+  EXPECT_EQ(audit->Error(), Entry().refusal + " (open failed: " + std::strerror(EACCES) + ")");
+}
+#endif
+
+TEST_F(OrcaBootAudit, KnownSizeReasonKeepsTheRefusalPrefix)
+{
+  auto entry = Entry();
+  const auto size = Identify(path)->size;
+  entry.expected_size = size + 1;
+  std::atomic<int> hashes{0};
+  const auto audit = Audit::Start({entry}, cache, [&](const std::string&, const std::atomic<bool>&) {
+    ++hashes;
+    return expected;
+  });
+  EXPECT_FALSE(audit->Wait());
+  EXPECT_EQ(audit->Error(), entry.refusal + " (size differs: actual " + std::to_string(size) +
+      " bytes, expected " + std::to_string(size + 1) + " bytes)");
+  EXPECT_EQ(hashes, 0);
+}
+
+TEST_F(OrcaBootAudit, HashReasonKeepsTheRefusalPrefixAndShortHashes)
+{
+  const auto audit = Start([](const std::string&, const std::atomic<bool>&) {
+    return std::string("0123456789abcdef0123456789abcdef");
+  });
+  EXPECT_FALSE(audit->Wait());
+  EXPECT_EQ(audit->Error(), Entry().refusal + " (hash differs: actual 01234567, expected " +
+      expected.substr(0, 8) + ")");
+}
+
+TEST_F(OrcaBootAudit, ChangedFileReasonKeepsTheRefusalPrefix)
+{
+  const auto audit = Start([&](const std::string&, const std::atomic<bool>&) {
+    EXPECT_TRUE(File::WriteStringToFile(path, "changed while hashing"));
+    return expected;
+  });
+  EXPECT_FALSE(audit->Wait());
+  EXPECT_EQ(audit->Error(), Entry().refusal + " (changed while being verified)");
+}
+
+
+TEST_F(OrcaBootAudit, InjectedOpenFailureCarriesItsReason)
+{
+  const auto audit = Start([](const std::string&, const std::atomic<bool>&) {
+    return Audit::HashResult{"", "open failed: fixture access denied"};
+  });
+  EXPECT_FALSE(audit->Wait());
+  EXPECT_EQ(audit->Error(), Entry().refusal + " (open failed: fixture access denied)");
 }

@@ -219,7 +219,7 @@ std::string OfferedCaps()
     caps += " coseats";
   // Casual queue doubles also works with one seat per computer, without co-seats.
   if (SessionActive())
-    caps += " qdoubles";
+    caps += " qdoubles rdoubles";
   return caps;
 }
 

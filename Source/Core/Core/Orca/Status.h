@@ -110,7 +110,7 @@ inline constexpr const char* TALK_CAP = "talk";
 // "rumble": every profile, after "talk", before optional "replay", "record" and "hostui".
 inline constexpr const char* RUMBLE_CAP = "rumble";
 // Product replay playback only. After rumble and before record and hostui. At most
-// 23 offered words including qdoubles with every profile cap: inside the app's 24-word limit.
+// 24 offered words including rdoubles with every profile cap: inside the app's 24-word limit.
 inline constexpr const char* REPLAY_CAP = "replay";
 // "record": every profile, after optional replay and before hostui; an app without it never records.
 inline constexpr const char* RECORD_CAP = "record";
@@ -120,7 +120,8 @@ inline constexpr const char* HOSTUI_CAP = "hostui";
 // This build's caps for the running profile: CAPS, plus "music", "results", "locks", "queue2" and
 // the pick caps where supported, then "talk", "rumble", "replay" in product playback,
 // "broadcast" in product playback on builds with the sink, then "record" and "hostui" in every
-// mode, followed by "coseats" unless ORCA_COSEATS=0, then "qdoubles" last. qdoubles means this
+// mode, followed by "coseats" unless ORCA_COSEATS=0, then "qdoubles" and "rdoubles" last. rdoubles is the ranked doubles result contract.
+// qdoubles means this
 // engine plays casual queue doubles rooms; it does not offer a Doubles menu pick. It remains
 // available with co-seats off for one seat per computer. Co-seats need the app's explicit agreement
 // and a private or casual doubles room; the ticket's lobby never depends on this switch.

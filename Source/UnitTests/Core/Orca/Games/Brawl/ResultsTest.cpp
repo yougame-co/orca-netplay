@@ -780,3 +780,93 @@ TEST(OrcaResults, RankedRulesVerdictUsesFinalFramesAndReportsOnce)
   EXPECT_EQ(out[0].why, "rules-items");
   EXPECT_TRUE(tracker.Confirm(5, -1).empty());
 }
+
+TEST(OrcaResults, FourSeatJointWinnersKeepSeatOrderedDetail)
+{
+  FakeMemory m = Game("scVsResult");
+  m.Write8(RESULT_INFO + 0x1378, 2);
+  m.Write16(RESULT_INFO + 0x0E, 1);
+  for (u32 port = 0; port < 4; ++port)
+    m.Write8(RESULT_INFO + 0x24 + port * 0x2AC + 0x06, port % 2);
+  SetPort(m, 0, 0, 0, 3); // eliminated before the surviving winner on port 3
+  SetPort(m, 1, 0, 0, 2);
+  SetPort(m, 2, 0, 1, 0);
+  SetPort(m, 3, 0, 0, 3);
+  m.writes = 0;
+  const auto reading = ReadResults(m);
+  const auto g = Judge(reading.block, 9000);
+  EXPECT_EQ(g.kind, Kind::Win);
+  EXPECT_EQ(g.winner_port, 2);
+  EXPECT_EQ(g.winning_ports, 5u);
+  EXPECT_EQ(g.DetailJson(), R"({"f":9000,"st":2,"c":[0,3,62,62],"s":[0,0,1,0],"to":0})");
+  EXPECT_EQ(m.writes, 0);
+  // A colour partition that is not two native pairs never becomes a doubles win.
+  m.Write8(RESULT_INFO + 0x24 + 2 * 0x2AC + 0x06, 1);
+  EXPECT_EQ(Judge(ReadResults(m).block, 9000).why, "teams");
+  m.Write8(RESULT_INFO + 0x24 + 2 * 0x2AC + 0x06, 0);
+  SetPort(m, 2, 1, 1, 0);
+  EXPECT_EQ(Judge(ReadResults(m).block, 9000).why, "ports");
+}
+
+TEST(OrcaResults, FourSeatResultsWaitForConfirmationAndRollbackReplacesTheWinner)
+{
+  auto m = Game("scVsResult");
+  m.Write8(RESULT_INFO + 0x1378, 2);
+  SetPort(m, 0, 0, 1, 0);
+  SetPort(m, 1, 0, 0, 2);
+  SetPort(m, 2, 0, 1, 0);
+  SetPort(m, 3, 0, 0, 3);
+  for (u32 port = 0; port < 4; ++port)
+    m.Write8(RESULT_INFO + 0x24 + port * 0x2AC + 0x06, port % 2);
+  ResultsTracker tracker;
+  tracker.Store(0, At(Scene::Other), 0);
+  tracker.Store(1, At(Scene::Fight), 0);
+  tracker.Confirm(1, -1);
+  tracker.Store(2, ReadResults(m), 0);
+  EXPECT_TRUE(tracker.Confirm(1, -1).empty());
+  SetPort(m, 0, 0, 0, 2);
+  SetPort(m, 1, 0, 1, 0);
+  SetPort(m, 2, 0, 0, 3);
+  SetPort(m, 3, 0, 1, 0);
+  tracker.Store(2, ReadResults(m), 0);
+  const auto out = tracker.Confirm(2, -1);
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].kind, Kind::Win);
+  EXPECT_EQ(out[0].winner_port, 1);
+  EXPECT_EQ(out[0].start, 1);
+  EXPECT_TRUE(tracker.Confirm(2, -1).empty());
+}
+
+TEST(OrcaResults, NativeTeamByteMatchesTheRetainedFourMachineResultRecords)
+{
+  // First 16 bytes of each 0x2AC-byte record in all four
+  // notes/friendlies-0348-runs/case-3-attempt-3/peer-*-probe-teams-results.bin dumps.
+  constexpr std::array<std::array<u8, 16>, 4> records{{
+      {0, 0, 0, 0, 1, 0, 0, 80, 0, 0, 1, 0, 0, 0, 0, 0},
+      {3, 0, 3, 1, 2, 1, 1, 80, 0, 0, 0, 0, 0, 0, 2, 2},
+      {7, 0, 1, 2, 3, 2, 0, 80, 0, 0, 1, 0, 0, 0, 0, 1},
+      {20, 0, 3, 3, 4, 3, 1, 80, 0, 0, 0, 0, 0, 0, 3, 3},
+  }};
+  auto m = Game("scVsResult");
+  m.Write8(RESULT_INFO + 0x1378, 2);
+  m.Write16(RESULT_INFO + 0x0E, 2);
+  for (u32 port = 0; port < 4; ++port)
+    for (u32 byte = 0; byte < 16; ++byte)
+      m.Write8(RESULT_INFO + 0x24 + port * 0x2AC + byte, records[port][byte]);
+  const auto reading = ReadResults(m);
+  for (int port = 0; port < 4; ++port)
+    EXPECT_EQ(reading.block.ports[port].team, port % 2);
+  const auto g = Judge(reading.block, 9000);
+  EXPECT_EQ(g.kind, Kind::Win);
+  EXPECT_EQ(g.winning_ports, 5u);
+  EXPECT_EQ(g.DetailJson(), R"({"f":9000,"st":2,"c":[0,3,7,20],"s":[1,0,1,0],"to":0})");
+  // Native colours are not room team labels: every two-colour pairing works.
+  for (int first = 0; first < 3; ++first)
+    for (int second = 0; second < 3; ++second)
+      if (first != second)
+      {
+        for (u32 port = 0; port < 4; ++port)
+          m.Write8(RESULT_INFO + 0x24 + port * 0x2AC + 0x06, port % 2 ? second : first);
+        EXPECT_EQ(Judge(ReadResults(m).block, 9000).winning_ports, 5u);
+      }
+}

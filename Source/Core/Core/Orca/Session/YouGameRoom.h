@@ -17,6 +17,11 @@
 #include "Common/CommonTypes.h"
 #include "Core/Orca/Session/Session.h"
 
+namespace Orca::Engine
+{
+struct GameResult;
+}
+
 // A private YouGame room carrying an Orca drop-in session. The host plays from boot and friends
 // join by room code (up to four players). Each player's seat is its room slot (seat 0, the host, is
 // port 1), and session packets travel as relayed room messages. Tickets come from the YouGame
@@ -190,6 +195,11 @@ struct GameReport
   int set_done = 0;
   int set_winner_seat = -1;
 };
+
+// Translate a confirmed native result. A supplied map means doubles (even when invalid/empty).
+// Joint native winners must be exactly one assigned pair; otherwise the game is void "teams".
+GameReport FromGameResult(const Engine::GameResult& result,
+                          const std::optional<std::map<int, int>>& doubles_teams = std::nullopt);
 
 enum class RoomState
 {
@@ -514,7 +524,7 @@ struct RoomTestSnapshot
   std::vector<int> linked_seats;
   std::optional<std::chrono::steady_clock::time_point> host_input_deadline;
   std::map<int, int> teams;
-  int ticket_local_seats = 1;
+  std::optional<int> ticket_local_seats = 1;
   picojson::object mirror;
   std::string published_mirror;
   unsigned mirror_serializations = 0;

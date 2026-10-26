@@ -81,11 +81,13 @@ struct Profile
   // boots a loader executable with exactly this XXH3-128 hash (32 hex digits), and the loader boots
   // the disc named by `disc` and `revision` from the DVD drive.
   std::string launcher_hash;
+  std::optional<u64> launcher_size;
   std::string disc;
   // The SD card image the loader reads its files from, next to the loader, and its XXH3-128 hash. A
   // session opens it read-only.
   std::string sd_image;
   std::string sd_image_hash;
+  std::optional<u64> sd_image_size;
   // Set at boot: the image's full path, which the session forces as the read-only SD card path.
   // A legacy launcher's audit must pass before going online. The key uses the expected hash.
   std::string sd_image_path;
@@ -257,7 +259,8 @@ std::string LauncherProfileName();
 
 // XXH3-128 of a file as 32 lowercase hex digits; empty on a read failure or cancellation.
 // Cancellation is checked before each 8 MiB read and before returning the digest.
-std::string HashFile(const std::string& path, const std::atomic<bool>* stop = nullptr);
+std::string HashFile(const std::string& path, const std::atomic<bool>* stop = nullptr,
+                     std::string* reason = nullptr);
 
 // Why DiscIO::CreateDisc gave nothing for `disc_path`, as the end of an error line: no path, a file
 // that won't open or read (with the system's own reason), one cut short, or one that isn't a disc

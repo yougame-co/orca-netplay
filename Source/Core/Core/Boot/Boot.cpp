@@ -249,12 +249,14 @@ std::unique_ptr<BootParameters> BootParameters::GenerateFromFile(std::vector<std
   if (disc_image_extensions.contains(extension))
   {
     std::unique_ptr<DiscIO::VolumeDisc> disc = DiscIO::CreateDiscForCore(path);
+    std::string alias_reason;
     if (disc && Orca::SessionActive())
-      Orca::AliasRevision(*disc);
+      Orca::AliasRevision(*disc, &alias_reason);
     if (disc)
     {
-      return std::make_unique<BootParameters>(Disc{std::move(path), std::move(disc), paths},
-                                              std::move(boot_session_data_));
+      return std::make_unique<BootParameters>(
+          Disc{std::move(path), std::move(disc), paths, std::move(alias_reason)},
+          std::move(boot_session_data_));
     }
 
     if (extension == ".elf")
@@ -493,11 +495,13 @@ static bool SetDefaultDisc(DVD::DVDInterface& dvd_interface)
   std::unique_ptr<DiscIO::VolumeDisc> disc = DiscIO::CreateDiscForCore(default_iso);
   if (disc && Orca::SessionActive())
   {
-    Orca::AliasRevision(*disc);
+    std::string alias_reason;
+    Orca::AliasRevision(*disc, &alias_reason);
     // The loader's profile check read its own volume of this disc.
     if (!Orca::SessionDiscReady(*disc))
     {
-      Orca::Status::Error("disc_revision", "YG Dolphin couldn't read that Brawl disc as Rev 2.");
+      Orca::Status::Error("disc_revision", Orca::DiscRevisionRefusal(
+          "YG Dolphin couldn't read that Brawl disc as Rev 2.", alias_reason));
       return false;
     }
   }

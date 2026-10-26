@@ -445,17 +445,17 @@ TEST(OrcaRoomPingRange, JitteredProbeSpacingStillCollectsBothSamples)
   EXPECT_EQ(trace[2].sent, (std::vector<std::string>{R"({"n":"on-time","t":"probe-ack"})"}));
 }
 
-TEST(OrcaRoomPingRange, TenProbesWithinOneSecondHaveAtMostThreeReplies)
+TEST(OrcaRoomPingRange, BurstDeliveredUniqueProbesAreAcknowledgedUpToSix)
 {
   std::vector<RoomTestStep> steps{{RK::Message, 0, QueueRoster("welcome", "ranked")}};
-  for (int ms = 0; ms < 1000; ms += 100)
+  for (int ms = 0; ms < 10; ++ms)
     steps.push_back({RK::SocketMessage, ms, fmt::format(R"({{"t":"probe","n":"n{}"}})", ms)});
   const auto trace = TraceRoomForTest(QueueTraceOptions(), steps);
   std::vector<int> acknowledged;
   for (size_t i = 1; i < trace.size(); ++i)
     if (!trace[i].sent.empty())
       acknowledged.push_back(steps[i].milliseconds);
-  EXPECT_EQ(acknowledged, (std::vector<int>{0, 400, 800}));
+  EXPECT_EQ(acknowledged, (std::vector<int>{0, 1, 2, 3, 4, 5}));
 }
 
 TEST(OrcaRoomPingRange, FloodAndRepeatedNoncesAreBounded)
@@ -473,7 +473,7 @@ TEST(OrcaRoomPingRange, FloodAndRepeatedNoncesAreBounded)
   }
   ASSERT_EQ(acknowledged.size(), 6u);
   for (size_t i = 1; i < acknowledged.size(); ++i)
-    EXPECT_GE(acknowledged[i] - acknowledged[i - 1], 400);
+    EXPECT_EQ(acknowledged[i] - acknowledged[i - 1], 10);
   const auto repeated = TraceRoomForTest(QueueTraceOptions(), {
       {RK::Message, 0, QueueRoster("welcome", "casual")},
       {RK::Message, 0, R"({"t":"probe","n":"same"})"},
@@ -8530,11 +8530,11 @@ TEST(OrcaRoom, QueueDoublesWelcomeAndRankedRefusal)
     {
       EXPECT_FALSE(doubles);
       EXPECT_EQ(trace.back().state, RoomState::Ended);
-      EXPECT_EQ(trace.back().status, "Room: ranked doubles needs a newer YG Dolphin");
+      EXPECT_EQ(trace.back().status, "Room: ranked doubles requires four single-seat players and two complete teams");
       size_t lines = 0;
       for (const auto& step : trace)
         lines += std::count(step.notices.begin(), step.notices.end(),
-                            "Room: ranked doubles needs a newer YG Dolphin");
+                            "Room: ranked doubles requires four single-seat players and two complete teams");
       EXPECT_EQ(lines, 1u);
       for (const auto& step : trace)
         for (const auto& wire : step.sent)
@@ -8656,6 +8656,11 @@ TEST_F(OrcaRoomRuntime, TicketRequestsPublishActualLocalSeatCount)
   ASSERT_TRUE(seats.get<picojson::array>()[1].is<double>());
   EXPECT_EQ(seats.get<picojson::array>()[0].get<double>(), 1);
   EXPECT_EQ(seats.get<picojson::array>()[1].get<double>(), 2);
+  const auto present = Request("/state/" + code).get("ticket_has_local_seats");
+  ASSERT_TRUE(present.is<picojson::array>());
+  ASSERT_EQ(present.get<picojson::array>().size(), 2u);
+  EXPECT_TRUE(present.get<picojson::array>()[0].get<bool>());
+  EXPECT_TRUE(present.get<picojson::array>()[1].get<bool>());
 }
 
 TEST(OrcaRoom, CasualDoublesDoesNotSendSinglesResults)
@@ -8697,4 +8702,486 @@ TEST(OrcaRoom, SentLocalAddCountsInTicketsUntilTheRoomAnswers)
   EXPECT_EQ(trace[0].ticket_local_seats, 1);
   for (const int step : {1, 2, 3})
     EXPECT_EQ(trace[step].ticket_local_seats, 2);
+}
+
+namespace
+{
+std::string RankedDoublesRoster(const char* kind, int mine = 0)
+{
+  picojson::array players, participants;
+  for (int slot = 0; slot < 4; ++slot)
+  {
+    const auto id = fmt::format("p{}", slot);
+    players.emplace_back(picojson::object{{"id", picojson::value(id)},
+                                        {"name", picojson::value(id)}});
+    participants.emplace_back(picojson::object{{"id", picojson::value(id)},
+        {"connectionId", picojson::value(id)}, {"slot", picojson::value(double(slot))},
+        {"localIndex", picojson::value(0.0)}, {"team", picojson::value(double(slot % 2))}});
+  }
+  return picojson::value(picojson::object{{"t", picojson::value(kind)},
+      {"lifecycle", picojson::value("game")},
+      {"me", picojson::value(fmt::format("p{}", mine))}, {"host", picojson::value("p0")},
+      {"revision", picojson::value(1.0)}, {"matchId", picojson::value("doubles-set")},
+      {"room", picojson::value(picojson::object{{"queue", picojson::value("ranked")},
+          {"doubles", picojson::value(true)}, {"size", picojson::value(4.0)},
+          {"mode", picojson::value("orca-rsbe01-2v2-ranked")}})},
+      {"players", picojson::value(players)}, {"participants", picojson::value(participants)}}).serialize();
+}
+}
+
+TEST(OrcaRoomRankedDoubles, FourSingleSeatAccountsAreAdmittedAndInvalidMapsRefuseOnce)
+{
+  const auto valid = RankedDoublesRoster("welcome");
+  for (int bad = -1; bad < 8; ++bad)
+  {
+    picojson::value value;
+    ASSERT_TRUE(picojson::parse(value, valid).empty());
+    auto& o = value.get<picojson::object>();
+    auto& ps = o["participants"].get<picojson::array>();
+    if (bad == 0) ps[3].get<picojson::object>().erase("team");
+    if (bad == 1) ps[3].get<picojson::object>()["team"] = picojson::value(0.0);
+    if (bad == 2) ps[3].get<picojson::object>()["team"] = picojson::value(0.5);
+    if (bad == 3) ps[3].get<picojson::object>()["slot"] = picojson::value(2.0);
+    if (bad == 4) ps[3].get<picojson::object>()["connectionId"] = picojson::value("p2");
+    if (bad == 5) ps[3].get<picojson::object>()["localIndex"] = picojson::value(1.0);
+    if (bad == 6) o["room"].get<picojson::object>()["size"] = picojson::value(3.0);
+    if (bad == 7) ps[3].get<picojson::object>()["id"] = picojson::value("p2");
+    bool doubles = false;
+    const auto trace = TraceRoomForTest(TraceOptions(false), {
+        {RK::Message, 0, value.serialize()}, {RK::Message, 1, value.serialize()}},
+        [&](YouGameRoom& room) { doubles = room.Doubles(); });
+    SCOPED_TRACE(bad);
+    if (bad < 0)
+    {
+      EXPECT_TRUE(doubles);
+      EXPECT_NE(trace.back().state, RoomState::Ended);
+      EXPECT_EQ(trace.back().teams.size(), 4u);
+    }
+    else
+    {
+      EXPECT_EQ(trace.back().state, RoomState::Ended);
+      EXPECT_EQ(trace.back().status,
+          "Room: ranked doubles requires four single-seat players and two complete teams");
+      EXPECT_EQ(trace[0].notices.size() + trace[1].notices.size(), 1u);
+    }
+  }
+}
+
+TEST(OrcaRoomRankedDoubles, EachSeatReportsGamesBeforeTheTeamFinalAndSeesItsTeamScore)
+{
+  for (int mine = 0; mine < 4; ++mine)
+  {
+    int step = 0;
+    const auto trace = TraceRoomForTest(TraceOptions(mine != 0), {
+        {RK::Message, 0, RankedDoublesRoster("welcome", mine)},
+        {RK::Message, 1, RankedDoublesRoster("start", mine)}, {RK::Tick, 2},
+        {RK::Message, 3, R"({"t":"game-result","matchId":"doubles-set","id":"g120","ranking":["p1","p3","p0","p2"],"detail":{"tw":1}})"},
+        {RK::Tick, 4},
+        {RK::Message, 5, R"({"t":"game-result","matchId":"doubles-set","id":"g360","ranking":["p1","p3","p0","p2"],"detail":{"tw":1}})"},
+        {RK::Message, 6, R"({"t":"result","matchId":"doubles-set","ranking":["p1","p3","p0","p2"],"detail":{"tw":1},"ratings":{"p0":{"before":1000,"after":980},"p1":{"before":1001,"after":1021},"p2":{"before":1002,"after":982},"p3":{"before":1003,"after":1023}}})"}},
+        [&](YouGameRoom& room) {
+          if (step == 1 || step == 3)
+          {
+            GameReport report;
+            report.kind = GameReport::Kind::Win;
+            report.winner_seat = 1;
+            report.start = step == 1 ? 120 : 360;
+            report.detail = R"({"f":700,"st":2,"c":[0,3,2,1],"s":[0,1,0,0],"to":0,"tw":1})";
+            room.ReportGameStart(report.start);
+            room.ReportGame(report);
+          }
+          ++step;
+        });
+    std::vector<std::string> kinds;
+    for (const auto& frame : trace)
+    {
+      for (const auto& wire : frame.sent)
+      {
+        picojson::value message;
+        ASSERT_TRUE(picojson::parse(message, wire).empty());
+        const auto kind = message.get("t").to_str();
+        if (kind != "game-report" && kind != "finish") continue;
+        kinds.push_back(kind);
+        ASSERT_TRUE(message.get("ranking").is<picojson::array>());
+        EXPECT_EQ(message.get("ranking").serialize(), R"(["p1","p3","p0","p2"])");
+        ASSERT_TRUE(message.get("detail").get("tw").is<double>());
+        EXPECT_EQ(message.get("detail").get("tw").get<double>(), 1);
+      }
+    }
+    EXPECT_EQ(kinds, (std::vector<std::string>{"game-report", "game-report", "finish"}));
+    ASSERT_FALSE(trace.back().results.empty());
+    const auto& result = trace.back().results.back();
+    EXPECT_NE(result.find(mine % 2 ? "\"out\":\"won\"" : "\"out\":\"lost\""), std::string::npos);
+    EXPECT_NE(result.find(mine % 2 ? "\"score\":[2,0]" : "\"score\":[0,2]"), std::string::npos);
+    EXPECT_NE(result.find(fmt::format("\"r\":[{},{}]", 1000 + mine,
+                                     (mine % 2 ? 1020 : 980) + mine)), std::string::npos);
+  }
+}
+
+TEST(OrcaRoomRankedDoubles, HostBeginsOnlyAfterTheFourSeatGameIsPlugged)
+{
+  picojson::value welcome;
+  ASSERT_TRUE(picojson::parse(welcome, RankedDoublesRoster("welcome")).empty());
+  welcome.get<picojson::object>().erase("matchId");
+  int step = 0;
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Message, 0, welcome.serialize()}, {RK::Tick, 1}, {RK::Tick, 2}},
+      [&](YouGameRoom& room) { if (step++ == 1) room.SetOpponentPlugged(true); });
+  for (const auto& wire : trace[1].sent)
+    EXPECT_EQ(wire.find("\"t\":\"begin\""), std::string::npos);
+  bool began = false;
+  for (const auto& wire : trace[2].sent)
+    began |= wire.find("\"t\":\"begin\"") != std::string::npos;
+  EXPECT_TRUE(began);
+}
+
+TEST(OrcaRoomRankedDoubles, ALeaverLosesItsWholeTeamIncludingWhenItIsOurPartner)
+{
+  for (const int leaver : {0, 1, 2})
+  {
+    const int mine = leaver == 0 ? 1 : 0;
+    auto leave = picojson::value{};
+    ASSERT_TRUE(picojson::parse(leave, RankedDoublesRoster("leave", mine)).empty());
+    auto& message = leave.get<picojson::object>();
+    message["player"] = picojson::value(picojson::object{{"id", picojson::value(fmt::format("p{}", leaver))}});
+    auto& participants = message["participants"].get<picojson::array>();
+    participants.erase(participants.begin() + leaver);
+    const auto trace = TraceRoomForTest(TraceOptions(mine != 0), {
+        {RK::Message, 0, RankedDoublesRoster("welcome", mine)},
+        {RK::Message, 1, RankedDoublesRoster("start", mine)}, {RK::GameStart, 2, "", 120},
+        {RK::Tick, 3}, {RK::Message, 4, leave.serialize()}});
+    bool finished = false;
+    for (const auto& wire : trace.back().sent)
+    {
+      picojson::value final;
+      ASSERT_TRUE(picojson::parse(final, wire).empty());
+      if (final.get("t").to_str() != "finish") continue;
+      finished = true;
+      ASSERT_TRUE(final.get("detail").get("tw").is<double>());
+      EXPECT_EQ(final.get("detail").get("tw").get<double>(), 1 - leaver % 2);
+      EXPECT_EQ(final.get("ranking").serialize(), leaver == 1 ?
+          R"(["p0","p2","p1","p3"])" : R"(["p1","p3","p0","p2"])");
+    }
+    EXPECT_TRUE(finished);
+    EXPECT_EQ(trace.back().teams.size(), 4u);
+  }
+}
+
+TEST(OrcaRoomRankedDoubles, NativeJointWinnersMustMatchExactlyOneAssignedPair)
+{
+  using Result = Orca::Engine::GameResult;
+  for (int first = 0; first < 4; ++first)
+    for (int second = first + 1; second < 4; ++second)
+      for (int team = 0; team < 2; ++team)
+      {
+        Result result;
+        result.kind = Result::Kind::Win;
+        result.players = 4;
+        result.winner_port = first;
+        result.winning_ports = (1u << first) | (1u << second);
+        result.characters = {10, 11, 12, 13};
+        result.stocks = {0, 1, 2, 3};
+        result.start = 120;
+        std::map<int, int> teams;
+        for (int slot = 0; slot < 4; ++slot)
+          teams[slot] = slot == first || slot == second ? team : 1 - team;
+        const auto report = FromGameResult(result, teams);
+        EXPECT_EQ(report.kind, GameReport::Kind::Win);
+        EXPECT_EQ(report.winner_seat, first);
+        picojson::value detail;
+        ASSERT_TRUE(picojson::parse(detail, report.detail).empty());
+        EXPECT_EQ(detail.get("tw").get<double>(), team);
+        EXPECT_EQ(detail.get("c").serialize(), "[10,11,12,13]");
+        EXPECT_EQ(detail.get("s").serialize(), "[0,1,2,3]");
+        EXPECT_TRUE(detail.get("lg").is<picojson::null>());
+        // A native winner pair that differs from the room's partition is never a win.
+        result.winning_ports ^= 15;
+        EXPECT_EQ(FromGameResult(result, teams).why, "teams");
+        result.winning_ports ^= 15;
+        teams.erase(3);
+        EXPECT_EQ(FromGameResult(result, teams).why, "teams");
+      }
+}
+
+TEST(OrcaRoomRankedDoubles, DrawsVoidsAndTwoPortResultsDoNotClaimATeamWin)
+{
+  using Result = Orca::Engine::GameResult;
+  const std::map<int, int> teams{{0, 0}, {1, 1}, {2, 0}, {3, 1}};
+  Result result;
+  result.kind = Result::Kind::Draw;
+  result.players = 4;
+  EXPECT_EQ(FromGameResult(result).why, "ports");
+  auto report = FromGameResult(result, teams);
+  EXPECT_EQ(report.kind, GameReport::Kind::Draw);
+  EXPECT_EQ(report.detail.find("\"tw\""), std::string::npos);
+  result.players = 2;
+  EXPECT_EQ(FromGameResult(result, teams).why, "ports");
+  // The ordinary singles report keeps its existing shape and SetBlock metadata.
+  result.kind = Result::Kind::Win;
+  result.winner_port = 1;
+  result.from_set_block = true;
+  result.set_done = 1;
+  result.set_winner = 1;
+  report = FromGameResult(result);
+  EXPECT_EQ(report.kind, GameReport::Kind::Win);
+  EXPECT_EQ(report.detail, result.DetailJson());
+  EXPECT_TRUE(report.from_set_block);
+  EXPECT_EQ(report.set_done, 1);
+  result.kind = Result::Kind::Void;
+  result.why = "nocontest";
+  EXPECT_EQ(FromGameResult(result, teams).why, "nocontest");
+}
+
+TEST(OrcaRoomRankedDoubles, ALeaveBeforeTheFirstGameIsVoidWithoutAWinningTeam)
+{
+  picojson::value leave;
+  ASSERT_TRUE(picojson::parse(leave, RankedDoublesRoster("leave")).empty());
+  auto& o = leave.get<picojson::object>();
+  o["player"] = picojson::value(picojson::object{{"id", picojson::value("p2")}});
+  auto& participants = o["participants"].get<picojson::array>();
+  participants.erase(participants.begin() + 2);
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Message, 0, RankedDoublesRoster("welcome")},
+      {RK::Message, 1, RankedDoublesRoster("start")}, {RK::Message, 2, leave.serialize()}});
+  bool finished = false;
+  for (const auto& wire : trace.back().sent)
+  {
+    picojson::value message;
+    ASSERT_TRUE(picojson::parse(message, wire).empty());
+    if (message.get("t").to_str() != "finish") continue;
+    finished = true;
+    ASSERT_TRUE(message.get("void").is<bool>());
+    EXPECT_TRUE(message.get("void").get<bool>());
+    EXPECT_TRUE(message.get("detail").is<picojson::null>());
+  }
+  EXPECT_TRUE(finished);
+}
+
+TEST(OrcaRoomRankedDoubles, ADesyncFinalIsVoidAndKeepsItsReasonOnTheVerdict)
+{
+  int step = 0;
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Message, 0, RankedDoublesRoster("welcome")},
+      {RK::Message, 1, RankedDoublesRoster("start")}, {RK::Tick, 2},
+      {RK::Message, 3, R"({"t":"result","matchId":"doubles-set","void":true})"}},
+      [&](YouGameRoom& room) { if (step++ == 1) room.ReportDesync(); });
+  bool finished = false;
+  for (const auto& wire : trace[2].sent)
+  {
+    picojson::value message;
+    ASSERT_TRUE(picojson::parse(message, wire).empty());
+    if (message.get("t").to_str() != "finish") continue;
+    finished = true;
+    ASSERT_TRUE(message.get("void").is<bool>());
+    EXPECT_TRUE(message.get("void").get<bool>());
+    EXPECT_TRUE(message.get("detail").is<picojson::null>());
+  }
+  EXPECT_TRUE(finished);
+  ASSERT_FALSE(trace.back().results.empty());
+  EXPECT_NE(trace.back().results.back().find("\"why\":\"desync\""), std::string::npos);
+}
+
+
+namespace
+{
+std::string RankedArrival(const char* kind, int count, bool nested = false)
+{
+  picojson::value value;
+  picojson::parse(value, RankedDoublesRoster(kind));
+  auto& m = value.get<picojson::object>();
+  if (std::string_view(kind) != "start")
+    m.erase("matchId");
+  m["participants"].get<picojson::array>().resize(count);
+  m["players"].get<picojson::array>().resize(count);
+  if (nested)
+  {
+    auto& room = m["room"].get<picojson::object>();
+    for (const char* field : {"participants", "lifecycle", "revision", "matchId"})
+      if (m.count(field))
+      {
+        room[field] = m.at(field);
+        m.erase(field);
+      }
+  }
+  return value.serialize();
+}
+}
+
+TEST(OrcaRoomRankedDoubles, ArrivalsAreAdmittedUntilFourCanBegin)
+{
+  for (const bool nested : {false, true})
+  {
+    SCOPED_TRACE(nested);
+    int step = 0;
+    const auto trace = TraceRoomForTest(TraceOptions(false), {
+        {RK::Message, 0, RankedArrival("welcome", 1, nested)}, {RK::Tick, 1},
+        {RK::Message, 2, RankedArrival("join", 2, nested)}, {RK::Tick, 3},
+        {RK::Message, 4, RankedArrival("join", 3, nested)}, {RK::Tick, 5},
+        {RK::Message, 6, RankedArrival("join", 4, nested)}, {RK::Tick, 7},
+        {RK::Message, 8, RankedArrival("start", 4, nested)}},
+        [&](YouGameRoom& room) { if (step++ == 0) room.SetOpponentPlugged(true); });
+    for (size_t i = 0; i < trace.size(); ++i)
+    {
+      EXPECT_NE(trace[i].state, RoomState::Ended) << i;
+      EXPECT_EQ(std::ranges::any_of(trace[i].sent, [](const auto& wire) {
+        return wire.find("\"t\":\"begin\"") != std::string::npos;
+      }), i == 7) << i;
+    }
+    EXPECT_EQ(picojson::value(trace.back().mirror).get("matchId").to_str(), "doubles-set");
+    EXPECT_EQ(trace.back().teams.size(), 4u);
+  }
+}
+
+TEST(OrcaRoomRankedDoubles, InvalidArrivalsRefuseOnceAndSeenSeatsKeepTheirTeam)
+{
+  for (int bad = 0; bad < 7; ++bad)
+  {
+    SCOPED_TRACE(bad);
+    picojson::value value;
+    picojson::parse(value, RankedArrival("join", 3));
+    auto& ps = value.get<picojson::object>()["participants"].get<picojson::array>();
+    if (bad == 0) ps[1].get<picojson::object>()["team"] = picojson::value(0.0);
+    if (bad == 1) ps[0].get<picojson::object>()["team"] = picojson::value(1.0);
+    if (bad == 2) ps[2].get<picojson::object>()["localIndex"] = picojson::value(1.0);
+    if (bad == 3) ps[2].get<picojson::object>()["slot"] = picojson::value(1.0);
+    if (bad == 4) ps[2].get<picojson::object>()["id"] = picojson::value("p1");
+    if (bad == 5) ps[2].get<picojson::object>()["connectionId"] = picojson::value("p1");
+    if (bad == 6) ps[2].get<picojson::object>()["id"] = picojson::value(std::string(129, 'x'));
+    const auto trace = TraceRoomForTest(TraceOptions(false), {
+        {RK::Message, 0, RankedArrival("welcome", 2)},
+        // Removing a seat must not forget its earlier team.
+        {RK::Message, 1, RankedArrival("lobby", 1)},
+        {RK::Message, 2, value.serialize()}, {RK::Message, 3, value.serialize()}});
+    EXPECT_NE(trace[0].state, RoomState::Ended);
+    EXPECT_NE(trace[1].state, RoomState::Ended);
+    EXPECT_EQ(trace[2].state, RoomState::Ended);
+    EXPECT_EQ(trace[2].error_code, "room_mismatch");
+    size_t refusals = 0;
+    for (const auto& step : trace)
+      refusals += std::count(step.notices.begin(), step.notices.end(),
+          "Room: ranked doubles requires four single-seat players and two complete teams");
+    EXPECT_EQ(refusals, 1u);
+  }
+}
+
+TEST(OrcaRoomRankedDoubles, PartialStartCannotFreezeAMatch)
+{
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Message, 0, RankedArrival("welcome", 3)},
+      {RK::Message, 1, RankedArrival("start", 3)}});
+  EXPECT_NE(trace[0].state, RoomState::Ended);
+  EXPECT_EQ(trace[1].state, RoomState::Ended);
+  EXPECT_TRUE(picojson::value(trace[1].mirror).get("matchId").is<picojson::null>());
+}
+
+TEST(OrcaRoomRankedDoubles, LocalAddIsRefusedWithRankedReasonBeforeSending)
+{
+  const ScopedEnv session("ORCA_SESSION", "1");
+  const ScopedEnv game("YOUGAME_GAME", "co-page");
+  Orca::Status::SetAppCaps("coseats");
+  const Common::ScopeGuard cleanup([] { Orca::Status::SetAppCaps(""); });
+  for (const bool early : {false, true})
+  {
+    SCOPED_TRACE(early);
+    std::vector<RoomTestStep> steps;
+    if (early)
+      steps.push_back({RK::PageEvent, 0, CO_PAGE_ADD});
+    steps.push_back({RK::Message, 1, RankedArrival("welcome", 1)});
+    if (!early)
+      steps.push_back({RK::PageEvent, 2, CO_PAGE_ADD});
+    steps.push_back({RK::Tick, 3});
+    const auto trace = TraceRoomForTest(TraceOptions(false), steps);
+    size_t refusals = 0;
+    for (const auto& frame : trace)
+    {
+      EXPECT_NE(frame.state, RoomState::Ended);
+      for (const auto& wire : frame.sent)
+        EXPECT_EQ(wire.find("local-add"), std::string::npos);
+      refusals += std::count(frame.notices.begin(), frame.notices.end(),
+          "Room: Ranked doubles is one player per computer (ranked)");
+    }
+    EXPECT_EQ(refusals, 1u);
+    EXPECT_TRUE(trace.back().co_seats.empty());
+  }
+}
+
+TEST_F(OrcaRoomRuntime, RankedDoublesTicketsOmitLocalSeatsAtMintAndRefresh)
+{
+  for (const bool explicit_mode : {false, true})
+  {
+    SCOPED_TRACE(explicit_mode);
+    const std::string code = explicit_mode ? "rankedlsmode" : "rankedlsroom";
+    Request("/configure/" + code,
+        R"({"queue":"ranked","doubles":true,"joining":false,"peers":3,"teams":true})");
+    auto options = TraceOptions(false);
+    options.room_code = code;
+    options.mode = explicit_mode ? "orca-rsbe01-2v2-ranked" : "orca-rsbe01";
+    auto room = std::make_unique<YouGameRoom>(options);
+    ASSERT_TRUE(Wait([&] { return room->Doubles(); }));
+    std::string ticket, store, error;
+    ASSERT_TRUE(room->FreshTicket(true, &ticket, &store, &error)) << error;
+    const auto seats = Request("/state/" + code).get("ticket_local_seats");
+    ASSERT_TRUE(seats.is<picojson::array>());
+    ASSERT_EQ(seats.get<picojson::array>().size(), 2u);
+    if (explicit_mode)
+      EXPECT_TRUE(seats.get<picojson::array>()[0].is<picojson::null>());
+    else
+      EXPECT_EQ(seats.get<picojson::array>()[0].get<double>(), 1);
+    EXPECT_TRUE(seats.get<picojson::array>()[1].is<picojson::null>());
+    const auto present = Request("/state/" + code).get("ticket_has_local_seats");
+    ASSERT_TRUE(present.is<picojson::array>());
+    ASSERT_EQ(present.get<picojson::array>().size(), 2u);
+    EXPECT_EQ(present.get<picojson::array>()[0].get<bool>(), !explicit_mode);
+    EXPECT_FALSE(present.get<picojson::array>()[1].get<bool>());
+  }
+}
+
+TEST(OrcaRoomRankedDoubles, TicketSeatsAreAbsentForRankedRequestsAndKnownRooms)
+{
+  const ScopedEnv session("ORCA_SESSION", "1");
+  const ScopedEnv game("YOUGAME_GAME", "co-page");
+  Orca::Status::SetAppCaps("coseats");
+  const Common::ScopeGuard cleanup([] { Orca::Status::SetAppCaps(""); });
+  for (const bool explicit_mode : {false, true})
+  {
+    auto options = TraceOptions(false);
+    if (explicit_mode)
+      options.mode = "orca-rsbe01-2v2-ranked";
+    const auto trace = TraceRoomForTest(options, {
+        {RK::PageEvent, 0, CO_PAGE_ADD},
+        {RK::Message, 1, RankedArrival("welcome", 1)}});
+    if (explicit_mode)
+      EXPECT_FALSE(trace[0].ticket_local_seats);
+    else
+      EXPECT_EQ(trace[0].ticket_local_seats, 2);
+    EXPECT_FALSE(trace[1].ticket_local_seats);
+  }
+}
+
+TEST(OrcaRoomRankedDoubles, ARoomNoticeWithoutARosterKeepsThePartialSeats)
+{
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Message, 0, RankedArrival("welcome", 2)},
+      {RK::Message, 1, R"({"t":"away","player":{"id":"p1","away":true},"players":[{"id":"p0"},{"id":"p1","away":true}],"host":"p0"})"},
+      {RK::Message, 2, RankedArrival("join", 3)}});
+  for (const auto& frame : trace)
+    EXPECT_NE(frame.state, RoomState::Ended);
+  EXPECT_EQ(trace[1].teams.size(), 2u);
+  EXPECT_EQ(trace[2].teams.size(), 3u);
+}
+
+TEST(OrcaRoomRankedDoubles, ASeatFirstSeenAtStartKeepsItsTeamForTheNextStart)
+{
+  picojson::value changed;
+  picojson::parse(changed, RankedArrival("start", 4));
+  auto& ps = changed.get<picojson::object>()["participants"].get<picojson::array>();
+  ps[2].get<picojson::object>()["team"] = picojson::value(1.0);
+  ps[3].get<picojson::object>()["team"] = picojson::value(0.0);
+  const auto trace = TraceRoomForTest(TraceOptions(false), {
+      {RK::Message, 0, RankedArrival("welcome", 2)},
+      {RK::Message, 1, RankedArrival("start", 4)},
+      {RK::Message, 2, changed.serialize()}});
+  EXPECT_NE(trace[1].state, RoomState::Ended);
+  EXPECT_EQ(trace[2].state, RoomState::Ended);
+  EXPECT_EQ(trace[2].error_code, "room_mismatch");
 }

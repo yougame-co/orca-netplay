@@ -210,10 +210,10 @@ TEST(OrcaStatus, CoSeatsCapsAreAppendOnlyAndFitLegacyReaders)
       }
       before += " record hostui";
       SetEnv("ORCA_COSEATS", "0");
-      EXPECT_EQ(Orca::Status::OfferedCaps(), before + " qdoubles");
+      EXPECT_EQ(Orca::Status::OfferedCaps(), before + " qdoubles rdoubles");
       SetEnv("ORCA_COSEATS", "1");
       const auto after = Orca::Status::OfferedCaps();
-      EXPECT_EQ(after, before + " coseats qdoubles");
+      EXPECT_EQ(after, before + " coseats qdoubles rdoubles");
       EXPECT_EQ(after.find("pick-doubles"), std::string::npos);
       std::FILE* output = std::tmpfile();
       ASSERT_NE(output, nullptr);
@@ -222,27 +222,30 @@ TEST(OrcaStatus, CoSeatsCapsAreAppendOnlyAndFitLegacyReaders)
       std::rewind(output);
       char buffer[1024]{};
       ASSERT_NE(std::fgets(buffer, sizeof(buffer), output), nullptr);
-      EXPECT_EQ(std::string(buffer), "orca caps " + before + " coseats qdoubles\n");
+      EXPECT_EQ(std::string(buffer), "orca caps " + before + " coseats qdoubles rdoubles\n");
       Orca::Status::SetOutput(nullptr);
       std::fclose(output);
       std::istringstream words(after);
       unsigned count = 0;
       for (std::string word; words >> word;)
         ++count;
-      const unsigned expected = product ? 22 : 23;
+      const unsigned expected = product ? 23 : 24;
       EXPECT_EQ(count, expected);
       EXPECT_LE(count, 24u);
       Orca::Status::SetAppCaps("join");
       EXPECT_FALSE(Orca::Status::Cap("coseats"));
       EXPECT_FALSE(Orca::Status::Cap("qdoubles"));
-      Orca::Status::SetAppCaps("join coseats qdoubles pick-doubles");
+      EXPECT_FALSE(Orca::Status::Cap("rdoubles"));
+      Orca::Status::SetAppCaps("join coseats qdoubles rdoubles pick-doubles");
       EXPECT_TRUE(Orca::Status::Cap("coseats"));
       EXPECT_TRUE(Orca::Status::Cap("qdoubles"));
+      EXPECT_TRUE(Orca::Status::Cap("rdoubles"));
       EXPECT_FALSE(Orca::Status::Cap("pick-doubles"));
       SetEnv("ORCA_COSEATS", "0");
-      Orca::Status::SetAppCaps("join coseats qdoubles pick-doubles");
+      Orca::Status::SetAppCaps("join coseats qdoubles rdoubles pick-doubles");
       EXPECT_FALSE(Orca::Status::Cap("coseats"));
       EXPECT_TRUE(Orca::Status::Cap("qdoubles"));
+      EXPECT_TRUE(Orca::Status::Cap("rdoubles"));
       EXPECT_FALSE(Orca::Status::Cap("pick-doubles"));
     }
   }
