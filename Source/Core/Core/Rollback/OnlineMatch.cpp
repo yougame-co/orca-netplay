@@ -4564,6 +4564,7 @@ static std::optional<int> SessionBoundary(
       match.stats_stall_ms += MsSince(step_start);
     if (step.kind == Orca::Net::StepKind::Rollback)
     {
+      Orca::Perf::NoteRollback(running_before - step.frame + 1);
       match.stats_rbmax = std::max(match.stats_rbmax, running_before - step.frame + 1);
       // The loaded snapshot holds the hook's writes made with the ports known then, and the
       // rollback may be due to those ports changing. Rerun the hook for the frame landed on.

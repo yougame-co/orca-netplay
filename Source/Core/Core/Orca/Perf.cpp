@@ -20,6 +20,7 @@
 #include "Common/Version.h"
 #include "Core/Config/GraphicsSettings.h"
 #include "Core/Config/MainSettings.h"
+#include "Core/Orca/JitWarm.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Status.h"
 #include "Core/Orca/UX/Overlay.h"
@@ -89,6 +90,129 @@ double Percentile(std::vector<double> values, double p)
   const std::size_t index =
       static_cast<std::size_t>(std::clamp(rank, 1.0, static_cast<double>(values.size()))) - 1;
   return values[index];
+}
+
+u64 SceneCode(std::string_view name)
+{
+  u64 code = 0;
+  unsigned shift = 0;
+  for (unsigned char c : name)
+  {
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')))
+      continue;
+    code |= u64(c) << shift;
+    shift += 8;
+    if (shift == 64)
+      break;
+  }
+  return code;
+}
+
+std::string SceneCodeName(u64 code)
+{
+  std::string name;
+  for (int i = 0; i < 8 && code; ++i, code >>= 8)
+  {
+    const char c = static_cast<char>(code & 0xff);
+    name += ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '?';
+  }
+  return name.empty() ? "unknown" : name;
+}
+
+std::optional<SceneTransition> PaceMeter::Present(std::chrono::nanoseconds now, u64 scene,
+                                                  bool headless)
+{
+  std::optional<SceneTransition> transition;
+  if (m_last && headless == m_headless && !headless && now >= *m_last)
+  {
+    const double ms = Ms(now - *m_last);
+    ++m_window.n;
+    m_window.p[3] = std::max(m_window.p[3], ms);
+    for (std::size_t i = 0; i < m_window.h.size(); ++i)
+      m_window.h[i] += ms > std::array{25.0, 33.0, 50.0}[i];
+    if (m_size < m_samples.size())
+      m_samples[m_size++] = ms;
+    else
+      ++m_window.dropped;
+  }
+  if (scene && m_scene_last && scene != m_scene && headless == m_headless)
+    transition = SceneTransition{m_scene, scene, Ms(now - *m_scene_last), headless};
+  // Unreadable scene frames must not move the last old-scene timestamp during a load.
+  if (scene)
+  {
+    m_scene = scene;
+    m_scene_last = now;
+  }
+  m_last = now;
+  m_headless = headless;
+  m_window.scene = m_scene;
+  m_window.headless = headless;
+  return transition;
+}
+
+void PaceMeter::Rollback(int depth)
+{
+  if (depth <= 0)
+    return;
+  ++m_window.rb[std::min(depth, 4) - 1];
+  m_window.rm = std::max(m_window.rm, static_cast<u64>(depth));
+}
+
+void PaceMeter::BreakInterval()
+{
+  m_last.reset();
+  m_scene_last.reset();
+}
+
+PaceWindow PaceMeter::Take()
+{
+  std::sort(m_samples.begin(), m_samples.begin() + m_size);
+  if (m_size)
+  {
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+      const auto rank = static_cast<std::size_t>(std::ceil(std::array{.50, .95, .99}[i] * m_size));
+      m_window.p[i] = m_samples[rank - 1];
+    }
+  }
+  const PaceWindow out = m_window;
+  m_window = {};
+  m_window.scene = m_scene;
+  m_window.headless = m_headless;
+  m_size = 0;
+  return out;
+}
+
+namespace
+{
+// Fixed widths make the complete protocol line (prefix and newline included) fit 300 bytes,
+// even after an arbitrarily long stall or a pathological event count.
+u64 PaceCount(u64 value)
+{
+  return std::min<u64>(value, 999999);
+}
+std::string PaceMs(double value)
+{
+  return Num(std::isfinite(value) ? std::clamp(value, 0.0, 99999.9) : 0);
+}
+}  // namespace
+
+std::string PaceJson(const PaceWindow& w)
+{
+  return fmt::format(
+      "{{\"v\":1,\"k\":\"pace\",\"s\":\"{}\",\"n\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"max\":{},"
+      "\"h25\":{},\"h33\":{},\"h50\":{},\"rb\":[{},{},{},{}],\"rm\":{},\"sc\":{},\"sm\":{},\"d\":{}"
+      ",\"h\":{}}}",
+      SceneCodeName(w.scene), PaceCount(w.n), PaceMs(w.p[0]), PaceMs(w.p[1]), PaceMs(w.p[2]),
+      PaceMs(w.p[3]), PaceCount(w.h[0]), PaceCount(w.h[1]), PaceCount(w.h[2]), PaceCount(w.rb[0]),
+      PaceCount(w.rb[1]), PaceCount(w.rb[2]), PaceCount(w.rb[3]), PaceCount(w.rm), PaceCount(w.sc),
+      PaceMs(w.sm), PaceCount(w.dropped), w.headless ? 1 : 0);
+}
+
+std::string SceneJson(const SceneTransition& s)
+{
+  return fmt::format("{{\"v\":1,\"k\":\"scene\",\"from\":\"{}\",\"to\":\"{}\",\"ms\":{},\"h\":{}}}",
+                     SceneCodeName(s.from), SceneCodeName(s.to), PaceMs(s.ms), s.headless ? 1 : 0);
 }
 
 bool Window::Counts(const Rules& rules) const
@@ -486,6 +610,22 @@ std::atomic<s64> s_present_ns{0};
 std::atomic<s64> s_wait_ns{0};
 std::atomic<int> s_step_scopes{0};
 std::mutex s_gfx_mutex;
+struct PresentEvent
+{
+  std::chrono::nanoseconds time;
+  u64 scene;
+  bool headless;
+};
+// Single graphics producer, CPU consumer. Release/acquire publishes complete event slots.
+constexpr std::size_t PRESENT_QUEUE_SIZE = 4096;
+std::array<PresentEvent, PRESENT_QUEUE_SIZE> s_presents;
+std::atomic<u64> s_present_write{0};
+std::atomic<u64> s_present_read{0};
+std::atomic<u64> s_present_dropped{0};
+std::atomic<u64> s_pace_scene{0};
+std::atomic<u64> s_compiles{0};
+std::atomic<s64> s_compile_ns{0};
+static_assert(std::atomic<u64>::is_always_lock_free);
 // The last value queued for each key (GfxKey order), applied at the next forward boundary.
 std::array<std::optional<int>, 7> s_gfx_queue;
 
@@ -495,6 +635,9 @@ struct Run
   bool info_sent = false;
   std::optional<Meter> meter;
   std::optional<AutoSwitch> auto_switch;
+  PaceMeter pace;
+  std::optional<JitWarm::Scene> scene;
+  std::chrono::nanoseconds paused{};
 };
 Run s_run;
 
@@ -654,6 +797,11 @@ void FinishWindow(Window window)
   window.as = s_run.auto_switch && s_run.auto_switch->Fired() && PerformancePicture();
   window.test = TestRulesActive();
   Print(WindowJson(window));
+  PaceWindow pace = s_run.pace.Take();
+  pace.dropped += s_present_dropped.exchange(0, std::memory_order_relaxed);
+  pace.sc = s_compiles.exchange(0, std::memory_order_relaxed);
+  pace.sm = Ms(std::chrono::nanoseconds(s_compile_ns.exchange(0, std::memory_order_relaxed)));
+  Print(PaceJson(pace));
   if (s_run.auto_switch && AutoAllowed() && s_run.auto_switch->Feed(window))
     SwitchToPerformance(s_run.auto_switch->TriggerCap());
 }
@@ -681,6 +829,14 @@ void NewBoot()
 {
   s_run.meter.reset();
   s_run.auto_switch.reset();
+  s_run.pace = {};
+  s_run.scene.reset();
+  s_run.paused = {};
+  s_pace_scene.store(0, std::memory_order_relaxed);
+  s_present_read.store(s_present_write.load(std::memory_order_acquire), std::memory_order_release);
+  s_present_dropped.store(0, std::memory_order_relaxed);
+  s_compiles.store(0, std::memory_order_relaxed);
+  s_compile_ns.store(0, std::memory_order_relaxed);
 }
 
 const Rules& ActiveRules()
@@ -699,6 +855,55 @@ void AddPresent(std::chrono::nanoseconds time)
 {
   if (s_step_scopes.load(std::memory_order_relaxed) == 0)
     s_present_ns.fetch_add(time.count(), std::memory_order_relaxed);
+}
+
+void Presented(bool headless)
+{
+  if (!s_ready.load(std::memory_order_relaxed))
+    return;
+  const u64 write = s_present_write.load(std::memory_order_relaxed);
+  if (write - s_present_read.load(std::memory_order_acquire) >= PRESENT_QUEUE_SIZE)
+  {
+    s_present_dropped.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  s_presents[write % PRESENT_QUEUE_SIZE] = {
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()),
+      s_pace_scene.load(std::memory_order_relaxed), headless};
+  s_present_write.store(write + 1, std::memory_order_release);
+}
+
+void NotePaceScene(const Core::CPUThreadGuard& guard)
+{
+  const auto scene = JitWarm::CurrentScene(guard);
+  if (scene == s_run.scene)
+    return;
+  s_run.scene = scene;
+  s_pace_scene.store(scene ? SceneCode(JitWarm::SceneName(guard, scene->name)) : 0,
+                     std::memory_order_relaxed);
+}
+
+void NoteRollback(int depth)
+{
+  if (s_ready.load(std::memory_order_relaxed))
+    s_run.pace.Rollback(depth);
+}
+
+CompileScope::CompileScope()
+{
+  if (s_ready.load(std::memory_order_relaxed))
+    m_start = std::chrono::steady_clock::now();
+}
+
+CompileScope::~CompileScope()
+{
+  if (!m_start)
+    return;
+  const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now() - *m_start);
+  s_compile_ns.fetch_add(ns.count(), std::memory_order_relaxed);
+  s_compiles.fetch_add(1, std::memory_order_relaxed);
 }
 
 void AddWait(std::chrono::nanoseconds time)
@@ -747,6 +952,24 @@ void OnBoundary(const Boundary& boundary)
     s_run.info_sent = true;
     SendInfo();
   }
+  const bool paused = boundary.paused_total != s_run.paused;
+  if (paused)
+  {
+    s_run.pace.BreakInterval();
+    s_run.paused = boundary.paused_total;
+  }
+  u64 read = s_present_read.load(std::memory_order_relaxed);
+  const u64 write = s_present_write.load(std::memory_order_acquire);
+  if (paused)
+    read = write;  // Discard redraws queued while the CPU was paused.
+  while (read != write)
+  {
+    const PresentEvent& event = s_presents[read % PRESENT_QUEUE_SIZE];
+    if (auto scene = s_run.pace.Present(event.time, event.scene, event.headless))
+      Print(SceneJson(*scene));
+    ++read;
+  }
+  s_present_read.store(read, std::memory_order_release);
   const Meter::Totals totals{std::chrono::nanoseconds(s_sleep_ns.load(std::memory_order_relaxed)),
                              std::chrono::nanoseconds(s_present_ns.load(std::memory_order_relaxed)),
                              std::chrono::nanoseconds(s_wait_ns.load(std::memory_order_relaxed))};

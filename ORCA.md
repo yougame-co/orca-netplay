@@ -1467,8 +1467,36 @@ embedded only, each line at most 300 bytes, versioned with `"v":1`:
 - `{"v":1,"k":"win","m":"1v1","n":858,"cap":51.7,"fc":58.0,"rw":12.4,"rv":180,"w50":18.9,"w95":24.1,"g95":3.2,"fps":51.6,"rbf":212,"res":1,"pf":1,"as":1}`
   every 15 s of running time (a pause doesn't count), menus included (`n` is 0 there), with
   `"t":1` at the end when a test switch shaped the run.
+- `{"v":1,"k":"pace","s":"scMelee","n":899,"p50":16.7,"p95":17.1,"p99":33.4,"max":68.2,"h25":12,"h33":10,"h50":1,"rb":[3,2,1,4],"rm":7,"sc":2,"sm":14.3,"d":0,"h":0}`
+  alongside each `win`, including menus, loads and transitions. `s` is the most recently presented
+  scene code: the first eight alphanumeric characters of its name (`muMenuMain` becomes
+  `muMenuMa`, `scSelctCharacter` becomes `scSelctC`), or `unknown` until readable.
+  `n` counts present-to-present intervals; `p50`, `p95`, `p99`, `max` are their nearest-rank
+  percentiles and maximum in wall ms, one decimal. `h25`, `h33`, `h50` count intervals strictly
+  over 25, 33, 50 ms; these counts overlap. `rb` counts rollback events of depth 1, 2, 3, 4+;
+  `rm` is their maximum depth (frames). `sc` counts synchronous on-demand ShaderCache miss attempts
+  (GX, uber, EFB copy to RAM/VRAM, texture reinterpret), including failures; `sm` is their total
+  blocked wall ms, including dependent shader generation/compilation and pipeline creation.
+  Background/async jobs and startup shared pipelines are excluded. `d` counts dropped queue events
+  or interval samples; nonzero means incomplete percentiles. `h` is 1 for headless submissions:
+  they generate scene diagnostics but **no** presented intervals (`n` and pacing values stay zero).
+- `{"v":1,"k":"scene","from":"muMenuMa","to":"scSelctC","ms":83.4,"h":0}`
+  once per presented scene change. `from`/`to` use the same codes; `ms` is wall time from the last
+  old-scene present to the first new-scene present. Unreadable scene frames during a load retain
+  the last old-scene timestamp. `h:1` measures headless submission boundaries, not displayed frames.
+  The first readable scene establishes a baseline; it is not a change.
 - `{"v":1,"k":"auto","cap":44.3}` once, when the run switched itself to Performance (`cap`: the
   median speed of the windows that switched it, at the reference re-run load below).
+
+Pacing timestamps come from completion of the existing present/swap path (software: `ShowImage`),
+not work-frame boundaries. This measures host swap completion, not a display's physical scanout.
+Host UI redraws of the last game image during a stall do not reset the interval or scene clock.
+No match warm-up, load, wait or throttle time is subtracted. Pause boundaries break the interval
+and transition timing so a resumed game does not report the pause as a hitch. A previous present
+survives window boundaries. Storage is fixed: 4,096 queued events and 16,384 intervals per window;
+overflow keeps exact observed maximum/hitch counts but percentiles use the stored intervals.
+All new numeric fields saturate when serialized: counts at 999,999, ms at 99,999.9. Both lines,
+including `orca perf ` and newline, fit 300 bytes. Existing `win` fields and rules are unchanged.
 
 How it is measured. A forward frame is a boundary whose frame ran for the first time in real time.
 Its time since the previous forward boundary includes any rollback re-runs (they are this machine's
@@ -2592,7 +2620,7 @@ ring every 1.2 s.
 | `orca menu ...`, `orca result ...`, `orca queue ...` | See [Online menu](#online-menu) and [Matchmaking](#matchmaking-and-results). |
 | `orca controls <hex>` | The player's own controls: changed in the game, or loaded from Orca's file at boot. The page keeps them. |
 | `orca active <interval_s> <active_s> <inputs> <mode> <pads>` | How much the player played: every 60 s while the game runs, and once more when it stops ([Activity lines](#activity-lines)). |
-| `orca perf <json>` | This machine's speed: `info` once after `ready`, `win` every 15 s of running time, `auto` when the run switched its graphics to Performance ([This machine's speed](#this-machines-speed)). |
+| `orca perf <json>` | This machine's speed: `info` once after `ready`, unchanged `win` and presentation/rollback/compile `pace` every 15 s of running time, `scene` per presented scene change, `auto` when the run switched its graphics to Performance. Version 1; each line at most 300 bytes ([This machine's speed](#this-machines-speed)). |
 | `orca rumble <port> <0\|1> <adapter\|pad\|none> <index>` | The game's motor for the local player's controller, on change and every 30 frames while on, cap `rumble` ([Rumble](#rumble)). |
 | `orca replay time <frame> <ms>` | Product playback position, about four times a second, including paused/live waits, plus initial and final positions. Absolute replay frame and whole milliseconds from its first frame, `max(0, frame - first) * 1000 / 60` rounded down. A seek may move both backward. For chat synchronization, not wall-clock time. |
 | `orca replay done ok\|fail frames=<n> ... why=<text>` | Replay completion or failure; the existing diagnostic fields stay intact. `frames` counts executed replay frames, including seeks; `why=-` means normal saved-file completion. Main forwards this as `replay-done`. |
@@ -2834,6 +2862,10 @@ STUN and TURN are internet traffic and work in every mode.
 ## Changes by release
 
 What each release changed for players, in plain words.
+
+### 0.3.96
+
+- Smoothness reports: YG Dolphin now reports how evenly frames reach the screen, the hitches over 25, 33 and 50 ms, how deep rollbacks go and how long each screen transition takes (`orca perf` `pace` and `scene` lines), so the team can find and fix stutter. Play is exactly as before.
 
 ### 0.3.95
 

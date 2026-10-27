@@ -17,6 +17,10 @@ namespace Config
 {
 struct Location;
 }
+namespace Core
+{
+class CPUThreadGuard;
+}
 
 // This machine's own speed, reported to the YouGame page, and the one switch to the Performance
 // graphics preset a run makes when the machine can't hold 60 fps. See ORCA.md, "Graphics".
@@ -52,6 +56,8 @@ struct Location;
 // versioned with "v":1:
 //   {"v":1,"k":"info",...}  once, after "ready": backend, graphics card, adapters, CPU, threads
 //   {"v":1,"k":"win",...}   every window, menus included (n is 0 there)
+//   {"v":1,"k":"pace",...}  alongside win: swap intervals, rollback depths, sync compiles
+//   {"v":1,"k":"scene",...} per presented scene change (headless submissions marked h:1)
 //   {"v":1,"k":"auto","cap":C}  once, when the switch to Performance fires (C: CapAtRef's median)
 //
 // Observation only: wall-clock time and the graphics settings, which never reach emulation, the
@@ -115,6 +121,52 @@ double ForwardWork(const Frame& frame);
 
 // Nearest-rank percentile (p in 0..100) of `values`; 0 when empty.
 double Percentile(std::vector<double> values, double p);
+
+// Host presentation diagnostics. Fixed storage: no per-frame allocation. Scene codes are the
+// first eight alphanumeric characters of the guest's scene name (0 means unreadable).
+u64 SceneCode(std::string_view name);
+std::string SceneCodeName(u64 code);
+struct SceneTransition
+{
+  u64 from = 0;
+  u64 to = 0;
+  double ms = 0;
+  bool headless = false;
+};
+struct PaceWindow
+{
+  u64 scene = 0;
+  u64 n = 0;                  // measured present intervals
+  std::array<double, 4> p{};  // p50, p95, p99, max (ms)
+  std::array<u64, 3> h{};     // strictly over 25, 33, 50 ms (overlapping)
+  std::array<u64, 4> rb{};    // rollback events at depth 1, 2, 3, 4+
+  u64 rm = 0;
+  u64 sc = 0;       // synchronous ShaderCache cache-miss attempts, background excluded
+  double sm = 0;    // time blocked in those attempts, including dependent shaders
+  u64 dropped = 0;  // queue or sample storage overflow; a nonzero value makes percentiles partial
+  bool headless = false;
+};
+class PaceMeter
+{
+public:
+  static constexpr std::size_t SAMPLE_CAPACITY = 16384;
+  std::optional<SceneTransition> Present(std::chrono::nanoseconds now, u64 scene, bool headless);
+  void Rollback(int depth);
+  // Drop the interval spanning a pause, but preserve scene identity.
+  void BreakInterval();
+  PaceWindow Take();  // preserves the previous present across windows
+
+private:
+  PaceWindow m_window;
+  std::array<double, SAMPLE_CAPACITY> m_samples{};
+  std::size_t m_size = 0;
+  std::optional<std::chrono::nanoseconds> m_last;
+  std::optional<std::chrono::nanoseconds> m_scene_last;
+  u64 m_scene = 0;
+  bool m_headless = false;
+};
+std::string PaceJson(const PaceWindow& window);
+std::string SceneJson(const SceneTransition& scene);
 
 struct Window
 {
@@ -346,6 +398,23 @@ const Rules& ActiveRules();
 // Time the CPU thread slept in CoreTiming, and spent binding and presenting the back buffer.
 void AddSleep(std::chrono::nanoseconds time);
 void AddPresent(std::chrono::nanoseconds time);
+// Swap completion (or a headless submission, which never contributes pacing samples).
+// One producer: the graphics thread. Lock-free, fixed-capacity queue; drained on CPU boundaries.
+void Presented(bool headless = false);
+void NotePaceScene(const Core::CPUThreadGuard& guard);
+void NoteRollback(int depth);
+// Only synchronous, on-demand ShaderCache misses; never instantiate in background workers.
+class CompileScope
+{
+public:
+  CompileScope();
+  ~CompileScope();
+  CompileScope(const CompileScope&) = delete;
+  CompileScope& operator=(const CompileScope&) = delete;
+
+private:
+  std::optional<std::chrono::steady_clock::time_point> m_start;
+};
 // The session's stall and time-sync waits at a boundary (Rollback::StepSession).
 void AddWait(std::chrono::nanoseconds time);
 // While one is alive (around StepSession), sleeps and presents are part of the wait, not of a

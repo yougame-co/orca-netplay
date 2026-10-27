@@ -18,6 +18,7 @@
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/Orca/GpuDiagnostics.h"
+#include "Core/Orca/Perf.h"
 #include "Core/Orca/Profile.h"
 #include "Core/Orca/Status.h"
 #include "Core/System.h"
@@ -189,6 +190,7 @@ const AbstractPipeline* ShaderCache::GetPipelineForUid(const GXPipelineUid& uid)
     return it->second.first.get();
 
   const bool exists_in_cache = it != m_gx_pipeline_cache.end();
+  const Orca::Perf::CompileScope perf_compile;
   std::unique_ptr<AbstractPipeline> pipeline;
   std::optional<AbstractPipelineConfig> pipeline_config = GetGXPipelineConfig(uid);
   if (pipeline_config)
@@ -221,6 +223,7 @@ const AbstractPipeline* ShaderCache::GetUberPipelineForUid(const GXUberPipelineU
   if (it != m_gx_uber_pipeline_cache.end() && !it->second.second)
     return it->second.first.get();
 
+  const Orca::Perf::CompileScope perf_compile;
   std::unique_ptr<AbstractPipeline> pipeline;
   std::optional<AbstractPipelineConfig> pipeline_config = GetGXPipelineConfig(uid);
   if (pipeline_config)
@@ -1513,6 +1516,7 @@ ShaderCache::GetEFBCopyToVRAMPipeline(const TextureConversionShaderGen::TCShader
   if (iter != m_efb_copy_to_vram_pipelines.end())
     return iter->second.get();
 
+  const Orca::Perf::CompileScope perf_compile;
   auto shader_code = TextureConversionShaderGen::GeneratePixelShader(m_api_type, uid.GetUidData());
   auto shader = g_gfx->CreateShaderFromSource(
       ShaderStage::Pixel, shader_code.GetBuffer(), nullptr,
@@ -1546,6 +1550,7 @@ const AbstractPipeline* ShaderCache::GetEFBCopyToRAMPipeline(const EFBCopyParams
   if (iter != m_efb_copy_to_ram_pipelines.end())
     return iter->second.get();
 
+  const Orca::Perf::CompileScope perf_compile;
   const std::string shader_code =
       TextureConversionShaderTiled::GenerateEncodingShader(uid, m_api_type);
   const auto shader =
@@ -1666,6 +1671,7 @@ const AbstractPipeline* ShaderCache::GetTextureReinterpretPipeline(TextureFormat
   if (!inserted)
     return iter->second.get();
 
+  const Orca::Perf::CompileScope perf_compile;
   std::string shader_source =
       FramebufferShaderGen::GenerateTextureReinterpretShader(from_format, to_format);
   if (shader_source.empty())

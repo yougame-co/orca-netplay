@@ -1,6 +1,7 @@
 // Copyright 2026 YouGame
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <chrono>
 #include <limits>
 #include <optional>
@@ -22,6 +23,141 @@ using Orca::Perf::Meter;
 using Orca::Perf::Mode;
 using Orca::Perf::Rules;
 using Orca::Perf::Window;
+
+TEST(OrcaPace, NearestRankAndStrictHitchThresholds)
+{
+  Orca::Perf::PaceMeter meter;
+  auto now = 0ns;
+  meter.Present(now, 0, false);
+  for (int ms = 1; ms <= 100; ++ms)
+  {
+    now += std::chrono::milliseconds(ms);
+    meter.Present(now, 0, false);
+  }
+  const auto w = meter.Take();
+  EXPECT_EQ(w.n, 100u);
+  EXPECT_EQ(w.p, (std::array<double, 4>{50, 95, 99, 100}));
+  EXPECT_EQ(w.h, (std::array<u64, 3>{75, 67, 50}));
+  EXPECT_EQ(meter.Take().p, (std::array<double, 4>{}));
+  meter.Present(now + 16667us, 0, false);
+  EXPECT_DOUBLE_EQ(meter.Take().p[0], 16.667);
+}
+
+TEST(OrcaPace, RollbackHistogramCountsEventsAndKeepsMaximum)
+{
+  Orca::Perf::PaceMeter meter;
+  for (int depth : {-1, 0, 1, 2, 3, 4, 7, 2})
+    meter.Rollback(depth);
+  const auto w = meter.Take();
+  EXPECT_EQ(w.rb, (std::array<u64, 4>{1, 2, 1, 2}));
+  EXPECT_EQ(w.rm, 7u);
+  EXPECT_EQ(meter.Take().rb, (std::array<u64, 4>{}));
+}
+
+TEST(OrcaPace, TransitionUsesLastOldPresentAcrossUnreadableLoadAndWindow)
+{
+  Orca::Perf::PaceMeter meter;
+  const auto old_scene = Orca::Perf::SceneCode("muMenuMain");
+  const auto new_scene = Orca::Perf::SceneCode("scSelctCharacter");
+  EXPECT_FALSE(meter.Present(0ms, old_scene, false));
+  EXPECT_FALSE(meter.Present(17ms, old_scene, false));
+  EXPECT_FALSE(meter.Present(50ms, 0, false));
+  meter.Take();
+  const auto change = meter.Present(100ms, new_scene, false);
+  ASSERT_TRUE(change);
+  EXPECT_EQ(change->from, old_scene);
+  EXPECT_EQ(change->to, new_scene);
+  EXPECT_EQ(change->ms, 83);
+  EXPECT_FALSE(change->headless);
+  EXPECT_FALSE(meter.Present(117ms, new_scene, false));
+  EXPECT_EQ(meter.Take().p[3], 50);
+}
+
+TEST(OrcaPace, HeadlessSceneSubmissionsNeverClaimPresentedIntervals)
+{
+  Orca::Perf::PaceMeter meter;
+  meter.Present(0ms, Orca::Perf::SceneCode("scBoot"), true);
+  const auto scene = meter.Present(500ms, Orca::Perf::SceneCode("scTitle"), true);
+  ASSERT_TRUE(scene);
+  EXPECT_TRUE(scene->headless);
+  EXPECT_EQ(scene->ms, 500);
+  const auto w = meter.Take();
+  EXPECT_TRUE(w.headless);
+  EXPECT_EQ(w.n, 0u);
+  EXPECT_EQ(w.p, (std::array<double, 4>{}));
+}
+
+TEST(OrcaPace, PauseBreaksIntervalsAndTransitionTiming)
+{
+  Orca::Perf::PaceMeter meter;
+  meter.Present(0ms, Orca::Perf::SceneCode("scBoot"), false);
+  meter.BreakInterval();
+  EXPECT_FALSE(meter.Present(1h, Orca::Perf::SceneCode("scTitle"), false));
+  EXPECT_EQ(meter.Take().n, 0u);
+  meter.Present(1h + 16ms, Orca::Perf::SceneCode("scTitle"), false);
+  EXPECT_EQ(meter.Take().p[0], 16);
+}
+
+TEST(OrcaPace, FixedStorageOverflowIsVisibleAndMaximumStillExact)
+{
+  Orca::Perf::PaceMeter meter;
+  meter.Present(0ms, 0, false);
+  for (std::size_t i = 1; i <= Orca::Perf::PaceMeter::SAMPLE_CAPACITY; ++i)
+    meter.Present(std::chrono::milliseconds(i), 0, false);
+  meter.Present(std::chrono::milliseconds(Orca::Perf::PaceMeter::SAMPLE_CAPACITY + 100), 0, false);
+  const auto w = meter.Take();
+  EXPECT_EQ(w.n, Orca::Perf::PaceMeter::SAMPLE_CAPACITY + 1);
+  EXPECT_EQ(w.dropped, 1u);
+  EXPECT_EQ(w.p, (std::array<double, 4>{1, 1, 1, 100}));
+  EXPECT_EQ(w.h, (std::array<u64, 3>{1, 1, 1}));
+}
+
+TEST(OrcaPace, ProtocolFits300BytesAtAllSaturationsIncludingNewline)
+{
+  Orca::Perf::PaceWindow w;
+  const u64 huge = std::numeric_limits<u64>::max();
+  w.scene = Orca::Perf::SceneCode("scSelctCharacter");
+  w.n = w.rm = w.sc = w.dropped = huge;
+  w.h.fill(huge);
+  w.rb.fill(huge);
+  w.p.fill(std::numeric_limits<double>::max());
+  w.sm = std::numeric_limits<double>::max();
+  w.headless = true;
+  const std::string line = "orca perf " + Orca::Perf::PaceJson(w) + "\n";
+  EXPECT_LE(line.size(), Orca::Perf::LINE_BYTES) << line;
+  EXPECT_EQ(line.find("inf"), std::string::npos);
+  EXPECT_EQ(line.find("nan"), std::string::npos);
+  EXPECT_LE(("orca perf " + Orca::Perf::SceneJson({w.scene, w.scene, w.sm, true}) + "\n").size(),
+            Orca::Perf::LINE_BYTES);
+  w.p.fill(std::numeric_limits<double>::quiet_NaN());
+  w.sm = std::numeric_limits<double>::infinity();
+  EXPECT_EQ(Orca::Perf::PaceJson(w).find("nan"), std::string::npos);
+}
+
+TEST(OrcaPace, SceneCodesAreBoundedAndSafeJsonText)
+{
+  EXPECT_EQ(Orca::Perf::SceneCodeName(Orca::Perf::SceneCode("muMenuMain")), "muMenuMa");
+  EXPECT_EQ(Orca::Perf::SceneCodeName(Orca::Perf::SceneCode("scMelee")), "scMelee");
+  EXPECT_EQ(Orca::Perf::SceneCodeName(Orca::Perf::SceneCode("\"\\\n")), "unknown");
+}
+
+TEST(OrcaPace, VersionOneWireContract)
+{
+  Orca::Perf::PaceWindow w;
+  w.scene = Orca::Perf::SceneCode("scMelee");
+  w.n = 899;
+  w.p = {16.7, 17.1, 33.4, 68.2};
+  w.h = {12, 10, 1};
+  w.rb = {3, 2, 1, 4};
+  w.rm = 7;
+  w.sc = 2;
+  w.sm = 14.3;
+  EXPECT_EQ(Orca::Perf::PaceJson(w),
+            R"({"v":1,"k":"pace","s":"scMelee","n":899,"p50":16.7,"p95":17.1,"p99":33.4,"max":68.2,"h25":12,"h33":10,"h50":1,"rb":[3,2,1,4],"rm":7,"sc":2,"sm":14.3,"d":0,"h":0})");
+  EXPECT_EQ(Orca::Perf::SceneJson({Orca::Perf::SceneCode("muMenuMain"),
+                                 Orca::Perf::SceneCode("scSelctCharacter"), 83.4, false}),
+            R"({"v":1,"k":"scene","from":"muMenuMa","to":"scSelctC","ms":83.4,"h":0})");
+}
 
 std::chrono::nanoseconds Ms(double ms)
 {

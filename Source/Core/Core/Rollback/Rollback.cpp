@@ -699,6 +699,10 @@ void OnFrameBoundary(const Core::CPUThreadGuard& guard)
   if (Orca::SessionActive())
     guard.GetSystem().GetSerialInterface().RelatchInputs();
 
+  // Presentation diagnostics include menus, loads and transitions without match warm-up.
+  if (Orca::SessionActive() && Orca::Perf::Measuring() && !IsResimulating())
+    Orca::Perf::NotePaceScene(guard);
+
   // JIT warm-up: precompile blocks earlier matches needed and record this match's for next time.
   // Only on first runs, and not while catching up, whose frames run back to back.
   if (Orca::SessionActive() && Orca::JitWarm::ScenesReadable() && !IsResimulating() &&
