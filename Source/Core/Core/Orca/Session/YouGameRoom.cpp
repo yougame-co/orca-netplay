@@ -5068,7 +5068,7 @@ struct YouGameRoom::Impl
     if (notify_invalid)
       LocalStatus("Room: invalid or incomplete teams; ignoring teams for this room");
     else if (any && valid && !teams_ignored && !std::exchange(teams_notice, true))
-      LocalStatus("Room: teams received; host chooses Team battle and team colours on the select");
+      LocalStatus("Room: teams set by the match; host chooses Team battle on the select");
   }
 
   void Roster(const picojson::object& m, bool fresh_without_add = false)

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Core/Orca/Engine/GuestMemory.h"
+#include "Core/Orca/Session/Online.h"
 #include "Core/Orca/Games/Brawl/BrawlGame.h"
 #include "Core/Orca/Games/Brawl/BrawlStages.h"
 #include "Core/Orca/Games/Brawl/CharOrder.h"
@@ -65,7 +66,10 @@ class BrawlHeader final : public Orca::Engine::HeaderHost
 public:
   bool SetWanted(Rules::Mode mode, u8 flags, std::string_view code) override
   {
-    return Rules::SetWanted(mode, flags, code);
+    return Rules::SetWanted(mode, flags, code,
+                            Rules::RoomTeamsMask(Orca::Online::RoomDoubles() &&
+                                                     !Orca::Online::RoomEnded(),
+                                                 Orca::Online::RoomTeams()));
   }
   u64 WantedGeneration() override { return Rules::WantedGeneration(); }
   bool HeaderInPlace() override { return Rules::HeaderInPlace(); }

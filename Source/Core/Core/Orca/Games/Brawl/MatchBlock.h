@@ -34,6 +34,7 @@
 //                  Code Menu activation)
 //   +0xF4..+0xFF   shared stage select cursors (StageCursors.h)
 //   +0x100..+0x1A7 Project+ stage switch data, saved when the header is written
+//   +0x1A8..+0x1AF room doubles pairing, independent of the singles header
 //   +0x1B4..+0x1BF stage select cursors (StageCursors.h)
 //   +0x1C0..+0x1EF queue character select (Queue.h)
 //   +0x1F0         saved-rules flags
@@ -111,6 +112,12 @@ constexpr u32 SAVED_STAGES = BASE + 0xEC;  // 2 words: menu data +0x20, +0x24
 // Project+ only: its stage switch data (RSS_EXDATA) before the lock.
 constexpr u32 SAVED_RSS = BASE + 0x100;
 constexpr u32 SAVED_RSS_SIZE = 0xA8;
+// Used with or without a singles header. Host writes only at a header-free boundary; typed replay
+// events reproduce changes. The frame hook's native colour writes read this block alone.
+constexpr u32 ROOM_TEAMS = BASE + 0x1A8;
+constexpr u32 ROOM_TEAMS_MAGIC = 0x59475431;  // 'YGT1'
+constexpr u32 ROOM_TEAMS_MASK = ROOM_TEAMS + 4;  // team 1's seat mask, 0 disabled
+constexpr u32 ROOM_TEAMS_LOGGED = ROOM_TEAMS + 5;  // once per character select
 // u8: bit 0 rules saved, bit 1 RSS saved, bit 2 Code Menu activation saved
 constexpr u32 SAVED_FLAGS = BASE + 0x1F0;
 
@@ -150,6 +157,7 @@ static_assert(SAVED_STAGES + 8 <= STAGE_CURSORS_SHARED &&
               STAGE_CURSORS_SHARED + STAGE_CURSORS_SHARED_SIZE <= SAVED_RSS);
 static_assert(SAVED_RSS + SAVED_RSS_SIZE <= STAGE_CURSORS &&
               STAGE_CURSORS + STAGE_CURSORS_SIZE <= QUEUE);
+static_assert(SAVED_RSS + SAVED_RSS_SIZE <= ROOM_TEAMS && ROOM_TEAMS + 8 <= STAGE_CURSORS);
 static_assert(RANKED_SET + 0x80 <= FRIENDS && FRIENDS_END <= FreeSpace::kMatchBlockLimit);
 static_assert(FRIENDS_MENU_SINCE % 4 == 0);
 static_assert(SAVED_RSS + SAVED_RSS_SIZE <= QUEUE && QUEUE + QUEUE_SIZE <= SAVED_FLAGS);

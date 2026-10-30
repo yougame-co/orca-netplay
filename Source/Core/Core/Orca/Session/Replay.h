@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <bit>
 #include <map>
 #include <memory>
 #include <optional>
@@ -106,6 +107,8 @@ struct ReplayFrame
   Pads pads{};
   std::shared_ptr<const std::vector<Events::PortInfo>> ports;
   std::optional<ReplayHeader> header;
+  // Room team 1's seat mask; zero clears it. Only complete two-versus-two maps are events.
+  std::optional<u8> room_teams;
   bool clear_ready = false;
   std::optional<std::vector<TagAssignment>> tag_assignments;
   // A fresh start's way out of the built main menu (MENU_EXIT_*), or 0.
@@ -114,6 +117,11 @@ struct ReplayFrame
   // FreshMove::ApplySeed), or 0 for the canonical boot's own. Only ever on a replay's first frame.
   u32 seed = 0;
 };
+
+inline bool ValidRoomTeams(u32 teams)
+{
+  return teams == 0 || (teams < 16 && std::popcount(teams) == 2);
+}
 
 struct ReplayArchive
 {

@@ -37,6 +37,11 @@ namespace B = MatchBlock;
 
 constexpr u32 GAME_GLOBAL = 0x805A00E0;
 constexpr u32 GLOBAL_MODE_MELEE = 0x08;
+// Read-only native-input probes: notes/doubles-teams-proof/address-evidence.md.
+constexpr u32 GLOBAL_SELECT = 0x10;
+constexpr u32 SELECT_TEAM_MODE = 0x33;  // 0 off, 1..3 P+ Team battle modes
+constexpr u32 SELECT_PLAYERS = 0xB8;
+constexpr u32 SELECT_PLAYER_TEAM = 0x0B;
 constexpr u32 GLOBAL_SET_RULE = 0x1C;
 // gmGlobalModeMelee player init data: 4 x 0x5C from +0x98 (+0x00 character, +0x01 type: 0 human,
 // 1 CPU, 3 none).
@@ -95,6 +100,8 @@ constexpr u32 SCENE_MANAGER = 0x805A0060;
 constexpr u32 MANAGER_SCENE = 0x04;
 constexpr u32 SCENE_SELCHAR_TASK = 0x400;
 constexpr u32 TASK_AREAS = 0x44;
+constexpr u32 TASK_TEAM_BATTLE = 0x5C8;  // u8, 0 off / 1 on
+constexpr u32 AREA_TEAM = 0x1C0;        // u32, 0 red / 1 blue / 2 green
 constexpr u32 AREA_HAND = 0x1A8;
 // Area fields: +0x1B4 kind (1 human), +0x1B8 character under the hand or the token's, +0x1F8 u8 1
 // while the token is in the hand, +0x1F9 u8 1 while it is moving.
@@ -478,6 +485,7 @@ void ReadyTimer(Writer& w, const Header& h, const Ranked::Ruleset& rules, const 
 // ---- Session state (CPU thread) ----
 std::atomic<Mode> s_wanted{Mode::None};
 std::atomic<u8> s_wanted_flags{0};
+std::atomic<u8> s_wanted_teams{0};
 std::atomic<u64> s_generation{0};
 std::atomic<bool> s_in_place{true};
 std::atomic<bool> s_header_free{false};
@@ -912,14 +920,113 @@ bool CssBMayUnpick(const GuestMemory& m, int port)
   return CssBUnpicks(ReadCssToken(m, port), RawHeld(m, port, PAD_BUTTON_B));
 }
 
-bool SetWanted(Mode mode, u8 flags, std::string_view code)
+u8 RoomTeamsMask(bool doubles, const std::map<int, int>& teams)
 {
+  if (!doubles || teams.size() != 4)
+    return 0;
+  u8 mask = 0;
+  for (int port = 0; port < 4; ++port)
+  {
+    const auto it = teams.find(port);
+    if (it == teams.end() || (it->second != 0 && it->second != 1))
+      return 0;
+    mask |= static_cast<u8>(it->second << port);
+  }
+  return std::popcount(mask) == 2 ? mask : 0;
+}
+
+u8 ReadRoomTeams(const GuestMemory& m)
+{
+  if (!B::Present(m) || !m.Valid(B::ROOM_TEAMS_LOGGED) ||
+      m.Read32(B::ROOM_TEAMS) != B::ROOM_TEAMS_MAGIC)
+    return 0;
+  const u8 teams = m.Read8(B::ROOM_TEAMS_MASK);
+  return Orca::Net::ValidRoomTeams(teams) ? teams : 0;
+}
+
+int WriteRoomTeams(GuestMemory& m, u8 teams)
+{
+  if (!Orca::Net::ValidRoomTeams(teams) || !B::Present(m) ||
+      !m.Valid(B::ROOM_TEAMS + 7))
+    return 0;
+  const bool present = m.Read32(B::ROOM_TEAMS) == B::ROOM_TEAMS_MAGIC;
+  if ((!present && teams == 0) || (present && m.Read8(B::ROOM_TEAMS_MASK) == teams))
+    return 0;
+  Writer w{m};
+  w.U32(B::ROOM_TEAMS, B::ROOM_TEAMS_MAGIC);
+  w.U8(B::ROOM_TEAMS_MASK, teams);
+  w.U8(B::ROOM_TEAMS_LOGGED, 0);
+  if (auto* replay = Orca::Net::ReplayScope::Current(); replay && !Orca::Net::ReplayScope::Playing())
+    replay->room_teams = teams;
+  return w.changed;
+}
+
+int ApplyRoomTeams(GuestMemory& m, bool* began)
+{
+  if (began)
+    *began = false;
+  const u8 teams = ReadRoomTeams(m);
+  if (!teams)
+    return 0;
+  Writer w{m};
+  const std::string scene = ReadSceneName(m);
+  if (scene != SCENE_CSS)
+    w.U8(B::ROOM_TEAMS_LOGGED, 0);
+  if (scene == SCENE_CSS)
+  {
+    const u32 manager = m.Read32(SCENE_MANAGER);
+    if (!Pointer(m, manager + MANAGER_SCENE))
+      return w.changed;
+    const u32 css = m.Read32(manager + MANAGER_SCENE);
+    if (!Pointer(m, css + SCENE_SELCHAR_TASK))
+      return w.changed;
+    const u32 task = m.Read32(css + SCENE_SELCHAR_TASK);
+    if (!Pointer(m, task) || !m.Valid(task + TASK_TEAM_BATTLE) ||
+        m.Read8(task + TASK_TEAM_BATTLE) != 1)
+      return w.changed;
+    // Validate all four areas before changing any native colour.
+    std::array<u32, 4> areas{};
+    for (u32 port = 0; port < 4; ++port)
+    {
+      if (!Pointer(m, task + TASK_AREAS + 4 * port))
+        return w.changed;
+      areas[port] = m.Read32(task + TASK_AREAS + 4 * port);
+      if (!Pointer(m, areas[port]) || !m.Valid(areas[port] + AREA_TEAM + 3))
+        return w.changed;
+    }
+    for (u32 port = 0; port < 4; ++port)
+      w.U32(areas[port] + AREA_TEAM, (teams >> port) & 1);
+    if (began)
+      *began = m.Read8(B::ROOM_TEAMS_LOGGED) == 0;
+    w.U8(B::ROOM_TEAMS_LOGGED, 1);
+  }
+  else if (scene == SCENE_SSS)
+  {
+    const u32 select = GlobalField(m, GLOBAL_SELECT);
+    if (!select || !m.Valid(select + SELECT_TEAM_MODE))
+      return w.changed;
+    const u8 mode = m.Read8(select + SELECT_TEAM_MODE);
+    if (mode < 1 || mode > 3 ||
+        !m.Valid(select + SELECT_PLAYERS + 3 * MELEE_PLAYER_SIZE + SELECT_PLAYER_TEAM))
+      return w.changed;
+    for (u32 port = 0; port < 4; ++port)
+      w.U8(select + SELECT_PLAYERS + port * MELEE_PLAYER_SIZE + SELECT_PLAYER_TEAM,
+           (teams >> port) & 1);
+  }
+  return w.changed;
+}
+
+bool SetWanted(Mode mode, u8 flags, std::string_view code, u8 teams)
+{
+  if (!Orca::Net::ValidRoomTeams(teams))
+    teams = 0;
   if (mode == Mode::None)
     flags = 0;
   // Only a room's header uses a code.
   if (mode == Mode::None || (flags & B::FLAG_SOLO) != 0)
     code = {};
   bool changed = s_wanted_flags.exchange(flags) != flags;
+  changed = s_wanted_teams.exchange(teams) != teams || changed;
   changed = s_wanted.exchange(mode) != mode || changed;
   {
     std::lock_guard lock(s_mutex);
@@ -1095,6 +1202,8 @@ void OnFrame(const Core::CPUThreadGuard& guard, int frame, bool resimulating, bo
       WriteHeader(m, static_cast<Mode>(header->mode), static_cast<Ruleset>(header->ruleset),
                   header->coin, header->room, header->flags);
     }
+    if (const auto teams = Orca::Net::ReplayScope::Current()->room_teams)
+      WriteRoomTeams(m, *teams);
   }
   // The room code (made by the server) decides game 1's first striker, so neither player chooses.
   Header wanted;
@@ -1137,10 +1246,28 @@ void OnFrame(const Core::CPUThreadGuard& guard, int frame, bool resimulating, bo
                                                             "",
                      frame, changed, alone ? "" : ", a friend on the way", wanted.coin + 1);
     }
+    WriteRoomTeams(m, s_wanted_teams);
   }
   // Whether a keyframe made this frame would carry the wanted header. This hook is the only writer.
   if (!resimulating)
-    s_in_place = test.has_value() || HeaderIs(ReadHeader(m), wanted);
+    s_in_place = (test.has_value() || HeaderIs(ReadHeader(m), wanted)) &&
+                 ReadRoomTeams(m) == s_wanted_teams;
+  bool teams_began = false;
+  ApplyRoomTeams(m, &teams_began);
+  if (teams_began && !resimulating)
+  {
+    std::array<std::string, 2> ports;
+    const u8 teams = ReadRoomTeams(m);
+    for (int port = 0; port < 4; ++port)
+    {
+      std::string& pair = ports[(teams >> port) & 1];
+      if (!pair.empty())
+        pair += '+';
+      pair += std::to_string(port + 1);
+    }
+    NOTICE_LOG_FMT(ROLLBACK, "Orca: doubles teams pinned from the room: ports {} vs {}",
+                   ports[0], ports[1]);
+  }
   // Synced ports in play, for the ready timer.
   if (ReadHeader(m).Locked() && m.Read8(B::PLUGGED) != plugged)
     m.Write8(B::PLUGGED, plugged);
@@ -1159,7 +1286,8 @@ void OnFrame(const Core::CPUThreadGuard& guard, int frame, bool resimulating, bo
       // With ORCA_TEST_QUEUE on both sides, the host's header comes from the override.
       const bool ok =
           test ? h.Locked() && h.mode == test->mode && h.ruleset == ruleset :
-                 HeaderFitsRoom(h, expect.mode, ruleset, expect.code, expect.flags);
+                 HeaderFitsRoom(h, expect.mode, ruleset, expect.code, expect.flags) &&
+                     ReadRoomTeams(m) == s_wanted_teams;
       // A ranked room's set as the host's game holds it: never games this player didn't see.
       const SetBlock::SetState set = SetBlock::ReadSet(m);
       const bool set_ok =

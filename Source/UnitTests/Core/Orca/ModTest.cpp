@@ -1569,7 +1569,7 @@ TEST(OrcaMod, UxKeyPartIsPerGame)
   {
     ~ConfigDone() { SConfig::Shutdown(); }
   } config_done;
-  const std::string ux = fmt::format("|ux={}.1", Orca::UX::kCompatVersion);
+  const std::string ux = fmt::format("|ux={}.2", Orca::UX::kCompatVersion);
   const int before = Orca::Events::UXCompatVersion();
   // The module, the UX version and the profile as they were, whatever fails.
   struct SessionDone
@@ -1591,7 +1591,7 @@ TEST(OrcaMod, UxKeyPartIsPerGame)
     const auto profile = Orca::LoadProfileFrom(RepoPath("Data/Sys/"), name, 2, &error);
     ASSERT_TRUE(profile) << error;
     Orca::SetActiveProfile(profile);
-    EXPECT_EQ(Orca::UX::Builtin().Describe().compat, 1);
+    EXPECT_EQ(Orca::UX::Builtin().Describe().compat, 2);
     EXPECT_TRUE(Orca::Online::CompatibilityKeyParts().ends_with(ux));
   }
   // Mod mode's key ends the same way.
@@ -1605,7 +1605,7 @@ TEST(OrcaMod, UxKeyPartIsPerGame)
     const auto mod = Orca::LoadModProfile(bundle->dir, &error);
     ASSERT_TRUE(mod) << error;
     Orca::SetActiveProfile(mod);
-    EXPECT_EQ(Orca::UX::Builtin().Describe().compat, 1);
+    EXPECT_EQ(Orca::UX::Builtin().Describe().compat, 2);
     const std::string parts = Orca::Online::CompatibilityKeyParts();
     EXPECT_TRUE(parts.starts_with("orca2|")) << parts;
     EXPECT_TRUE(parts.ends_with(ux)) << parts;
@@ -1950,9 +1950,9 @@ TEST(OrcaMod, GoldenLegacyCompatibilityKey)
   const std::string revision = Common::GetScmRevGitStr();
   ASSERT_TRUE(parts.starts_with("orca|" + revision + "|"));
   parts.replace(5, revision.size(), "fixture-engine-revision");
-  // UX 32 plus Brawl revision 1 (multi-friend token return). Normalize only that suffix
+  // UX 32 plus Brawl revision 2 (room team colours). Normalize only that suffix
   // to keep both earlier serialization goldens pinned.
-  ASSERT_TRUE(parts.ends_with("|ux=32.1"));
+  ASSERT_TRUE(parts.ends_with("|ux=32.2"));
   std::string previous = parts;
   previous.replace(previous.size() - 8, 8, "|ux=30");
   EXPECT_EQ(fmt::format("orca2:{:016x}", XXH3_64bits(previous.data(), previous.size())),

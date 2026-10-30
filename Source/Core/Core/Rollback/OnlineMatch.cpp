@@ -3804,7 +3804,7 @@ void ConfirmResults(Match& match)
                        fmt::format("port {} won, {}", r.winner_port + 1, report.detail) :
                    report.kind == Orca::Net::GameReport::Kind::Draw ?
                        fmt::format("a draw, {}", report.detail) :
-                       fmt::format("void ({})", r.why));
+                       fmt::format("void ({})", report.why));
     Orca::Online::ReportGame(report);
     // The match so far as a saved replay: a copy of the written bytes here, packed and sent on the
     // writer's own thread, so neither this frame nor the report above waits on it.

@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <map>
+
 #include <array>
 #include <optional>
 #include <span>
@@ -229,7 +231,13 @@ std::array<PlayerPick, 4> ReadPicks(const GuestMemory& memory);
 // ---- Session side (Rollback/OnlineMatch.cpp, CPU thread) ----
 // Sets the header this machine's room calls for, every frame before the frame hook and again before
 // a keyframe is made. Returns whether it changed (WantedGeneration then increments).
-bool SetWanted(Mode mode, u8 flags = 0, std::string_view code = {});
+bool SetWanted(Mode mode, u8 flags = 0, std::string_view code = {}, u8 teams = 0);
+// Complete four-seat, two-per-team map to team 1's mask; empty/invalid/non-doubles means zero.
+u8 RoomTeamsMask(bool doubles, const std::map<int, int>& teams);
+u8 ReadRoomTeams(const GuestMemory& memory);
+int WriteRoomTeams(GuestMemory& memory, u8 teams);
+// Pure guest-memory pin. Never enables Team battle; optional began is once per select.
+int ApplyRoomTeams(GuestMemory& memory, bool* began = nullptr);
 Mode Wanted();
 u8 WantedFlags();
 // Counts changes to the wanted header, so a keyframe made under an older count is stale.

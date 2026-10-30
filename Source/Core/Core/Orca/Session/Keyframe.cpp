@@ -297,6 +297,8 @@ bool WriteReplayFrame(Writer& w, const ReplayFrame& frame)
     return false;
   if (frame.menu_exit != 0 && !ValidMenuExit(frame.menu_exit))
     return false;
+  if (frame.room_teams && !ValidRoomTeams(*frame.room_teams))
+    return false;
   w.Bytes(frame.pads.data(), sizeof(frame.pads));
   w.U32(frame.ports ? static_cast<u32>(frame.ports->size()) : 0);
   if (frame.ports)
@@ -310,7 +312,7 @@ bool WriteReplayFrame(Writer& w, const ReplayFrame& frame)
       w.Blob(port.queue);
     }
   }
-  w.U32(frame.header.has_value());
+  w.U32(u32(frame.header.has_value()) | (u32(frame.room_teams.has_value()) << 1));
   if (frame.header)
   {
     w.U32(frame.header->mode);
@@ -319,6 +321,8 @@ bool WriteReplayFrame(Writer& w, const ReplayFrame& frame)
     w.U32(frame.header->flags);
     w.U32(frame.header->room);
   }
+  if (frame.room_teams)
+    w.U32(*frame.room_teams);
   w.U32(frame.clear_ready);
   w.U32(frame.tag_assignments ? static_cast<u32>(frame.tag_assignments->size()) + 1 : 0);
   if (frame.tag_assignments)
@@ -366,9 +370,9 @@ bool ReadReplayFrame(Reader& r, ReplayFrame* frame)
   }
   frame->ports = std::move(ports);
   u32 header, clear;
-  if (!r.U32(&header) || header > 1)
+  if (!r.U32(&header) || header > 3)
     return false;
-  if (header)
+  if (header & 1)
   {
     u32 mode, ruleset, coin, flags, room;
     if (!r.U32(&mode) || mode > 2 || !r.U32(&ruleset) || ruleset > 2 ||
@@ -376,6 +380,13 @@ bool ReadReplayFrame(Reader& r, ReplayFrame* frame)
       return false;
     frame->header = ReplayHeader{static_cast<u8>(mode), static_cast<u8>(ruleset),
                                 static_cast<u8>(coin), static_cast<u8>(flags), room};
+  }
+  if (header & 2)
+  {
+    u32 teams;
+    if (!r.U32(&teams) || !ValidRoomTeams(teams))
+      return false;
+    frame->room_teams = static_cast<u8>(teams);
   }
   if (!r.U32(&clear) || clear > 1)
     return false;
@@ -532,7 +543,8 @@ constexpr char CHUNK_MAGIC[4] = {'Y', 'G', 'R', 'C'};
 // recording reached a server.
 constexpr u32 STREAM_VERSION = 1;
 // The layout of the frames inside the chunks, written as the header's "v" for tools: 2 is ORP3,
-// with tag assignments. The reader doesn't check it: the site rebuilds a tournament download's
+// with typed events (including the optional room-team presence bit). Frames without room-team
+// events retain their byte layout. The reader doesn't check it: the site rebuilds a tournament download's
 // header with "v":1, and the compat key (it carries the git revision) already keeps builds apart.
 constexpr u32 FRAME_LAYOUT = 2;
 constexpr u32 MAX_STREAM_HEADER = 16u << 10;
@@ -831,7 +843,8 @@ bool ReplayStreamReader::Parse(std::string* error)
         if (const ReplayFrame* previous = m_archive.At(frame))
         {
           if (next.pads != previous->pads || *next.ports != *previous->ports ||
-              next.header != previous->header || next.clear_ready != previous->clear_ready ||
+              next.header != previous->header || next.room_teams != previous->room_teams ||
+              next.clear_ready != previous->clear_ready ||
               next.menu_exit != previous->menu_exit || next.seed != previous->seed ||
               next.tag_assignments != previous->tag_assignments)
             return fail("the match's stream changed");

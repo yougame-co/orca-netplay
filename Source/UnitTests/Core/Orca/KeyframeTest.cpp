@@ -97,6 +97,9 @@ TEST(OrcaKeyframe, ReplayRoundTripsInputsAndTypedEvents)
 {
   auto original = Replay(4321);
   original.frames[42].header = ReplayHeader{1, 2, 0, 3, 55};
+  original.frames[42].room_teams = 12;
+  original.frames[43].room_teams = 10;
+  original.boundary.room_teams = 0;
   original.frames[99].clear_ready = true;
   const auto blob = PackKeyframe(4321, original);
   ASSERT_FALSE(blob.empty());
@@ -111,13 +114,25 @@ TEST(OrcaKeyframe, ReplayRoundTripsInputsAndTypedEvents)
   {
     EXPECT_EQ(decoded.frames[i].pads, original.frames[i].pads);
     EXPECT_EQ(decoded.frames[i].header, original.frames[i].header);
+    EXPECT_EQ(decoded.frames[i].room_teams, original.frames[i].room_teams);
     EXPECT_EQ(decoded.frames[i].clear_ready, original.frames[i].clear_ready);
     EXPECT_EQ(decoded.frames[i].ports->at(0).controls, original.frames[i].ports->at(0).controls);
     EXPECT_EQ(decoded.frames[i].ports->at(1).queue, original.frames[i].ports->at(1).queue);
   }
   EXPECT_EQ(decoded.frames[0].ports, decoded.frames[1].ports);
   EXPECT_EQ(decoded.boundary.header, original.boundary.header);
+  EXPECT_EQ(decoded.boundary.room_teams, 0);
   EXPECT_TRUE(decoded.boundary.clear_ready);
+}
+
+TEST(OrcaKeyframe, RoomTeamEventsRejectIncompleteMaps)
+{
+  auto original = Replay(10);
+  for (u8 mask : {1, 7, 15, 16, 255})
+  {
+    original.frames[0].room_teams = mask;
+    EXPECT_TRUE(PackKeyframe(10, original).empty());
+  }
 }
 
 // A replay whose history writes another game's ruleset into the match block, even on frames in the
@@ -1132,6 +1147,9 @@ TEST(OrcaReplayStream, RepackedPiecesKeepTheWholeHistory)
   original.frames[0].menu_exit = MENU_EXIT_RANKED;
   original.frames[42].header = ReplayHeader{1, 2, 0, 3, 55};
   original.frames[99].clear_ready = true;
+  original.frames[0].room_teams = 12;
+  original.frames[43].room_teams = 10;
+  original.frames[100].room_teams = 0;
   auto ports = std::make_shared<std::vector<Orca::Events::PortInfo>>(*original.frames[3600].ports);
   ports->at(0).name = "new name";
   for (size_t i = 3600; i < original.frames.size(); ++i)
@@ -1183,6 +1201,7 @@ TEST(OrcaReplayStream, RepackedPiecesKeepTheWholeHistory)
       EXPECT_EQ(got.pads, original.frames[i].pads);
       EXPECT_EQ(got.pads, want.pads);
       EXPECT_EQ(got.header, want.header);
+      EXPECT_EQ(got.room_teams, original.frames[i].room_teams);
       EXPECT_EQ(got.clear_ready, want.clear_ready);
       EXPECT_EQ(got.seed, want.seed);
       EXPECT_EQ(got.menu_exit, want.menu_exit);
