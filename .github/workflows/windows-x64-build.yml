@@ -84,6 +84,11 @@ jobs:
           ORCA_STAGING_BUILD: "1"
           BUNDLE_KEY: 8422b8b28b82aff024427d77e6c72a38d9ea75bcb6533fe706c61006f742c0ab
         run: |
+          # Large MSVC test translation units (notably OrcaRoomTest) need extended object sections.
+          # Scope the build flag to the unit-test directory; preserve /WX and all existing switches.
+          $testCmake = 'Source/UnitTests/CMakeLists.txt'
+          $testSource = Get-Content -LiteralPath $testCmake -Raw
+          Set-Content -LiteralPath $testCmake -Value ("add_compile_options(/bigobj)`n" + $testSource) -NoNewline -Encoding utf8
           # the Windows release helper's CMake switches, one for one.
           $switches = [ordered]@{
             ENABLE_QT = 'OFF'; ENABLE_NOGUI = 'ON'; USE_SYSTEM_LIBS = 'OFF'; ENCODE_FRAMEDUMPS = 'OFF'
