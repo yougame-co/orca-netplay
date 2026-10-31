@@ -25,6 +25,7 @@
 #include "Common/Thread.h"
 #include "Common/WorkQueueThread.h"
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
+#include "InputCommon/Shortcuts.h"
 
 namespace ciface::evdev
 {
@@ -87,6 +88,11 @@ class Button : public Input
 {
 public:
   Button(u8 index, u16 code, libevdev* dev) : Input(code, dev), m_index(index) {}
+  std::string GetShortcutKey() const override
+  {
+    // KEY_* metadata, not device name or the presence of unrelated keys.
+    return InputCommon::Shortcuts::EvdevKey(m_code, GetEventCodeName().value_or(""));
+  }
 
   ControlState GetState() const final override
   {

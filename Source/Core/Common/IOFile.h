@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -112,6 +113,9 @@ public:
   bool Seek(s64 offset, SeekOrigin origin);
   u64 Tell() const;
   u64 GetSize() const;
+  // Queries the current opened regular file without seeking or flushing buffered writes.
+  // Unlike GetSize(), unflushed writes are not included. Closed/nonregular files and errors fail.
+  std::optional<u64> GetSizeOnDisk() const;
   bool Resize(u64 size);
   bool Flush();
 

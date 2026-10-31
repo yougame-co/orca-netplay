@@ -41,7 +41,8 @@ public:
                                                          size_t length,
                                                          std::string_view name) override;
   std::unique_ptr<AbstractShader> CreateShaderFromMSL(ShaderStage stage, std::string msl,
-                                                      std::string_view glsl, std::string_view name);
+                                                      std::string_view glsl, std::string_view name,
+                                                      bool from_cache = false);
   std::unique_ptr<NativeVertexFormat>
   CreateNativeVertexFormat(const PortableVertexDeclaration& vtx_decl) override;
   std::unique_ptr<AbstractPipeline> CreatePipeline(const AbstractPipelineConfig& config,

@@ -31,3 +31,6 @@ add_subdirectory(Common)
 add_subdirectory(Core)
 add_subdirectory(VideoCommon)
 add_dolphin_test(LocalInputTest InputCommon/LocalInputTest.cpp)
+
+add_dolphin_test(ShortcutsTest InputCommon/ShortcutsTest.cpp)
+add_dolphin_test(ShortcutMappingTest InputCommon/ShortcutMappingTest.cpp)

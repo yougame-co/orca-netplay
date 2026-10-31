@@ -8,6 +8,7 @@
 
 #include <vector>
 
+#include "Common/Crypto/SHA1.h"
 #include "VideoCommon/AbstractShader.h"
 #include "VideoCommon/TextureConfig.h"
 #include "VideoCommon/VideoConfig.h"
@@ -46,6 +47,9 @@ void PopulateBackendInfoAdapters(BackendInfo* backend_info,
                                  const std::vector<MRCOwned<id<MTLDevice>>>& adapters);
 void PopulateBackendInfoFeatures(const VideoConfig& config, BackendInfo* backend_info,
                                  id<MTLDevice> device);
+
+// Identity of the MSL translator, OS/Metal compiler and selected GPU.
+Common::SHA1::Digest ShaderCacheIdentity(ShaderStage stage);
 
 AbstractTextureFormat ToAbstract(MTLPixelFormat format);
 MTLPixelFormat FromAbstract(AbstractTextureFormat format);

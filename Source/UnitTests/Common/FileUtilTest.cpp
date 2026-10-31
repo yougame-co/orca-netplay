@@ -11,6 +11,7 @@
 #include "Common/BitUtils.h"
 #include "Common/DirectIOFile.h"
 #include "Common/FileUtil.h"
+#include "Common/IOFile.h"
 
 class FileUtilTest : public testing::Test
 {
@@ -411,4 +412,47 @@ TEST_F(FileUtilTest, DirectIOFile)
 
   file.Close();
   EXPECT_TRUE(file.Open(destination_path_2, File::AccessMode::Write, File::OpenMode::Always));
+}
+
+TEST_F(FileUtilTest, OpenedFileSizeDoesNotSeekAndSeesGrowth)
+{
+  ASSERT_TRUE(File::WriteStringToFile(m_file_path, "abc"));
+  File::IOFile reader(m_file_path, "rb", File::SharedAccess::ReadWrite);
+  ASSERT_TRUE(reader);
+  ASSERT_TRUE(reader.Seek(1, File::SeekOrigin::Begin));
+  EXPECT_EQ(reader.GetSizeOnDisk(), 3u);
+  EXPECT_EQ(reader.Tell(), 1u);
+  {
+    File::IOFile writer(m_file_path, "ab", File::SharedAccess::ReadWrite);
+    ASSERT_TRUE(writer);
+    ASSERT_TRUE(writer.WriteString("def"));
+  }
+  EXPECT_EQ(reader.GetSizeOnDisk(), 6u);
+  EXPECT_EQ(reader.Tell(), 1u);
+}
+
+TEST_F(FileUtilTest, OpenedFileSizeDoesNotFlushWrites)
+{
+  std::array<char, 4096> buffer;
+  File::IOFile file(m_file_path, "w+b");
+  ASSERT_TRUE(file);
+  ASSERT_EQ(std::setvbuf(file.GetHandle(), buffer.data(), _IOFBF, buffer.size()), 0);
+  ASSERT_TRUE(file.WriteString("abc"));
+  EXPECT_EQ(file.GetSizeOnDisk(), 0u);
+  ASSERT_TRUE(file.Flush());
+  EXPECT_EQ(file.GetSizeOnDisk(), 3u);
+}
+
+TEST_F(FileUtilTest, OpenedFileSizeRejectsClosedAndNonregularFiles)
+{
+  File::IOFile file;
+  EXPECT_FALSE(file.GetSizeOnDisk());
+  ASSERT_TRUE(File::CreateEmptyFile(m_file_path));
+  ASSERT_TRUE(file.Open(m_file_path, "rb"));
+  EXPECT_EQ(file.GetSizeOnDisk(), 0u);
+  ASSERT_TRUE(file.Close());
+  EXPECT_FALSE(file.GetSizeOnDisk());
+  ASSERT_TRUE(File::CreateDir(m_directory_path));
+  File::IOFile directory(m_directory_path, "rb");
+  EXPECT_FALSE(directory.GetSizeOnDisk());
 }

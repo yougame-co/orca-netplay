@@ -9,6 +9,7 @@
 #include <stdexcept>
 
 #include <chrono>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <string_view>
@@ -115,9 +116,24 @@ void Collect(const File::FSTEntry& entry, const std::string& prefix,
     out.directory = child->isDirectory;
     if (!out.directory)
     {
+      // GetSize() seeks to EOF and back; those seeks can stall the frame capturing the origin.
+      // Query the opened descriptor instead: unlike the scan's size, this also sees later growth.
       std::string data;
-      if (!File::ReadFileToString(child->physicalName, data))
-        *ok = false;
+      {
+        File::IOFile file(child->physicalName, "rb");
+        const auto size = file ? file.GetSizeOnDisk() : std::nullopt;
+        if (!size || *size > std::numeric_limits<size_t>::max() || *size > data.max_size() ||
+            *size > out.data.max_size())
+        {
+          *ok = false;
+        }
+        else
+        {
+          data.resize(static_cast<size_t>(*size));
+          if (!file.ReadBytes(data.data(), data.size()))
+            *ok = false;
+        }
+      }
       out.data.assign(data.begin(), data.end());
     }
     const std::string path = out.path;

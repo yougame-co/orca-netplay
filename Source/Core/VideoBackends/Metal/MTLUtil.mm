@@ -6,10 +6,15 @@
 #include <fstream>
 #include <string>
 
+#include <fmt/format.h>
+
 #include <TargetConditionals.h>
 #include <spirv_msl.hpp>
 
 #include "Common/MsgHandler.h"
+#include "Common/Version.h"
+#include "VideoBackends/Metal/MTLObjectCache.h"
+#include "VideoCommon/ShaderCacheData.h"
 
 #include "VideoCommon/Constants.h"
 #include "VideoCommon/DriverDetails.h"
@@ -35,6 +40,52 @@ std::vector<MRCOwned<id<MTLDevice>>> Metal::Util::GetAdapterList()
 #endif
 
   return list;
+}
+
+Common::SHA1::Digest Metal::Util::ShaderCacheIdentity(ShaderStage stage)
+{
+  @autoreleasepool
+  {
+    // operatingSystemVersionString includes the Darwin build, which changes with Metal driver
+    // updates. Metal's framework version also covers independently updated compiler components.
+    static const std::string os =
+        [[[NSProcessInfo processInfo] operatingSystemVersionString] UTF8String];
+    static const std::string metal = [] {
+      NSString* version = [[NSBundle bundleForClass:[MTLCompileOptions class]]
+          objectForInfoDictionaryKey:@"CFBundleVersion"];
+      return std::string(version ? [version UTF8String] : "OS-bundled");
+    }();
+    // Driver probes can change translation even on the same device and OS. Each compiler thread
+    // caches all stages, invalidating them if the selected device or effective probes change.
+    const u64 device = [g_device registryID];
+    const u32 flags =
+        u32(g_features.subgroup_ops) |
+        (u32(DriverDetails::HasBug(DriverDetails::BUG_INVERTED_IS_HELPER)) << 1) |
+        (u32(DriverDetails::HasBug(DriverDetails::BUG_BROKEN_SUBGROUP_OPS_WITH_DISCARD)) << 2);
+    struct IdentityCache
+    {
+      bool initialized = false;
+      u64 device = 0;
+      u32 flags = 0;
+      std::array<Common::SHA1::Digest, 4> stages;
+    };
+    thread_local IdentityCache cache;
+    if (!cache.initialized || cache.device != device || cache.flags != flags)
+    {
+      const std::string gpu = fmt::format("{}:{}", [[g_device name] UTF8String], device);
+      for (u32 i = 0; i < cache.stages.size(); ++i)
+      {
+        const std::string options = fmt::format("msl=2.3;stage={};probes={}", i, flags);
+        const std::array<std::string_view, 6> fields = {
+            Common::GetScmRevGitStr(), Common::GetScmRevStr(), os, metal, gpu, options};
+        cache.stages[i] = VideoCommon::ShaderCacheData::Identity(fields);
+      }
+      cache.device = device;
+      cache.flags = flags;
+      cache.initialized = true;
+    }
+    return cache.stages[static_cast<u32>(stage)];
+  }
 }
 
 void Metal::Util::PopulateBackendInfo(BackendInfo* backend_info)
@@ -68,7 +119,7 @@ void Metal::Util::PopulateBackendInfo(BackendInfo* backend_info)
   backend_info->bSupportsLargePoints = true;
   backend_info->bSupportsPartialDepthCopies = true;
   backend_info->bSupportsDepthReadback = true;
-  backend_info->bSupportsShaderBinaries = false;
+  backend_info->bSupportsShaderBinaries = true;
   backend_info->bSupportsPipelineCacheData = false;
   backend_info->bSupportsCoarseDerivatives = false;
   backend_info->bSupportsTextureQueryLevels = true;

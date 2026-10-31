@@ -11,3 +11,5 @@ else()
   add_dolphin_test(FxcCacheTest FxcCacheTest.cpp
     ${CMAKE_SOURCE_DIR}/Source/Core/VideoBackends/D3DCommon/FxcCache.cpp)
 endif()
+
+add_dolphin_test(MetalShaderCacheTest MetalShaderCacheTest.cpp)

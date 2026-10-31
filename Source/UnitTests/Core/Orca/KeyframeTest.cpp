@@ -121,14 +121,14 @@ TEST(OrcaKeyframe, ReplayRoundTripsInputsAndTypedEvents)
   }
   EXPECT_EQ(decoded.frames[0].ports, decoded.frames[1].ports);
   EXPECT_EQ(decoded.boundary.header, original.boundary.header);
-  EXPECT_EQ(decoded.boundary.room_teams, 0);
+  EXPECT_EQ(decoded.boundary.room_teams, u8{0});
   EXPECT_TRUE(decoded.boundary.clear_ready);
 }
 
 TEST(OrcaKeyframe, RoomTeamEventsRejectIncompleteMaps)
 {
   auto original = Replay(10);
-  for (u8 mask : {1, 7, 15, 16, 255})
+  for (u8 mask : {u8{1}, u8{7}, u8{15}, u8{16}, u8{255}})
   {
     original.frames[0].room_teams = mask;
     EXPECT_TRUE(PackKeyframe(10, original).empty());
@@ -467,6 +467,50 @@ TEST(OrcaKeyframe, ReplacingTheNandWritesOnlyWhatDiffers)
   EXPECT_EQ(read.size(), entries.size());
   File::DeleteDirRecursively(root);
 }
+
+TEST(OrcaKeyframe, ReadNandPreservesBinaryEmptyAndSortedPathsWithFreshSizes)
+{
+  const std::string root = File::CreateTempDir();
+  ASSERT_FALSE(root.empty());
+  const Common::ScopeGuard cleanup([&] { File::DeleteDirRecursively(root); });
+  ASSERT_TRUE(File::CreateFullPath(root + "/z/empty"));
+  ASSERT_TRUE(File::WriteStringToFile(root + "/z/empty", ""));
+  const std::string binary("a\0\xffz", 4);
+  ASSERT_TRUE(File::WriteStringToFile(root + "/a.bin", binary));
+  std::vector<NandEntry> entries;
+  ASSERT_TRUE(ReadNandTree(root, &entries));
+  ASSERT_EQ(entries.size(), 3u);
+  EXPECT_EQ(entries[0].path, "a.bin");
+  EXPECT_EQ(entries[0].data, std::vector<u8>(binary.begin(), binary.end()));
+  EXPECT_EQ(entries[1].path, "z");
+  EXPECT_TRUE(entries[1].directory);
+  EXPECT_EQ(entries[2].path, "z/empty");
+  EXPECT_TRUE(entries[2].data.empty());
+  for (const std::string contents : {binary + binary, std::string("x"), std::string()})
+  {
+    ASSERT_TRUE(File::WriteStringToFile(root + "/a.bin", contents));
+    ASSERT_TRUE(ReadNandTree(root, &entries));
+    EXPECT_EQ(entries[0].data, std::vector<u8>(contents.begin(), contents.end()));
+  }
+  EXPECT_FALSE(ReadNandTree(root + "/missing", &entries));
+  EXPECT_TRUE(entries.empty());
+}
+
+#ifndef _WIN32
+TEST(OrcaKeyframe, ReadNandFailsWhenAFileCannotBeRead)
+{
+  const std::string root = File::CreateTempDir();
+  ASSERT_FALSE(root.empty());
+  const Common::ScopeGuard cleanup([&] { File::DeleteDirRecursively(root); });
+  const std::string path = root + "/unreadable";
+  ASSERT_TRUE(File::WriteStringToFile(path, "bytes"));
+  ASSERT_EQ(chmod(path.c_str(), 0), 0);
+  if (File::IOFile(path, "rb"))
+    GTEST_SKIP() << "This test user can read files without permission";
+  std::vector<NandEntry> entries;
+  EXPECT_FALSE(ReadNandTree(root, &entries));
+}
+#endif
 
 TEST(OrcaKeyframe, BoundsDecodedMetadataWhenCompressedDataIsSmall)
 {
