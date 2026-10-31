@@ -1,7 +1,7 @@
 # YG Dolphin windows-x64 build (linux-lead for orca-lead, 10-24). MANUAL ONLY: workflow_dispatch, never on push or
 # pull_request, never a required check, so it cannot block a merge (YouGame's "no CI" rule is about the YouGame repo).
 #
-# What it makes: the UNSIGNED program folder (Binaries\: DolphinNoGUI.exe + Sys) of a release commit, built the way the
+# What it makes: a release-only UNSIGNED program folder (engine, disc helper, five runtime DLLs, Sys, licenses), built the way the
 # PC's release agent builds it (staging-0385/pc/release-agent-0385.ps1: the visualstudio-release-x64 preset, the PC's
 # Get-OrcaCMakeArgs switches, the bundle key pinned, TEST key off), plus the unit tests' results. Packaging, the D3D
 # shader cache and Authenticode signing stay on the PC (signing needs the certificate, which never comes here).
@@ -104,7 +104,7 @@ jobs:
         env:
           ORCA_SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
-          cmake --build --preset visualstudio-build-release-x64 --target dolphin-nogui --parallel 4
+          cmake --build --preset visualstudio-build-release-x64 --target dolphin-nogui orca-disc-tool --parallel 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # The PC builds `tests`. On Windows the unit tests are one gtest program (Binaries\Tests\tests.exe) that
           # ctest doesn't register, so it runs directly (the first CI run's ctest found no tests).
@@ -146,13 +146,51 @@ jobs:
           "version resource: $($vi.FileDescription) / $($vi.ProductName) / $($vi.FileVersion) / $($vi.OriginalFilename)"
           if ($vi.FileVersion -ne $env:VERSION) { throw "FileVersion is $($vi.FileVersion), not $env:VERSION" }
 
-      - name: Zip the unsigned program folder
+      - name: Stage and hash the release-only unsigned program folder
         env:
           VERSION: ${{ inputs.version }}
         run: |
           $out = "$env:RUNNER_TEMP\out"; New-Item -ItemType Directory -Force $out | Out-Null
           $zip = "$out\yg-dolphin-$env:VERSION-windows-x64-unsigned-program.zip"
-          Compress-Archive -Path "build\release\x64\Binaries\*" -DestinationPath $zip
+          $program = "$env:RUNNER_TEMP\program"; New-Item -ItemType Directory $program | Out-Null
+          $bin = 'build\release\x64\Binaries'
+          foreach ($name in 'DolphinNoGUI.exe','orca-disc-tool.exe') { Copy-Item "$bin\$name" $program }
+          # Copy source Sys, not build output: no generated/test files may enter the release.
+          Copy-Item -Recurse 'Data\Sys' "$program\Sys"
+          Copy-Item 'COPYING' "$program\COPYING.txt"
+          Copy-Item -Recurse 'LICENSES' "$program\LICENSES"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $vs) { throw 'Visual Studio CRT location unavailable' }
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $crt) { throw 'x64 Microsoft CRT redistributables unavailable' }
+          foreach ($name in 'msvcp140.dll','msvcp140_atomic_wait.dll','vcruntime140.dll','vcruntime140_1.dll') {
+            Copy-Item (Join-Path $crt.FullName $name) $program
+            "$name version $((Get-Item "$program\$name").VersionInfo.FileVersion)"
+          }
+          # Keep the exact compiler shipped in the 0.3.96/0.3.97 kits (shader-cache ABI).
+          $d3dHash = 'a05f99734f7c4822fefc12b367af21fd0976ed6608752fb1e1e80b6ece7ecbbb'
+          $sdk = "${env:ProgramFiles(x86)}\Windows Kits\10\Redist\D3D"
+          $d3d = @(Get-ChildItem $sdk -Filter d3dcompiler_47.dll -Recurse -File | Where-Object {
+            $_.FullName -match '[\\/]x64[\\/]' -and (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower() -eq $d3dHash
+          }) | Select-Object -First 1
+          if (-not $d3d) { throw 'Windows SDK lacks the pinned x64 d3dcompiler_47.dll; refusing a different shader compiler' }
+          Copy-Item $d3d.FullName "$program\d3dcompiler_47.dll"
+          $expected = @('DolphinNoGUI.exe','orca-disc-tool.exe','d3dcompiler_47.dll','msvcp140.dll','msvcp140_atomic_wait.dll','vcruntime140.dll','vcruntime140_1.dll') | Sort-Object
+          $actual = @(Get-ChildItem $program -Recurse -File | Where-Object { $_.Extension -in '.exe','.dll' } | ForEach-Object { [IO.Path]::GetRelativePath($program,$_.FullName).Replace('\','/') }) | Sort-Object
+          if (Compare-Object $expected $actual) { throw 'release binary set differs from the seven shipping files' }
+          & "$program\orca-disc-tool.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'packaged helper failed' }
+          $manifest = @(Get-ChildItem $program -Recurse -File | ForEach-Object {
+            $relative = [IO.Path]::GetRelativePath($program,$_.FullName).Replace('\','/')
+            "$((Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower())  $relative"
+          } | Sort-Object)
+          [IO.File]::WriteAllLines("$out\PROGRAM-SHA256SUMS", $manifest, (New-Object Text.UTF8Encoding($false)))
+          Add-Content $env:GITHUB_STEP_SUMMARY "Release program per-file SHA256 ($($manifest.Count) files):"
+          Add-Content $env:GITHUB_STEP_SUMMARY '```text'
+          Get-Content "$out\PROGRAM-SHA256SUMS" | Add-Content $env:GITHUB_STEP_SUMMARY
+          Add-Content $env:GITHUB_STEP_SUMMARY '```'
+          Compress-Archive -Path "$program\*" -DestinationPath $zip
           $h = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
           "$h  $(Split-Path -Leaf $zip)" | Tee-Object -FilePath "$out\SHA256SUMS"
           Copy-Item "$env:RUNNER_TEMP\unit-tests.log" $out
