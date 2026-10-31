@@ -3,6 +3,7 @@
 
 #include <array>
 #include <gtest/gtest.h>
+#include <limits>
 #include <string_view>
 
 #include "Common/FileUtil.h"
@@ -82,8 +83,10 @@ TEST(MetalShaderCache, DiskLimitsAndMalformedRecordFallBack)
   Common::LinearDiskCache<u32, u8> disk;
   Reader reader;
   EXPECT_EQ(disk.OpenAndRead(path, reader), 0u);
-  const std::array<u8, 4> data = {1, 2, 3, 4};
-  disk.Append(7, data.data(), data.size());
+  constexpr std::array<u8, 4> data = {1, 2, 3, 4};
+  static_assert(data.size() <= std::numeric_limits<u32>::max());
+  constexpr u32 data_size = static_cast<u32>(data.size());
+  disk.Append(7, data.data(), data_size);
   disk.Close();
   EXPECT_EQ(disk.OpenAndRead(path, reader, 3), 0u);  // excessive record size, no reader call
   EXPECT_EQ(reader.reads, 0u);
@@ -91,7 +94,7 @@ TEST(MetalShaderCache, DiskLimitsAndMalformedRecordFallBack)
   EXPECT_EQ(disk.OpenAndRead(path, reader, 16, 1), 0u);  // excessive file size recreates header
   disk.Close();
   EXPECT_EQ(disk.OpenAndRead(path, reader, 16, 1024), 0u);
-  ASSERT_TRUE(disk.Append(7, data.data(), data.size()));
+  ASSERT_TRUE(disk.Append(7, data.data(), data_size));
   disk.Close();
   EXPECT_EQ(disk.OpenAndRead(path, reader, 16, 1024), 1u);
   EXPECT_EQ(reader.reads, 1u);
@@ -156,13 +159,15 @@ TEST(MetalShaderCache, CapReachedMidSessionDisablesEvenSmallerAppends)
   ASSERT_TRUE(disk.Sync());
   const auto header_size = File::GetSize(path);
   disk.Close();
-  const std::array<u8, 4> data = {1, 2, 3, 4};
+  constexpr std::array<u8, 4> data = {1, 2, 3, 4};
+  static_assert(data.size() <= std::numeric_limits<u32>::max());
+  constexpr u32 data_size = static_cast<u32>(data.size());
   const u64 record_size = 3 * sizeof(u32) + data.size();
   const u64 cap = header_size + 2 * record_size + 3 * sizeof(u32);
   disk.OpenAndRead(path, reader, 16, cap);
-  ASSERT_TRUE(disk.Append(1, data.data(), data.size()));
-  ASSERT_TRUE(disk.Append(2, data.data(), data.size()));
-  EXPECT_FALSE(disk.Append(3, data.data(), data.size()));
+  ASSERT_TRUE(disk.Append(1, data.data(), data_size));
+  ASSERT_TRUE(disk.Append(2, data.data(), data_size));
+  EXPECT_FALSE(disk.Append(3, data.data(), data_size));
   EXPECT_FALSE(disk.Append(4, data.data(), 0));  // would fit, but persistence stays disabled
   disk.Close();
   EXPECT_EQ(File::GetSize(path), header_size + 2 * record_size);
@@ -179,17 +184,19 @@ TEST(MetalShaderCache, WriteFailureStopsWithoutRetryAndKeepsLoadedEntries)
   const auto path = dir + "/shader.cache";
   Common::LinearDiskCache<u32, u8, FailingCacheFile> disk;
   Reader reader;
-  const std::array<u8, 4> data = {1, 2, 3, 4};
+  constexpr std::array<u8, 4> data = {1, 2, 3, 4};
+  static_assert(data.size() <= std::numeric_limits<u32>::max());
+  constexpr u32 data_size = static_cast<u32>(data.size());
   disk.OpenAndRead(path, reader);
-  ASSERT_TRUE(disk.Append(1, data.data(), data.size()));
+  ASSERT_TRUE(disk.Append(1, data.data(), data_size));
   disk.Close();
   ASSERT_EQ(disk.OpenAndRead(path, reader), 1u);
   ASSERT_EQ(reader.reads, 1u);
   FailingCacheFile::writes_until_failure = 2;  // length and key succeed, payload is short
-  EXPECT_FALSE(disk.Append(2, data.data(), data.size()));
+  EXPECT_FALSE(disk.Append(2, data.data(), data_size));
   const u32 calls = FailingCacheFile::write_calls;
   const u32 flushes = FailingCacheFile::flush_calls;
-  EXPECT_FALSE(disk.Append(3, data.data(), data.size()));
+  EXPECT_FALSE(disk.Append(3, data.data(), data_size));
   EXPECT_FALSE(disk.Sync());
   EXPECT_EQ(FailingCacheFile::write_calls, calls);
   EXPECT_EQ(FailingCacheFile::flush_calls, flushes);
@@ -208,13 +215,15 @@ TEST(MetalShaderCache, FlushFailureStopsWithoutRetry)
   Common::LinearDiskCache<u32, u8, FailingCacheFile> disk;
   Reader reader;
   disk.OpenAndRead(path, reader);
-  const std::array<u8, 1> data = {1};
-  ASSERT_TRUE(disk.Append(1, data.data(), data.size()));
+  constexpr std::array<u8, 1> data = {1};
+  static_assert(data.size() <= std::numeric_limits<u32>::max());
+  constexpr u32 data_size = static_cast<u32>(data.size());
+  ASSERT_TRUE(disk.Append(1, data.data(), data_size));
   FailingCacheFile::fail_flush = true;
   EXPECT_FALSE(disk.Sync());
   const u32 calls = FailingCacheFile::write_calls;
   const u32 flushes = FailingCacheFile::flush_calls;
-  EXPECT_FALSE(disk.Append(2, data.data(), data.size()));
+  EXPECT_FALSE(disk.Append(2, data.data(), data_size));
   EXPECT_FALSE(disk.Sync());
   EXPECT_EQ(FailingCacheFile::write_calls, calls);
   EXPECT_EQ(FailingCacheFile::flush_calls, flushes);
@@ -233,8 +242,10 @@ TEST(MetalShaderCache, DiskHeaderMismatchAndTruncatedWideValueAreMisses)
   Common::LinearDiskCache<u32, u8> disk;
   Reader reader;
   disk.OpenAndRead(path, reader);
-  const std::array<u8, 1> data = {1};
-  disk.Append(7, data.data(), data.size());
+  constexpr std::array<u8, 1> data = {1};
+  static_assert(data.size() <= std::numeric_limits<u32>::max());
+  constexpr u32 data_size = static_cast<u32>(data.size());
+  disk.Append(7, data.data(), data_size);
   disk.Close();
   File::IOFile file(path, "r+b");
   // LinearDiskCache's header is magic, key/value sizes, then the 40-byte SCM revision.
