@@ -442,10 +442,12 @@ void ShaderCache::LoadShaderCache(T& cache, APIType api_type, const char* type, 
   std::string filename = GetDiskShaderCacheFileName(api_type, type, include_gameid, true);
   CacheReader reader(cache);
   const bool metal = api_type == APIType::Metal;
+  constexpr size_t metal_max_value =
+      ShaderCacheData::MAX_PAYLOAD_SIZE + 2 * ShaderCacheData::Digest{}.size();
+  static_assert(metal_max_value <= std::numeric_limits<u32>::max());
   u32 count = cache.disk_cache.OpenAndRead(
       filename, reader,
-      metal ? ShaderCacheData::MAX_PAYLOAD_SIZE + 2 * ShaderCacheData::Digest{}.size() :
-              std::numeric_limits<u32>::max(),
+      metal ? static_cast<u32>(metal_max_value) : std::numeric_limits<u32>::max(),
       metal ? 256 * 1024 * 1024 : std::numeric_limits<u64>::max());
   INFO_LOG_FMT(VIDEO, "Loaded {} cached shaders from {}", reader.GetLoadedCount(), filename);
   if (metal)
