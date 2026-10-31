@@ -72,6 +72,7 @@ private:
   std::set<std::string, std::less<>> m_suppressed;
   std::set<std::string, std::less<>> m_pressed;
   unsigned m_modifiers = 0;
+  bool m_poll_rearm = false;
   bool m_polling = false;
   bool m_configured = false;
   bool m_focused = true;

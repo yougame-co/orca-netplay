@@ -352,4 +352,19 @@ TEST_F(ShortcutState, EmbeddedSnapshotReleasingBaseAndModifierTogetherEmitsUp)
   manager.PollKeys({});
   EXPECT_EQ(lines, (std::vector<std::string>{"yg {\"chat\":\"down\"}", "yg {\"chat\":\"up\"}"}));
 }
+TEST_F(ShortcutState, EmbeddedPollingStopsWithoutFocusAndRearmsWithoutSyntheticPress)
+{
+  manager.SetPolling(true);
+  manager.PollKeys({"Shift", "Enter"});
+  manager.FocusLost();
+  EXPECT_FALSE(manager.UsesPolling());
+  manager.SetFocus(true);
+  EXPECT_TRUE(manager.UsesPolling());
+  manager.PollKeys({"Shift", "Enter"});
+  EXPECT_EQ(manager.GetWindowKeyState("Enter"), false);
+  ASSERT_EQ(lines.size(), 2u);
+  manager.PollKeys({});
+  manager.PollKeys({"Shift", "Enter"});
+  ASSERT_EQ(lines.size(), 3u);
+}
 }  // namespace

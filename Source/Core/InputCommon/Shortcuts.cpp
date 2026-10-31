@@ -297,6 +297,7 @@ void Manager::SetFocus(bool focused)
     End(true, true);
     m_suppressed.clear();
     m_pressed.clear();  // FocusIn snapshots reconstruct keys that still require release.
+    m_poll_rearm = true;
     m_modifiers = 0;
   }
 }
@@ -331,7 +332,7 @@ void Manager::SetPolling(bool enabled)
 bool Manager::UsesPolling() const
 {
   std::lock_guard lock(m_mutex);
-  return m_polling && m_configured;
+  return m_polling && m_configured && m_focused;
 }
 void Manager::SynchronizeHeldKeys(const std::set<std::string, std::less<>>& held)
 {
@@ -349,8 +350,15 @@ void Manager::PollKeys(const std::set<std::string, std::less<>>& held)
   unsigned mods = (held.contains("Shift") ? Shift : 0u) | (held.contains("Ctrl") ? Ctrl : 0u) |
                   (held.contains("Alt") ? Alt : 0u) | (held.contains("Meta") ? 8u : 0u);
   if (!m_focused)
+    return;
+  if (m_poll_rearm)
   {
-    m_pressed = held;  // rearm snapshot, no relay while unfocused
+    // Do not sample in the background. The first focused snapshot suppresses held
+    // chords without inventing a physical press while focus was elsewhere.
+    m_pressed = held;
+    m_modifiers = mods;
+    m_poll_rearm = false;
+    SwallowHeldBindings();
     return;
   }
   const auto previous = m_pressed;
