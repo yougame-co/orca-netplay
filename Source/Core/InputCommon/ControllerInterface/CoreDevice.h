@@ -102,6 +102,9 @@ public:
     // so hotkey logic knows Ctrl, L_Ctrl, and R_Ctrl are the same,
     // and so input detection can return the parent name.
     virtual bool IsChild(const Input*) const { return false; }
+
+    // Empty for non-keyboard controls. Physical key identity, never a display label.
+    virtual std::string GetShortcutKey() const { return {}; }
   };
 
   class RelativeInput : public Input

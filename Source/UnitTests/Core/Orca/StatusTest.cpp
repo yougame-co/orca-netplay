@@ -35,6 +35,23 @@ void SetEnv(const char* name, const std::string& value)
 }
 }  // namespace
 
+TEST(OrcaStatus, ShortcutsRequiresFrontendHandlersAndKeepsChatMeaning)
+{
+  Orca::Status::SetShortcutsAvailable(false);
+  const std::string before = Orca::Status::OfferedCaps();
+  EXPECT_EQ(before.find("shortcuts"), std::string::npos);
+  Orca::Status::SetShortcutsAvailable(true);
+  Common::ScopeGuard reset([] { Orca::Status::SetShortcutsAvailable(false); });
+  EXPECT_EQ(Orca::Status::OfferedCaps(), before + " shortcuts");
+  Orca::Status::SetAppCaps("chat");
+  EXPECT_TRUE(Orca::Status::Cap("chat"));
+  EXPECT_FALSE(Orca::Status::Cap("shortcuts"));
+  Orca::Status::SetAppCaps("shortcuts");
+  EXPECT_TRUE(Orca::Status::Cap("shortcuts"));
+  EXPECT_FALSE(Orca::Status::Cap("chat"));
+  Orca::Status::SetAppCaps("");
+}
+
 TEST(OrcaStatus, ReportsRemainSurvivableAfterOnlineWithdrawal)
 {
   const auto old_session = Orca::GetEnv("ORCA_SESSION");

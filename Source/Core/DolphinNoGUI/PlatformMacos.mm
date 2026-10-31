@@ -14,6 +14,7 @@
 #include "Core/State.h"
 #include "Core/System.h"
 #include "DolphinNoGUI/EmbedMacTiming.h"
+#include "InputCommon/Shortcuts.h"
 #include "VideoCommon/EFBInterface.h"
 #include "VideoCommon/Present.h"
 
@@ -153,6 +154,106 @@ void OutKey(std::string_view line)
   Embed::Out(std::string(line));
 }
 
+std::string ShortcutKey(unsigned short code)
+{
+  switch (code)
+  {
+  case kVK_ANSI_A:
+    return "A";
+  case kVK_ANSI_B:
+    return "B";
+  case kVK_ANSI_C:
+    return "C";
+  case kVK_ANSI_D:
+    return "D";
+  case kVK_ANSI_E:
+    return "E";
+  case kVK_ANSI_F:
+    return "F";
+  case kVK_ANSI_G:
+    return "G";
+  case kVK_ANSI_H:
+    return "H";
+  case kVK_ANSI_I:
+    return "I";
+  case kVK_ANSI_J:
+    return "J";
+  case kVK_ANSI_K:
+    return "K";
+  case kVK_ANSI_L:
+    return "L";
+  case kVK_ANSI_M:
+    return "M";
+  case kVK_ANSI_N:
+    return "N";
+  case kVK_ANSI_O:
+    return "O";
+  case kVK_ANSI_P:
+    return "P";
+  case kVK_ANSI_Q:
+    return "Q";
+  case kVK_ANSI_R:
+    return "R";
+  case kVK_ANSI_S:
+    return "S";
+  case kVK_ANSI_T:
+    return "T";
+  case kVK_ANSI_U:
+    return "U";
+  case kVK_ANSI_V:
+    return "V";
+  case kVK_ANSI_W:
+    return "W";
+  case kVK_ANSI_X:
+    return "X";
+  case kVK_ANSI_Y:
+    return "Y";
+  case kVK_ANSI_Z:
+    return "Z";
+  case kVK_F1:
+    return "F1";
+  case kVK_F2:
+    return "F2";
+  case kVK_F3:
+    return "F3";
+  case kVK_F4:
+    return "F4";
+  case kVK_F5:
+    return "F5";
+  case kVK_F6:
+    return "F6";
+  case kVK_F7:
+    return "F7";
+  case kVK_F8:
+    return "F8";
+  case kVK_F9:
+    return "F9";
+  case kVK_F10:
+    return "F10";
+  case kVK_F11:
+    return "F11";
+  case kVK_F12:
+    return "F12";
+  case kVK_Tab:
+    return "Tab";
+  case kVK_Return:
+    return "Enter";
+  case kVK_ANSI_Grave:
+    return "Backquote";
+  case kVK_Shift:
+  case kVK_RightShift:
+    return "Shift";
+  case kVK_Control:
+  case kVK_RightControl:
+    return "Ctrl";
+  case kVK_Option:
+  case kVK_RightOption:
+    return "Alt";
+  default:
+    return {};
+  }
+}
+
 class PlatformMacOS : public Platform
 {
 public:
@@ -200,10 +301,10 @@ private:
   bool m_window_fullscreen = Config::Get(Config::MAIN_FULLSCREEN);
 
   // Embed mode.
-  bool m_embed_visible = true;      // "show" / "hide"
-  bool m_embed_focus = true;        // "focus" / "blur"
+  bool m_embed_visible = true;  // "show" / "hide"
+  bool m_embed_focus = true;    // "focus" / "blur"
   bool m_embed_placed = false;
-  bool m_embed_on_screen = false;   // Ordered in, over the parent.
+  bool m_embed_on_screen = false;  // Ordered in, over the parent.
   bool m_embed_controls_hit = false;
   bool m_left_down = false;  // From this window's left mouse down/up events.
   Embed::Mac::QueryTimer m_parent_query{Embed::Mac::PARENT_QUERY_INTERVAL};
@@ -250,7 +351,12 @@ static void FinishLaunching()
 bool PlatformMacOS::Init()
 {
   if (IsEmbedded())
-    return InitEmbedded();
+  {
+    const bool initialized = InitEmbedded();
+    InputCommon::Shortcuts::Get().SetPolling(IsEmbedded());
+    Orca::Status::SetShortcutsAvailable(initialized);
+    return initialized;
+  }
 
   BeginGameActivity();
   [Application sharedApplication];
@@ -302,6 +408,8 @@ bool PlatformMacOS::Init()
   ObserveOcclusion();
 
   SetupMenu();
+  InputCommon::Shortcuts::Get().SetPolling(IsEmbedded());
+  Orca::Status::SetShortcutsAvailable(true);
 
   return true;
 }
@@ -400,11 +508,11 @@ bool PlatformMacOS::InitEmbedded()
   FinishLaunching();
 
   const Embed::Rect& r = m_embed.rect;
-  m_window = [[EmbedWindow alloc] initWithContentRect:NSMakeRect(0, 0, r.w, r.h)
-                                            styleMask:NSWindowStyleMaskBorderless |
-                                                      NSWindowStyleMaskNonactivatingPanel
-                                              backing:NSBackingStoreBuffered
-                                                defer:NO];
+  m_window = [[EmbedWindow alloc]
+      initWithContentRect:NSMakeRect(0, 0, r.w, r.h)
+                styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
+                  backing:NSBackingStoreBuffered
+                    defer:NO];
   if (m_window == nil)
   {
     EmbedFallback("track-failed");
@@ -430,6 +538,7 @@ bool PlatformMacOS::InitEmbedded()
   [[m_window contentView] setWantsLayer:YES];
 
   m_window_focus = false;
+  InputCommon::Shortcuts::Get().FocusLost();
   m_embed_visible = !m_embed.too_small;  // Hidden until a big enough rect (Embed.h).
   m_activation_observer = [NSWorkspace.sharedWorkspace.notificationCenter
       addObserverForName:NSWorkspaceDidActivateApplicationNotification
@@ -437,8 +546,7 @@ bool PlatformMacOS::InitEmbedded()
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(NSNotification* notification) {
                 NSRunningApplication* app = notification.userInfo[NSWorkspaceApplicationKey];
-                if (IsEmbedded() && m_parent_owner != 0 &&
-                    app.processIdentifier == m_parent_owner)
+                if (IsEmbedded() && m_parent_owner != 0 && app.processIdentifier == m_parent_owner)
                 {
                   m_above_query.Reset();
                   TrackParent();
@@ -527,7 +635,8 @@ bool PlatformMacOS::TrackParent(bool force)
                 static_cast<CFBooleanRef>(CFDictionaryGetValue(info, kCGWindowIsOnscreen));
             on_screen = onscreen && CFBooleanGetValue(onscreen);
             // A closed window can linger in the list, fully transparent. Treat it as gone.
-            auto* const alpha = static_cast<CFNumberRef>(CFDictionaryGetValue(info, kCGWindowAlpha));
+            auto* const alpha =
+                static_cast<CFNumberRef>(CFDictionaryGetValue(info, kCGWindowAlpha));
             double alpha_value = 1;
             if (alpha && CFNumberGetValue(alpha, kCFNumberDoubleType, &alpha_value) &&
                 alpha_value <= 0)
@@ -535,10 +644,12 @@ bool PlatformMacOS::TrackParent(bool force)
               exists = false;
               closed = true;
             }
-            auto* const pid = static_cast<CFNumberRef>(CFDictionaryGetValue(info, kCGWindowOwnerPID));
+            auto* const pid =
+                static_cast<CFNumberRef>(CFDictionaryGetValue(info, kCGWindowOwnerPID));
             if (pid)
               CFNumberGetValue(pid, kCFNumberIntType, &owner);
-            auto* const rect = static_cast<CFDictionaryRef>(CFDictionaryGetValue(info, kCGWindowBounds));
+            auto* const rect =
+                static_cast<CFDictionaryRef>(CFDictionaryGetValue(info, kCGWindowBounds));
             if (!rect || !CGRectMakeWithDictionaryRepresentation(rect, &bounds))
               exists = false;
           }
@@ -553,8 +664,8 @@ bool PlatformMacOS::TrackParent(bool force)
           const CFIndex count = CFArrayGetCount(all);
           for (CFIndex i = 0; i < count && !exists; ++i)
           {
-            exists = static_cast<CGWindowID>(reinterpret_cast<uintptr_t>(
-                         CFArrayGetValueAtIndex(all, i))) == parent;
+            exists = static_cast<CGWindowID>(
+                         reinterpret_cast<uintptr_t>(CFArrayGetValueAtIndex(all, i))) == parent;
           }
           CFRelease(all);
         }
@@ -567,7 +678,7 @@ bool PlatformMacOS::TrackParent(bool force)
       std::optional<Embed::Mac::SettleGate::Bounds> settle_bounds;
       if (exists)
         settle_bounds = Embed::Mac::SettleGate::Bounds{bounds.origin.x, bounds.origin.y,
-                                                      bounds.size.width, bounds.size.height};
+                                                       bounds.size.width, bounds.size.height};
       // Time spent waiting for WindowServer is not evidence that the returned bounds were stable.
       m_parent_settle.Observe(std::chrono::steady_clock::now(), m_embed_visible && on_screen,
                               settle_bounds);
@@ -580,6 +691,7 @@ bool PlatformMacOS::TrackParent(bool force)
       m_embed_on_screen = false;
       m_settle_wait_logged = false;
       m_window_focus = false;
+      InputCommon::Shortcuts::Get().FocusLost();
       // The app's window is gone without a "quit". Stop rather than run unseen with sound on.
       if (!m_parent_missing_since)
         m_parent_missing_since = now;
@@ -601,9 +713,9 @@ bool PlatformMacOS::TrackParent(bool force)
         [m_window makeMainWindow];
         [NSApp activateIgnoringOtherApps:YES];
         [[NSNotificationCenter defaultCenter] addObserver:NSApp
-                                                selector:@selector(shutdown)
-                                                    name:NSWindowWillCloseNotification
-                                                  object:m_window];
+                                                 selector:@selector(shutdown)
+                                                     name:NSWindowWillCloseNotification
+                                                   object:m_window];
         SetupMenu();
         ObserveOcclusion();
         return false;
@@ -674,8 +786,8 @@ bool PlatformMacOS::TrackParent(bool force)
           const CFIndex count = CFArrayGetCount(above);
           for (CFIndex i = 0; i < count; ++i)
           {
-            if (static_cast<CGWindowID>(reinterpret_cast<uintptr_t>(
-                    CFArrayGetValueAtIndex(above, i))) == parent)
+            if (static_cast<CGWindowID>(
+                    reinterpret_cast<uintptr_t>(CFArrayGetValueAtIndex(above, i))) == parent)
             {
               below = true;
               break;
@@ -707,6 +819,7 @@ bool PlatformMacOS::TrackParent(bool force)
         m_parent_owner != 0 &&
         NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == m_parent_owner;
     m_window_focus = show && m_embed_focus && app_in_front;
+    InputCommon::Shortcuts::Get().SetFocus(m_window_focus);
   }
   return true;
 }
@@ -757,7 +870,29 @@ void PlatformMacOS::ProcessEvents()
     if (event && [event window] == m_window)
     {
       namespace Orb = Orca::UX::YgOrb;
-      if ([event type] == NSEventTypeLeftMouseDown || [event type] == NSEventTypeLeftMouseUp)
+      auto& shortcuts = InputCommon::Shortcuts::Get();
+      shortcuts.SetFocus(IsEmbedded() ? IsWindowFocused() :
+                                        ([m_window isKeyWindow] && [NSApp isActive]));
+      const auto type = [event type];
+      if (type == NSEventTypeKeyDown || type == NSEventTypeKeyUp || type == NSEventTypeFlagsChanged)
+      {
+        const auto flags = [event modifierFlags];
+        const unsigned mods =
+            ((flags & NSEventModifierFlagShift) ? InputCommon::Shortcuts::Shift : 0u) |
+            ((flags & NSEventModifierFlagControl) ? InputCommon::Shortcuts::Ctrl : 0u) |
+            ((flags & NSEventModifierFlagOption) ? InputCommon::Shortcuts::Alt : 0u) |
+            ((flags & NSEventModifierFlagCommand) ? 8u : 0u);
+        const auto key = ShortcutKey([event keyCode]);
+        const bool down = type == NSEventTypeFlagsChanged ?
+                              ((key == "Shift" && (mods & InputCommon::Shortcuts::Shift)) ||
+                               (key == "Ctrl" && (mods & InputCommon::Shortcuts::Ctrl)) ||
+                               (key == "Alt" && (mods & InputCommon::Shortcuts::Alt))) :
+                              type == NSEventTypeKeyDown;
+        handled =
+            shortcuts.KeyEvent(key, mods, down, type == NSEventTypeKeyDown && [event isARepeat]);
+      }
+      if (!handled &&
+          ([event type] == NSEventTypeLeftMouseDown || [event type] == NSEventTypeLeftMouseUp))
       {
         NSView* view = [m_window contentView];
         const NSPoint point = [view convertPoint:[event locationInWindow] fromView:nil];
@@ -771,13 +906,17 @@ void PlatformMacOS::ProcessEvents()
                          Orb::HitControls(pixel.x, bounds.size.height - pixel.y);
       }
       // The embedded app owns keyboard focus and relays feedback / host-menu on stdin.
-      else if (!IsEmbedded() && [event type] == NSEventTypeKeyDown && ![event isARepeat])
+      else if (!handled && !IsEmbedded() && [event type] == NSEventTypeKeyDown &&
+               ![event isARepeat])
       {
         switch ([event keyCode])
         {
-        case kVK_F8: handled = Orb::HandleHostKey(Orb::HostKey::Feedback); break;
+        case kVK_F8:
+          handled = Orb::HandleHostKey(Orb::HostKey::Feedback);
+          break;
         case kVK_Tab:
-          if (Orb::HostEnabled() && ([event modifierFlags] & NSEventModifierFlagShift) &&
+          if (!InputCommon::Shortcuts::Get().Configured() && Orb::HostEnabled() &&
+              ([event modifierFlags] & NSEventModifierFlagShift) &&
               !([event modifierFlags] & (NSEventModifierFlagControl | NSEventModifierFlagOption |
                                          NSEventModifierFlagCommand)))
           {
@@ -788,16 +927,17 @@ void PlatformMacOS::ProcessEvents()
           break;
         }
       }
-      else if (!IsEmbedded() &&
-               (([event type] == NSEventTypeKeyUp && [event keyCode] == kVK_Tab) ||
-                ([event type] == NSEventTypeFlagsChanged &&
-                 !([event modifierFlags] & NSEventModifierFlagShift))))
+      else if (!IsEmbedded() && (([event type] == NSEventTypeKeyUp && [event keyCode] == kVK_Tab) ||
+                                 ([event type] == NSEventTypeFlagsChanged &&
+                                  !([event modifierFlags] & NSEventModifierFlagShift))))
       {
         Orca::UX::OverlayKey::Emit(Orca::UX::OverlayKey::Keys().Up());
       }
     }
     if (event && !handled)
       [NSApp sendEvent:event];
+    InputCommon::Shortcuts::Get().SetFocus(
+        IsEmbedded() ? IsWindowFocused() : ([m_window isKeyWindow] && [NSApp isActive]));
     if (IsEmbedded())
       return;
     if (![m_window isKeyWindow] || ![NSApp isActive])
@@ -818,6 +958,7 @@ void PlatformMacOS::ProcessEvents()
     else
     {
       m_window_focus = false;
+      InputCommon::Shortcuts::Get().FocusLost();
       if (Config::Get(Config::MAIN_SHOW_CURSOR) == Config::ShowCursor::Never)
         [NSCursor hide];
     }

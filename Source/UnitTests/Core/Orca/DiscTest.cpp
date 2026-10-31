@@ -368,7 +368,7 @@ TEST(OrcaDisc, AliasRefusalNamesEachFailedCheck)
     if (test == 5) volume.SetContents(0);
     if (test == 6) volume.SetContents(2);
     if (test == 7) volume.SetContents(1, false);
-    if (test >= 8) volume.wrong_patch = std::min<int>(test - 8, 2);
+    if (test >= 8) volume.wrong_patch = std::min<int>(static_cast<int>(test) - 8, 2);
     volume.unreadable = test == 11;
     std::string reason;
     EXPECT_FALSE(Orca::AliasRevision(volume, &reason));
