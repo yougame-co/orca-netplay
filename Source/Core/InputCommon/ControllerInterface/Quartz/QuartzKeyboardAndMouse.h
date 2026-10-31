@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "InputCommon/Shortcuts.h"
+
 #include <QuartzCore/QuartzCore.h>
 
 #include "Common/Matrix.h"
@@ -26,6 +28,10 @@ private:
   public:
     explicit Key(CGKeyCode keycode);
     std::string GetName() const override;
+    std::string GetShortcutKey() const override
+    {
+      return InputCommon::Shortcuts::NormalizeKey(GetName());
+    }
     ControlState GetState() const override;
 
   private:

@@ -687,6 +687,10 @@ static int Run(const int argc, char* argv[], const Embed::Options& embed)
                                         Orca::Bridge::Enabled()))
   {
     ciface::Quartz::SetKeyboardEnabled(false);
+    // A bridge-only pad contains no keyboard identities. Do not promise shortcut relays
+    // when this launch intentionally has neither a keyboard backend nor a key window.
+    if (embed.enabled)
+      Orca::Status::SetShortcutsAvailable(false);
     fmt::print(stderr, "Orca: no keyboard of its own: the page sends it as a pad\n");
   }
 #endif

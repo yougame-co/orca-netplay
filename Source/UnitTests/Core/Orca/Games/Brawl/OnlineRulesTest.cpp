@@ -194,13 +194,13 @@ FakeMemory Locked(Mode mode, Ruleset ruleset, std::string_view scene = "scSelctC
 
 TEST(OrcaOnlineRules, DoublesTeamsRequireExactlyFourSeatsAndTwoPerTeam)
 {
-  EXPECT_EQ(RoomTeamsMask(true, {{0, 0}, {1, 0}, {2, 1}, {3, 1}}), 12);
-  EXPECT_EQ(RoomTeamsMask(true, {{0, 0}, {1, 1}, {2, 0}, {3, 1}}), 10);
+  EXPECT_EQ(RoomTeamsMask(true, {{0, 0}, {1, 0}, {2, 1}, {3, 1}}), u8{12});
+  EXPECT_EQ(RoomTeamsMask(true, {{0, 0}, {1, 1}, {2, 0}, {3, 1}}), u8{10});
   for (const auto& teams : std::vector<std::map<int, int>>{
            {}, {{0, 0}, {1, 1}}, {{0, 0}, {1, 0}, {2, 0}, {3, 1}},
            {{0, 0}, {1, 0}, {2, 1}, {4, 1}}, {{0, 0}, {1, 2}, {2, 1}, {3, 1}}})
-    EXPECT_EQ(RoomTeamsMask(true, teams), 0);
-  EXPECT_EQ(RoomTeamsMask(false, {{0, 0}, {1, 1}, {2, 0}, {3, 1}}), 0);
+    EXPECT_EQ(RoomTeamsMask(true, teams), u8{0});
+  EXPECT_EQ(RoomTeamsMask(false, {{0, 0}, {1, 1}, {2, 0}, {3, 1}}), u8{0});
 }
 
 TEST(OrcaOnlineRules, DoublesPinNativeColoursOnlyWhenTeamsAreOnAndReplayRestoresPairing)
@@ -214,18 +214,18 @@ TEST(OrcaOnlineRules, DoublesPinNativeColoursOnlyWhenTeamsAreOnAndReplayRestores
     Orca::Net::ReplayScope scope(&event, false);
     EXPECT_GT(WriteRoomTeams(m, 12), 0);
   }
-  EXPECT_EQ(event.room_teams, 12);
+  EXPECT_EQ(event.room_teams, u8{12});
   EXPECT_FALSE(ReadHeader(m).Locked());
   bool began = true;
   EXPECT_EQ(ApplyRoomTeams(m, &began), 0);  // Team battle off stays off.
   EXPECT_FALSE(began);
-  EXPECT_EQ(m.Read8(CSS_TASK + 0x5C8), 0);
+  EXPECT_EQ(m.Read8(CSS_TASK + 0x5C8), u8{0});
   m.Write8(CSS_TASK + 0x5C8, 1);
   const auto before = m;  // rollback restores both native bytes and the log latch
   EXPECT_GT(ApplyRoomTeams(m, &began), 0);
   EXPECT_TRUE(began);
   for (u32 port = 0; port < 4; ++port)
-    EXPECT_EQ(m.Read32(CSS_AREA + port * 0x1000 + 0x1C0), port >= 2);
+    EXPECT_EQ(m.Read32(CSS_AREA + port * 0x1000 + 0x1C0), static_cast<u32>(port >= 2));
   const auto pinned = m.bytes;
   EXPECT_EQ(ApplyRoomTeams(m, &began), 0);
   EXPECT_FALSE(began);
@@ -235,18 +235,18 @@ TEST(OrcaOnlineRules, DoublesPinNativeColoursOnlyWhenTeamsAreOnAndReplayRestores
   // A player changing their colour is corrected on the following frame.
   m.Write32(CSS_AREA + 0x1C0, 2);
   ApplyRoomTeams(m);
-  EXPECT_EQ(m.Read32(CSS_AREA + 0x1C0), 0);
+  EXPECT_EQ(m.Read32(CSS_AREA + 0x1C0), u32{0});
   WriteRoomTeams(m, 10);
-  EXPECT_EQ(ReadRoomTeams(m), 10);
+  EXPECT_EQ(ReadRoomTeams(m), u8{10});
   {
     Orca::Net::ReplayScope scope(&event, true);
     WriteRoomTeams(m, *event.room_teams);
   }
-  EXPECT_EQ(ReadRoomTeams(m), 12);
+  EXPECT_EQ(ReadRoomTeams(m), u8{12});
   WriteRoomTeams(m, 0);
   m.Write32(CSS_AREA + 0x1C0, 2);
   EXPECT_EQ(ApplyRoomTeams(m), 0);
-  EXPECT_EQ(m.Read32(CSS_AREA + 0x1C0), 2);
+  EXPECT_EQ(m.Read32(CSS_AREA + 0x1C0), u32{2});
 }
 
 TEST(OrcaOnlineRules, DoublesStageSelectPinsTheFightSourceAndPairingInvalidatesKeyframes)
@@ -257,11 +257,11 @@ TEST(OrcaOnlineRules, DoublesStageSelectPinsTheFightSourceAndPairingInvalidatesK
   m.Fill(select, 0x240);
   WriteRoomTeams(m, 10);
   EXPECT_EQ(ApplyRoomTeams(m), 0);
-  EXPECT_EQ(m.Read8(select + 0x33), 0);
+  EXPECT_EQ(m.Read8(select + 0x33), u8{0});
   m.Write8(select + 0x33, 1);
   ApplyRoomTeams(m);
   for (u32 port = 0; port < 4; ++port)
-    EXPECT_EQ(m.Read8(select + 0xB8 + port * 0x5C + 0x0B), port % 2);
+    EXPECT_EQ(m.Read8(select + 0xB8 + port * 0x5C + 0x0B), static_cast<u8>(port % 2));
   SetWanted(Mode::None, 0, {}, 10);
   const u64 generation = WantedGeneration();
   EXPECT_FALSE(SetWanted(Mode::None, 0, {}, 10));

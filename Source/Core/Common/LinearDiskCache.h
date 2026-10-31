@@ -5,12 +5,14 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <type_traits>
 
 #include "Common/CommonTypes.h"
 #include "Common/IOFile.h"
+#include "Common/Logging/Log.h"
 #include "Common/Version.h"
 
 // On disk format:
@@ -48,12 +50,14 @@ public:
 // K and V are some POD type
 // K : the key type
 // V : value array type
-template <typename K, typename V>
+template <typename K, typename V, typename FileType = File::IOFile>
 class LinearDiskCache
 {
 public:
   // return number of read entries
-  u32 OpenAndRead(const std::string& filename, LinearDiskCacheReader<K, V>& reader)
+  u32 OpenAndRead(const std::string& filename, LinearDiskCacheReader<K, V>& reader,
+                  u32 max_value_size = std::numeric_limits<u32>::max(),
+                  u64 max_file_size = std::numeric_limits<u64>::max())
   {
     // Since we're reading/writing directly to the storage of K instances,
     // K must be trivially copyable.
@@ -62,14 +66,17 @@ public:
     // close any currently opened file
     Close();
     m_num_entries = 0;
+    m_max_file_size = max_file_size;
+    m_writes_disabled = false;
 
     // try opening for reading/writing
     m_file.Open(filename, "r+b");
 
     const u64 file_size = m_file.GetSize();
+    m_file_size = file_size;
 
     m_header.Init();
-    if (m_file.IsOpen() && ValidateHeader())
+    if (m_file.IsOpen() && file_size <= max_file_size && ValidateHeader())
     {
       // good header, read some key/value pairs
       K key;
@@ -81,8 +88,12 @@ public:
 
       while (m_file.ReadArray(&value_size, 1))
       {
-        const u64 next_extent = m_file.Tell() + sizeof(value_size) + value_size;
-        if (next_extent > file_size)
+        // Validate the complete record before allocating: a damaged length must not request an
+        // unbounded allocation, or wrap the extent calculation for value types larger than u8.
+        const u64 bytes = sizeof(K) + u64{value_size} * sizeof(V) + sizeof(entry_number);
+        const u64 value_start = m_file.Tell();
+        if (value_size > max_value_size || value_start > file_size ||
+            bytes > file_size - value_start)
           break;
 
         value = std::make_unique_for_overwrite<V[]>(value_size);
@@ -111,31 +122,69 @@ public:
     // close and recreate file
     Close();
     m_file.Open(filename, "wb");
-    WriteHeader();
+    m_file_size = sizeof(Header);
+    if (!m_file.WriteArray(&m_header, 1))
+      DisableWrites("header write failed");
     return 0;
   }
 
-  void Sync() { m_file.Flush(); }
+  bool Sync()
+  {
+    if (m_writes_disabled)
+      return false;
+    if (!m_file.Flush())
+    {
+      DisableWrites("flush failed");
+      return false;
+    }
+    return true;
+  }
   void Close()
   {
     if (m_file.IsOpen())
-      m_file.Close();
+    {
+      // Close also reports prior read errors; only a new close/flush failure disables writes.
+      const bool was_good = m_file.IsGood();
+      if (!m_file.Close() && was_good)
+        DisableWrites("close/flush failed");
+    }
   }
 
-  // Appends a key-value pair to the store.
-  void Append(const K& key, const V* value, u32 value_size)
+  // A failed append leaves any already loaded entries usable, but persistence stays disabled
+  // until the next OpenAndRead. Never append behind a partial record or retry a failed write.
+  bool Append(const K& key, const V* value, u32 value_size)
   {
-    // TODO: Should do a check that we don't already have "key"? (I think each caller does that
-    // already.)
-    m_file.WriteArray(&value_size, 1);
-    m_file.WriteArray(&key, 1);
-    m_file.WriteArray(value, value_size);
-    m_num_entries++;
-    m_file.WriteArray(&m_num_entries, 1);
+    if (m_writes_disabled)
+      return false;
+
+    const u64 record_size = sizeof(value_size) + sizeof(K) + u64{value_size} * sizeof(V) +
+                            sizeof(m_num_entries);
+    if (m_file_size > m_max_file_size || record_size > m_max_file_size - m_file_size)
+    {
+      DisableWrites("file size limit reached");
+      return false;
+    }
+
+    const u32 next_entry = m_num_entries + 1;
+    if (!m_file.WriteArray(&value_size, 1) || !m_file.WriteArray(&key, 1) ||
+        !m_file.WriteArray(value, value_size) || !m_file.WriteArray(&next_entry, 1))
+    {
+      DisableWrites("append failed");
+      return false;
+    }
+    m_num_entries = next_entry;
+    m_file_size += record_size;
+    return true;
   }
 
 private:
-  void WriteHeader() { m_file.WriteArray(&m_header, 1); }
+  void DisableWrites(const char* reason)
+  {
+    if (!m_writes_disabled)
+      WARN_LOG_FMT(COMMON, "Disk cache: {}; further writes disabled for this session", reason);
+    m_writes_disabled = true;
+  }
+
   bool ValidateHeader()
   {
     char file_header[sizeof(Header)];
@@ -161,7 +210,10 @@ private:
 
   } m_header;
 
-  File::IOFile m_file;
+  FileType m_file;
+  u64 m_file_size = 0;
+  u64 m_max_file_size = std::numeric_limits<u64>::max();
+  bool m_writes_disabled = false;
   u32 m_num_entries = 0;
 };
 }  // namespace Common

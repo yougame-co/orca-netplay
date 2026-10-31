@@ -2,6 +2,8 @@
 #include "VideoBackends/Metal/MTLShader.h"
 
 #include "VideoBackends/Metal/MTLObjectCache.h"
+#include "VideoBackends/Metal/MTLUtil.h"
+#include "VideoCommon/ShaderCacheData.h"
 
 Metal::Shader::Shader(ShaderStage stage, std::string msl, MRCOwned<id<MTLFunction>> shader)
     : AbstractShader(stage), m_msl(std::move(msl)), m_shader(std::move(shader))
@@ -15,5 +17,7 @@ Metal::Shader::~Shader()
 
 AbstractShader::BinaryData Metal::Shader::GetBinary() const
 {
-  return BinaryData(m_msl.begin(), m_msl.end());
+  return VideoCommon::ShaderCacheData::Seal(
+      Util::ShaderCacheIdentity(GetStage()),
+      {reinterpret_cast<const u8*>(m_msl.data()), m_msl.size()});
 }

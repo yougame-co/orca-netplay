@@ -16,6 +16,7 @@
 
 #include "VideoCommon/FramebufferManager.h"
 #include "VideoCommon/Present.h"
+#include "VideoCommon/ShaderCacheData.h"
 #include "VideoCommon/VideoBackendBase.h"
 
 #include <algorithm>
@@ -149,7 +150,12 @@ std::unique_ptr<AbstractShader> Metal::Gfx::CreateShaderFromBinary(ShaderStage s
                                                                    const void* data, size_t length,
                                                                    std::string_view name)
 {
-  return CreateShaderFromMSL(stage, std::string(static_cast<const char*>(data), length), {}, name);
+  const auto msl = VideoCommon::ShaderCacheData::Open(Util::ShaderCacheIdentity(stage),
+                                                      {static_cast<const u8*>(data), length});
+  if (!msl || std::find(msl->begin(), msl->end(), 0) != msl->end())
+    return nullptr;
+  return CreateShaderFromMSL(
+      stage, std::string(reinterpret_cast<const char*>(msl->data()), msl->size()), {}, name, true);
 }
 
 // clang-format off
@@ -180,12 +186,18 @@ static NSString* GenericShaderName(ShaderStage stage)
 
 std::unique_ptr<AbstractShader> Metal::Gfx::CreateShaderFromMSL(ShaderStage stage, std::string msl,
                                                                 std::string_view glsl,
-                                                                std::string_view name)
+                                                                std::string_view name,
+                                                                bool from_cache)
 {
   @autoreleasepool
   {
     NSError* err = nullptr;
     auto DumpBadShader = [&](std::string_view msg) {
+      if (from_cache)
+      {
+        WARN_LOG_FMT(VIDEO, "Ignoring unusable cached Metal shader: {}", msg);
+        return;
+      }
       static int counter = 0;
       std::string filename = VideoBackendBase::BadShaderFilename(StageFilename(stage), counter++);
       std::ofstream stream(filename);
@@ -219,7 +231,7 @@ std::unique_ptr<AbstractShader> Metal::Gfx::CreateShaderFromMSL(ShaderStage stag
     auto lib = MRCTransfer([g_device newLibraryWithSource:[NSString stringWithUTF8String:msl.data()]
                                                   options:nil
                                                     error:&err]);
-    if (err)
+    if (!lib || err)
     {
       DumpBadShader(fmt::format("Failed to compile {}", name));
       return nullptr;
@@ -635,8 +647,8 @@ MRCOwned<id<CAMetalDrawable>> Metal::Gfx::AcquireDrawable()
     SetLate(Late::Covered);
     return drawable;
   }
-  m_paced_waits = (m_paced_waits << 1 | (waited >= PACED_WAIT ? 1u : 0u)) &
-                  ((1u << PACED_WINDOW) - 1);
+  m_paced_waits =
+      (m_paced_waits << 1 | (waited >= PACED_WAIT ? 1u : 0u)) & ((1u << PACED_WINDOW) - 1);
   if (std::popcount(m_paced_waits) >= PACED_COUNT)
   {
     ++m_paced_rounds;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "InputCommon/ControlReference/ExpressionParser.h"
+#include "InputCommon/Shortcuts.h"
 
 #include <algorithm>
 #include <cassert>
@@ -296,6 +297,19 @@ public:
   {
     if (!m_input)
       return 0.0;
+
+    std::string key = m_input->GetShortcutKey();
+    if (key.empty() && m_device &&
+        (m_device->GetSource() == "Quartz" || m_device->GetSource() == "DInput" ||
+         m_device->GetSource() == "XInput2"))
+    {
+      const auto name = m_input->GetName();
+      if (name == "Shift" || name == "Ctrl" || name == "Alt")
+        key = name;
+    }
+    if (!key.empty())
+      if (const auto state = InputCommon::Shortcuts::Get().GetWindowKeyState(key); state && !*state)
+        return 0.0;
 
     // Note: Inputs may return negative values in situations where opposing directions are
     // activated. We clamp off the negative values here.

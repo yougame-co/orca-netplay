@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <string>
+#include <sys/stat.h>
 
 #ifdef _WIN32
 #include <io.h>
@@ -119,6 +120,23 @@ u64 IOFile::GetSize() const
     return File::GetSize(m_file);
   else
     return 0;
+}
+
+std::optional<u64> IOFile::GetSizeOnDisk() const
+{
+  if (!IsOpen())
+    return std::nullopt;
+
+  struct stat info;
+  if (fstat(fileno(m_file), &info) != 0 || info.st_size < 0)
+    return std::nullopt;
+#ifdef _WIN32
+  if ((info.st_mode & _S_IFMT) != _S_IFREG)
+#else
+  if (!S_ISREG(info.st_mode))
+#endif
+    return std::nullopt;
+  return static_cast<u64>(info.st_size);
 }
 
 bool IOFile::Seek(s64 offset, SeekOrigin origin)
