@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "InputCommon/Shortcuts.h"
+
 #include <windows.h>
 
 #include "Common/Matrix.h"
@@ -40,6 +42,10 @@ private:
   public:
     Key(u8 index, const BYTE& key) : m_key(key), m_index(index) {}
     std::string GetName() const override;
+    std::string GetShortcutKey() const override
+    {
+      return InputCommon::Shortcuts::NormalizeKey(GetName());
+    }
     ControlState GetState() const override;
 
   private:
