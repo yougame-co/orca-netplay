@@ -57,6 +57,16 @@ jobs:
           if ($env:SOURCE_COMMIT -cnotmatch '^[0-9a-f]{40}$') { throw "source_commit must be a full 40-hex sha" }
           if ($env:VERSION -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "version must be X.Y.Z" }
 
+      - name: Fetch the pinned shipping D3D compiler from this workflow commit
+        env:
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          # A hosted Windows update must not silently change the shader-cache ABI.
+          $d3d = "$env:RUNNER_TEMP\d3dcompiler_47.dll"
+          Invoke-WebRequest "https://raw.githubusercontent.com/yougame-co/yg-dolphin/$env:WORKFLOW_SHA/.github/windows-runtime/d3dcompiler_47.dll" -OutFile $d3d
+          if ((Get-FileHash -Algorithm SHA256 $d3d).Hash.ToLower() -ne 'a05f99734f7c4822fefc12b367af21fd0976ed6608752fb1e1e80b6ece7ecbbb') { throw 'shipping D3D compiler checksum mismatch' }
+          "D3D_COMPILER_PATH=$d3d" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Keep LF line endings (Data/Sys feeds the compatibility key)
         run: git config --global core.autocrlf false
 
@@ -168,14 +178,7 @@ jobs:
             Copy-Item (Join-Path $crt.FullName $name) $program
             "$name version $((Get-Item "$program\$name").VersionInfo.FileVersion)"
           }
-          # Keep the exact compiler shipped in the 0.3.96/0.3.97 kits (shader-cache ABI).
-          $d3dHash = 'a05f99734f7c4822fefc12b367af21fd0976ed6608752fb1e1e80b6ece7ecbbb'
-          $sdk = "${env:ProgramFiles(x86)}\Windows Kits\10\Redist\D3D"
-          $d3d = @(Get-ChildItem $sdk -Filter d3dcompiler_47.dll -Recurse -File | Where-Object {
-            $_.FullName -match '[\\/]x64[\\/]' -and (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower() -eq $d3dHash
-          }) | Select-Object -First 1
-          if (-not $d3d) { throw 'Windows SDK lacks the pinned x64 d3dcompiler_47.dll; refusing a different shader compiler' }
-          Copy-Item $d3d.FullName "$program\d3dcompiler_47.dll"
+          Copy-Item $env:D3D_COMPILER_PATH "$program\d3dcompiler_47.dll"
           $expected = @('DolphinNoGUI.exe','orca-disc-tool.exe','d3dcompiler_47.dll','msvcp140.dll','msvcp140_atomic_wait.dll','vcruntime140.dll','vcruntime140_1.dll') | Sort-Object
           $actual = @(Get-ChildItem $program -Recurse -File | Where-Object { $_.Extension -in '.exe','.dll' } | ForEach-Object { [IO.Path]::GetRelativePath($program,$_.FullName).Replace('\','/') }) | Sort-Object
           if (Compare-Object $expected $actual) { throw 'release binary set differs from the seven shipping files' }
