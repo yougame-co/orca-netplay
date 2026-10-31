@@ -1,7 +1,7 @@
 # YG Dolphin windows-x64 build (linux-lead for orca-lead, 10-24). MANUAL ONLY: workflow_dispatch, never on push or
 # pull_request, never a required check, so it cannot block a merge (YouGame's "no CI" rule is about the YouGame repo).
 #
-# What it makes: the UNSIGNED program folder (Binaries\: DolphinNoGUI.exe + Sys) of a release commit, built the way the
+# What it makes: a release-only UNSIGNED program folder (engine, disc helper, five runtime DLLs, Sys, licenses), built the way the
 # PC's release agent builds it (staging-0385/pc/release-agent-0385.ps1: the visualstudio-release-x64 preset, the PC's
 # Get-OrcaCMakeArgs switches, the bundle key pinned, TEST key off), plus the unit tests' results. Packaging, the D3D
 # shader cache and Authenticode signing stay on the PC (signing needs the certificate, which never comes here).
@@ -57,6 +57,16 @@ jobs:
           if ($env:SOURCE_COMMIT -cnotmatch '^[0-9a-f]{40}$') { throw "source_commit must be a full 40-hex sha" }
           if ($env:VERSION -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "version must be X.Y.Z" }
 
+      - name: Fetch the pinned shipping D3D compiler from this workflow commit
+        env:
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          # A hosted Windows update must not silently change the shader-cache ABI.
+          $d3d = "$env:RUNNER_TEMP\d3dcompiler_47.dll"
+          Invoke-WebRequest "https://raw.githubusercontent.com/yougame-co/yg-dolphin/$env:WORKFLOW_SHA/.github/windows-runtime/d3dcompiler_47.dll" -OutFile $d3d
+          if ((Get-FileHash -Algorithm SHA256 $d3d).Hash.ToLower() -ne 'a05f99734f7c4822fefc12b367af21fd0976ed6608752fb1e1e80b6ece7ecbbb') { throw 'shipping D3D compiler checksum mismatch' }
+          "D3D_COMPILER_PATH=$d3d" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Keep LF line endings (Data/Sys feeds the compatibility key)
         run: git config --global core.autocrlf false
 
@@ -84,12 +94,17 @@ jobs:
           ORCA_STAGING_BUILD: "1"
           BUNDLE_KEY: 8422b8b28b82aff024427d77e6c72a38d9ea75bcb6533fe706c61006f742c0ab
         run: |
+          # Large MSVC test translation units (notably OrcaRoomTest) need extended object sections.
+          # Scope the build flag to the unit-test directory; preserve /WX and all existing switches.
+          $testCmake = 'Source/UnitTests/CMakeLists.txt'
+          $testSource = Get-Content -LiteralPath $testCmake -Raw
+          Set-Content -LiteralPath $testCmake -Value ("add_compile_options(/bigobj)`n" + $testSource) -NoNewline -Encoding utf8
           # the Windows release helper's CMake switches, one for one.
           $switches = [ordered]@{
             ENABLE_QT = 'OFF'; ENABLE_NOGUI = 'ON'; USE_SYSTEM_LIBS = 'OFF'; ENCODE_FRAMEDUMPS = 'OFF'
             ENABLE_LLVM = 'OFF'; ENABLE_ANALYTICS = 'OFF'; ENABLE_AUTOUPDATE = 'OFF'; USE_DISCORD_PRESENCE = 'OFF'
             USE_RETRO_ACHIEVEMENTS = 'OFF'; USE_MGBA = 'OFF'; USE_UPNP = 'OFF'; ENABLE_VULKAN = 'OFF'
-            ENABLE_CLI_TOOL = 'OFF'; USE_SANITIZERS = 'OFF'
+            ENABLE_CLI_TOOL = 'OFF'; USE_SANITIZERS = 'OFF'; ORCA_BUILD_DISC_TOOLS = 'ON'
           }
           $cmakeArgs = @($switches.GetEnumerator() | ForEach-Object { "-D$($_.Key)=$($_.Value)" }) + "-DORCA_VERSION=$env:ORCA_VERSION"
           cmake --preset visualstudio-release-x64 @cmakeArgs "-DORCA_BUNDLE_TRUST_TEST_KEY=OFF" "-DORCA_BUNDLE_PUBLIC_KEY=$env:BUNDLE_KEY"
@@ -99,7 +114,7 @@ jobs:
         env:
           ORCA_SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
-          cmake --build --preset visualstudio-build-release-x64 --target dolphin-nogui --parallel 4
+          cmake --build --preset visualstudio-build-release-x64 --target dolphin-nogui orca-disc-tool --parallel 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # The PC builds `tests`. On Windows the unit tests are one gtest program (Binaries\Tests\tests.exe) that
           # ctest doesn't register, so it runs directly (the first CI run's ctest found no tests).
@@ -141,13 +156,44 @@ jobs:
           "version resource: $($vi.FileDescription) / $($vi.ProductName) / $($vi.FileVersion) / $($vi.OriginalFilename)"
           if ($vi.FileVersion -ne $env:VERSION) { throw "FileVersion is $($vi.FileVersion), not $env:VERSION" }
 
-      - name: Zip the unsigned program folder
+      - name: Stage and hash the release-only unsigned program folder
         env:
           VERSION: ${{ inputs.version }}
         run: |
           $out = "$env:RUNNER_TEMP\out"; New-Item -ItemType Directory -Force $out | Out-Null
           $zip = "$out\yg-dolphin-$env:VERSION-windows-x64-unsigned-program.zip"
-          Compress-Archive -Path "build\release\x64\Binaries\*" -DestinationPath $zip
+          $program = "$env:RUNNER_TEMP\program"; New-Item -ItemType Directory $program | Out-Null
+          $bin = 'build\release\x64\Binaries'
+          foreach ($name in 'DolphinNoGUI.exe','orca-disc-tool.exe') { Copy-Item "$bin\$name" $program }
+          # Copy source Sys, not build output: no generated/test files may enter the release.
+          Copy-Item -Recurse 'Data\Sys' "$program\Sys"
+          Copy-Item 'COPYING' "$program\COPYING.txt"
+          Copy-Item -Recurse 'LICENSES' "$program\LICENSES"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $vs) { throw 'Visual Studio CRT location unavailable' }
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $crt) { throw 'x64 Microsoft CRT redistributables unavailable' }
+          foreach ($name in 'msvcp140.dll','msvcp140_atomic_wait.dll','vcruntime140.dll','vcruntime140_1.dll') {
+            Copy-Item (Join-Path $crt.FullName $name) $program
+            "$name version $((Get-Item "$program\$name").VersionInfo.FileVersion)"
+          }
+          Copy-Item $env:D3D_COMPILER_PATH "$program\d3dcompiler_47.dll"
+          $expected = @('DolphinNoGUI.exe','orca-disc-tool.exe','d3dcompiler_47.dll','msvcp140.dll','msvcp140_atomic_wait.dll','vcruntime140.dll','vcruntime140_1.dll') | Sort-Object
+          $actual = @(Get-ChildItem $program -Recurse -File | Where-Object { $_.Extension -in '.exe','.dll' } | ForEach-Object { [IO.Path]::GetRelativePath($program,$_.FullName).Replace('\','/') }) | Sort-Object
+          if (Compare-Object $expected $actual) { throw 'release binary set differs from the seven shipping files' }
+          & "$program\orca-disc-tool.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'packaged helper failed' }
+          $manifest = @(Get-ChildItem $program -Recurse -File | ForEach-Object {
+            $relative = [IO.Path]::GetRelativePath($program,$_.FullName).Replace('\','/')
+            "$((Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower())  $relative"
+          } | Sort-Object)
+          [IO.File]::WriteAllLines("$out\PROGRAM-SHA256SUMS", $manifest, (New-Object Text.UTF8Encoding($false)))
+          Add-Content $env:GITHUB_STEP_SUMMARY "Release program per-file SHA256 ($($manifest.Count) files):"
+          Add-Content $env:GITHUB_STEP_SUMMARY '```text'
+          Get-Content "$out\PROGRAM-SHA256SUMS" | Add-Content $env:GITHUB_STEP_SUMMARY
+          Add-Content $env:GITHUB_STEP_SUMMARY '```'
+          Compress-Archive -Path "$program\*" -DestinationPath $zip
           $h = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
           "$h  $(Split-Path -Leaf $zip)" | Tee-Object -FilePath "$out\SHA256SUMS"
           Copy-Item "$env:RUNNER_TEMP\unit-tests.log" $out
