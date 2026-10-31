@@ -22,6 +22,7 @@ extern "C" {
 
 namespace ciface::XInput2
 {
+std::string GetShortcutKey(Display* display, KeyCode code);
 std::unique_ptr<ciface::InputBackend> CreateInputBackend(ControllerInterface* controller_interface);
 
 class KeyboardMouse : public Core::Device
@@ -44,6 +45,8 @@ private:
     Key(std::string name, KeyCode keycode, const char* keyboard);
 
     std::string GetName() const override { return m_keyname; }
+    std::string GetShortcutKey() const override { return m_shortcut_key; }
+    std::string m_shortcut_key;
     ControlState GetState() const override;
 
     static const char* GetNameForKeyCode(Display* display, KeyCode keycode);

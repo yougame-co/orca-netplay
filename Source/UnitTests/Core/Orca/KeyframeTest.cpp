@@ -121,14 +121,14 @@ TEST(OrcaKeyframe, ReplayRoundTripsInputsAndTypedEvents)
   }
   EXPECT_EQ(decoded.frames[0].ports, decoded.frames[1].ports);
   EXPECT_EQ(decoded.boundary.header, original.boundary.header);
-  EXPECT_EQ(decoded.boundary.room_teams, 0);
+  EXPECT_EQ(decoded.boundary.room_teams, u8{0});
   EXPECT_TRUE(decoded.boundary.clear_ready);
 }
 
 TEST(OrcaKeyframe, RoomTeamEventsRejectIncompleteMaps)
 {
   auto original = Replay(10);
-  for (u8 mask : {1, 7, 15, 16, 255})
+  for (u8 mask : {u8{1}, u8{7}, u8{15}, u8{16}, u8{255}})
   {
     original.frames[0].room_teams = mask;
     EXPECT_TRUE(PackKeyframe(10, original).empty());

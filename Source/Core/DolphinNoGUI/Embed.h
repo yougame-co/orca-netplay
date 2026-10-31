@@ -15,6 +15,17 @@
 // then sends one command per line on stdin and reads one event per line on stdout. Lines starting
 // with "yg " are the stdio bridge's (Orca/Bridge.h), never commands.
 // See ORCA.md, "Embedding".
+// With cap "shortcuts": `embed shortcuts menu=Shift+Tab chat=Shift+Enter` atomically replaces
+// the two window shortcuts. Either field may be omitted; a bare command clears both. Each combo
+// is distinct Shift/Ctrl/Alt modifiers joined by '+', then Tab, Enter, A-Z, F1-F12 or Backquote.
+// Key identities are physical US keyboard positions, matching Quartz/DInput/evdev mapping
+// names. X11 uses XKB physical key names for both window events and XInput2 metadata;
+// existing logical XInput2 display/mapping labels remain intact. For example, AZERTY A
+// at the US Q position is shortcut Q. No layout-dependent event letter is compared to
+// a physical backend label. Embedded input is classified from existing controller snapshots
+// while the app grants game focus; standalone windows use their own keyboard events.
+// Malformed lines keep the previous bindings. Chords and their modifiers are hidden from controller
+// mappings; edges use `yg {"overlay":"down|up"}` or `yg {"chat":"down|up|cancel"}` on stdout.
 namespace Embed
 {
 struct Rect

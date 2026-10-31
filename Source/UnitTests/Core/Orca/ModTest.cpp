@@ -1591,7 +1591,7 @@ TEST(OrcaMod, UxKeyPartIsPerGame)
     const auto profile = Orca::LoadProfileFrom(RepoPath("Data/Sys/"), name, 2, &error);
     ASSERT_TRUE(profile) << error;
     Orca::SetActiveProfile(profile);
-    EXPECT_EQ(Orca::UX::Builtin().Describe().compat, 2);
+    EXPECT_EQ(Orca::UX::Builtin().Describe().compat, int{2});
     EXPECT_TRUE(Orca::Online::CompatibilityKeyParts().ends_with(ux));
   }
   // Mod mode's key ends the same way.
@@ -1605,7 +1605,7 @@ TEST(OrcaMod, UxKeyPartIsPerGame)
     const auto mod = Orca::LoadModProfile(bundle->dir, &error);
     ASSERT_TRUE(mod) << error;
     Orca::SetActiveProfile(mod);
-    EXPECT_EQ(Orca::UX::Builtin().Describe().compat, 2);
+    EXPECT_EQ(Orca::UX::Builtin().Describe().compat, int{2});
     const std::string parts = Orca::Online::CompatibilityKeyParts();
     EXPECT_TRUE(parts.starts_with("orca2|")) << parts;
     EXPECT_TRUE(parts.ends_with(ux)) << parts;
