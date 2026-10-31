@@ -37,6 +37,8 @@
 #include "Core/Rollback/Harness.h"
 #include "Core/Rollback/ReplayStream.h"
 #include "Core/System.h"
+#include "InputCommon/Shortcuts.h"
+#include "InputCommon/ControllerInterface/ControllerInterface.h"
 #include "VideoCommon/FrameDumper.h"
 #include "VideoCommon/Present.h"
 
@@ -62,6 +64,10 @@ void Platform::UpdateRunningFlag()
     Embed::Out(std::string(Orca::Bridge::HEARTBEAT_LINE));
   }
   ProcessEmbedCommands();
+  // Keep shortcut edges live while paused or when the app supplies pad snapshots.
+  // Uses only already-enabled controller backends; never creates a keyboard source.
+  if (InputCommon::Shortcuts::Get().UsesPolling() && g_controller_interface.IsInit())
+    g_controller_interface.UpdateInput();
   EndSoloPauseForDropIn();
   WatchRoomWhilePaused();
   UpdateTitle();
@@ -173,6 +179,7 @@ void Platform::NotifyFirstFrame(int width, int height, double fps)
 
 void Platform::EmbedTeardown()
 {
+  InputCommon::Shortcuts::Get().FocusLost();
   if (!IsEmbedded())
     return;
   EmbedSetFocus(false);
@@ -290,6 +297,15 @@ void Platform::ProcessEmbedCommands()
       // frame that is a stop, not a boot that failed (a Stop while shaders compile).
       Orca::Status::Stopping();
       Stop();
+    }
+    else if (cmd == "embed")
+    {
+      // This command deliberately includes the literal "embed" prefix, unlike the older
+      // commands. Parse the complete line so malformed input cannot partly replace a binding.
+      InputCommon::Shortcuts::Get().SetOutput(
+          [](std::string_view edge) { Embed::Out(std::string(edge)); });
+      if (!InputCommon::Shortcuts::Get().Configure(line))
+        fmt::print(stderr, "Orca: malformed embed shortcuts command; keeping previous bindings\n");
     }
     else if (cmd == "rect")
     {

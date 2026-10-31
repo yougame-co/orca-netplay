@@ -35,6 +35,7 @@ bool s_errored = false;
 std::atomic<bool> s_started{false};
 std::atomic<bool> s_online_withdrawn{false};
 std::atomic<bool> s_stopping{false};
+std::atomic<bool> s_shortcuts_available{false};
 std::FILE* s_out = nullptr;
 // Capability readers run on the room/controller threads. Never keep this lock during output.
 std::mutex s_caps_mutex;
@@ -220,7 +221,14 @@ std::string OfferedCaps()
   // Casual queue doubles also works with one seat per computer, without co-seats.
   if (SessionActive())
     caps += " qdoubles rdoubles";
+  if (s_shortcuts_available)
+    caps += fmt::format(" {}", SHORTCUTS_CAP);
   return caps;
+}
+
+void SetShortcutsAvailable(bool available)
+{
+  s_shortcuts_available = available;
 }
 
 void PrintCaps()

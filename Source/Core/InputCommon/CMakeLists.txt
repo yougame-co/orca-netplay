@@ -10,6 +10,8 @@ add_library(inputcommon
   InputProfile.cpp
   InputProfile.h
   LocalInput.h
+  Shortcuts.cpp
+  Shortcuts.h
   ControllerEmu/ControllerEmu.cpp
   ControllerEmu/ControllerEmu.h
   ControllerEmu/StickGate.cpp

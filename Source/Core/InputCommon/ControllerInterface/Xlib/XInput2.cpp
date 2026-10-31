@@ -14,6 +14,7 @@
 #include <fmt/format.h>
 
 #include "Common/Logging/Log.h"
+#include "InputCommon/Shortcuts.h"
 
 #include "Core/Host.h"
 
@@ -66,6 +67,23 @@ constexpr int XINPUT_MAJOR = 2, XINPUT_MINOR = 1;
 
 namespace ciface::XInput2
 {
+std::string GetShortcutKey(Display* display, KeyCode code)
+{
+  auto* keyboard = XkbGetKeyboard(display, XkbAllComponentsMask, XkbUseCoreKbd);
+  if (!keyboard)
+    return {};
+  std::string result;
+  if (keyboard->names && keyboard->names->keys && code <= keyboard->max_key_code)
+  {
+    std::string position(keyboard->names->keys[code].name, XkbKeyNameLength);
+    while (!position.empty() && (position.back() == ' ' || position.back() == '\0'))
+      position.pop_back();
+    result = InputCommon::Shortcuts::XkbPositionKey(position);
+  }
+  XkbFreeKeyboard(keyboard, XkbAllComponentsMask, True);
+  return result;
+}
+
 constexpr std::string_view SOURCE_NAME = "XInput2";
 
 class InputBackend final : public ciface::InputBackend
@@ -228,6 +246,7 @@ KeyboardMouse::KeyboardMouse(Window window, int opcode, int pointer, int keyboar
       AddInput(key_input = new Key(keycode_name, keycode, m_state.keyboard.data()));
     else
       key_input->AddKeyCode(keycode);
+    key_input->m_shortcut_key = GetShortcutKey(m_display, static_cast<KeyCode>(keycode));
   }
 
   // Add combined left/right modifiers with consistent naming across platforms.

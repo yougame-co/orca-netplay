@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
+#include "InputCommon/Shortcuts.h"
 
 #include <algorithm>
 
@@ -363,6 +364,15 @@ void ControllerInterface::UpdateInput()
         devices_to_remove.push_back(d);
     }
 
+    if (InputCommon::Shortcuts::Get().UsesPolling())
+    {
+      std::set<std::string, std::less<>> held;
+      for (const auto& device : m_devices)
+        for (const auto* input : device->Inputs())
+          if (const auto key = input->GetShortcutKey(); !key.empty() && input->GetState() > 0)
+            held.insert(key);
+      InputCommon::Shortcuts::Get().PollKeys(held);
+    }
     tls_is_updating_devices = false;
   }
 
